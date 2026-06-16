@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package funky.type.v1;
+
+// EnvironmentConfig is the specification of where a session runs — the sandbox
+// it gets and how that sandbox is provisioned.
+//
+// Like AgentConfig, it is a pure spec stored by a ConfigRegistry and referenced
+// by id; it carries no server-assigned id of its own.
+//
+// It is intentionally empty for now: the default environment needs no
+// configuration, and a zero-field message is valid protobuf. Fields (sandbox
+// image, resource limits, vendor selection, ...) will be added as the
+// SandboxRuntime contract takes shape — adding fields to a proto message is a
+// backward-compatible change, so starting empty costs nothing.
+message EnvironmentConfig {}
