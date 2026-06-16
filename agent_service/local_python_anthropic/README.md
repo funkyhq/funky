@@ -19,13 +19,13 @@ appends them to history.
 ## Text-only, for now
 
 This turn is text in, text out. It accepts the `Sandbox` from the request but
-does not yet run anything in it. The `Event` proto now has an `AgentToolUse`
-event for the agent's tool calls, but the loop doesn't emit one yet, and there is
-still no tool-result event to feed a call's output back into the conversation.
-Once tool use is wired — the `AgentService ..> SandboxRuntime : exec` edge from
-the architecture — this is where the agent gains a tool, runs commands in the
-sandbox through a `SandboxRuntime` client, and emits `AgentToolUse` (and, later,
-tool-result) events. The sandbox is accepted today so this stays that seam (the
+does not yet run anything in it. The `Event` proto now has the `AgentToolUse` and
+`AgentToolResult` events that tool calls need, but the loop doesn't emit them —
+it has no tools and never reaches the sandbox. Once tool use is wired — the
+`AgentService ..> SandboxRuntime : exec` edge from the architecture — this is
+where the agent gains a tool, runs commands in the sandbox through a
+`SandboxRuntime` client, and emits an `AgentToolUse` followed by its
+`AgentToolResult`. The sandbox is accepted today so this stays that seam (the
 same way the Docker runtime accepts an agent whose skills it can't load yet).
 
 ## Requirements

@@ -31,6 +31,9 @@ message Event {
 
     // A built-in tool call the agent made during its turn.
     AgentToolUse agent_tool_use = 6;
+
+    // The result of one such tool call.
+    AgentToolResult agent_tool_result = 7;
   }
 }
 
@@ -64,10 +67,10 @@ message TextBlock {
 // Like UserMessage and AgentMessage, it is a payload of an Event, so the call's
 // identity and timing live on the Event envelope (id, processed_at), not here. A
 // tool call and its result are separate events — the result comes back as its
-// own payload (a tool-result kind, added when the first backend needs it), the
-// same way the agent's text and its tool calls arrive as distinct events rather
-// than nested in one message. How a call's permission was resolved (allow / ask /
-// deny) is a later addition, once a backend gates tools; field 3 is left for it.
+// own payload (an AgentToolResult), the same way the agent's text and its tool
+// calls arrive as distinct events rather than nested in one message. How a call's
+// permission was resolved (allow / ask / deny) is a later addition, once a backend
+// gates tools; field 3 is left for it.
 message AgentToolUse {
   // Name of the tool being invoked.
   string name = 1;
@@ -75,4 +78,23 @@ message AgentToolUse {
   // Input arguments for the call, an arbitrary JSON object. Struct is proto's
   // JSON-object type, so this round-trips through proto3 JSON unchanged.
   google.protobuf.Struct input = 2;
+}
+
+// AgentToolResult is the outcome of one AgentToolUse: what the tool returned, and
+// whether it failed.
+//
+// Like the other payloads, it is carried by an Event, so its own id and timing
+// live on the Event envelope. It points back to the call it answers by that
+// call's Event id (tool_use_id), pairing a result with its tool use. The content
+// reuses ContentBlock, so a result is text today and grows image/document/...
+// blocks exactly as ContentBlock does.
+message AgentToolResult {
+  // Event id of the AgentToolUse this result answers.
+  string tool_use_id = 1;
+
+  // What the tool returned, in order.
+  repeated ContentBlock content = 2;
+
+  // Whether the tool execution failed. False (the default) means success.
+  bool is_error = 3;
 }
