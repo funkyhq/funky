@@ -2,17 +2,18 @@
 # Docs: https://buf.build/docs/configuration/v2/buf-gen-yaml
 #
 # Targets Python via Buf's remote plugins (no local protoc plugins to install):
-#   - protocolbuffers/python  -> *_pb2.py        (message classes)
-#   - protocolbuffers/pyi     -> *_pb2.pyi       (type stubs for IDEs / mypy)
-#   - grpc/python             -> *_pb2_grpc.py   (gRPC service stubs)
+#   - protocolbuffers/python  -> *_pb2.py       (message classes)
+#   - protocolbuffers/pyi     -> *_pb2.pyi      (type stubs for IDEs / mypy)
+#   - connectrpc/python       -> *_connect.py   (Connect service + client code)
 #
-# RPC stubs are gRPC. The .proto service definitions are protocol-neutral,
-# so a Connect plugin could be swapped in later without touching them.
+# RPC code is ConnectRPC (HTTP/1.1 + JSON, also speaks gRPC). The .proto service
+# definitions are protocol-neutral, so a gRPC plugin could be swapped back in
+# without touching them.
 version: v2
 plugins:
   - remote: buf.build/protocolbuffers/python
     out: gen/python
   - remote: buf.build/protocolbuffers/pyi
     out: gen/python
-  - remote: buf.build/grpc/python
+  - remote: buf.build/connectrpc/python
     out: gen/python
