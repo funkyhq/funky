@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package funky.type.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Event is one entry in a session's append-only history.
+//
+// The payload oneof is the envelope's discriminator; new kinds (tool uses, tool
+// results, status updates, ...) are added as new oneof fields without breaking
+// existing ones. The starting set is a user turn in and an agent turn out.
+message Event {
+  // Stable identifier, assigned on append. Addresses the event in history and
+  // de-duplicates it on stream reconnect.
+  string id = 1;
+
+  // When the event was recorded, set by the SessionStore on append. Unset while
+  // still queued. Serializes to an RFC 3339 string in proto3 JSON.
+  google.protobuf.Timestamp processed_at = 4;
+
+  oneof payload {
+    // A turn sent into the session on behalf of the user.
+    UserMessage user_message = 2;
+
+    // A turn produced by the agent.
+    AgentMessage agent_message = 3;
+  }
+}
+
+// UserMessage is a prompt from the end user.
+message UserMessage {
+  repeated ContentBlock content = 1;
+}
+
+// AgentMessage is a response from the agent.
+message AgentMessage {
+  repeated ContentBlock content = 1;
+}
+
+// ContentBlock is one piece of a message's content. The block oneof discriminates
+// the kind of content; new kinds (image, document, ...) are added as new oneof
+// fields, and each block being its own message lets it grow fields of its own.
+message ContentBlock {
+  oneof block {
+    TextBlock text = 1;
+  }
+}
+
+// TextBlock is a run of plain text.
+message TextBlock {
+  string text = 1;
+}

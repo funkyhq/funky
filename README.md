@@ -34,7 +34,7 @@ Funky factors a cloud agent into **four small interfaces**. Implement, or pick, 
 Funky is built from four small interfaces, plus a thin **Client** that wires them together:
 
 - **ConfigRegistry** stores and retrieves agent and environment configs.
-- **SessionStore** creates sessions and appends/reads their item history.
+- **SessionStore** creates sessions and appends/reads their event history.
 - **SandboxRuntime** creates, executes in, and destroys sandboxes.
 - **AgentService** runs a single turn of the agent loop against a sandbox.
 - **Client** is the orchestrator developers actually call; it resolves ids → configs and coordinates the four services.
