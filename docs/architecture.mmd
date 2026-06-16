@@ -1,0 +1,40 @@
+classDiagram
+    direction LR
+
+    class ConfigRegistry {
+        <<interface>>
+        +create_agent(config)
+        +get_agent(id)
+        +create_environment(config)
+        +get_environment(id)
+    }
+    class SessionStore {
+        <<interface>>
+        +create_session(agent_config, env_config)
+        +get_session(id)
+        +append(id, event)
+        +history(id)
+    }
+    class SandboxRuntime {
+        <<interface>>
+        +create(env_config) Sandbox
+        +exec(sandbox, command)
+        +destroy(sandbox)
+    }
+    class AgentService {
+        <<interface>>
+        +run_turn(agent, history, prompt, sandbox)
+    }
+
+    class Client {
+        +agents.create(agent_config) agent_id
+        +environments.create(environment_config) environment_id
+        +sessions.create(agent_id, environment_id) session_id
+        +sessions.events.send(session_id, events)
+    }
+
+    Client ..> ConfigRegistry : create / fetch configs
+    Client ..> SessionStore : sessions + events
+    Client ..> SandboxRuntime : create / destroy
+    Client ..> AgentService : run turn (configs inline)
+    AgentService ..> SandboxRuntime : exec
