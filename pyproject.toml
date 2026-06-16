@@ -3,11 +3,12 @@
 # virtualenv and resolve each other by path instead of via PyPI.
 #
 # Members are added here as new backends land, e.g.
-#   "config_registry/gcp_python_postgres", "session_store/local_python_sqlite".
+#   "config_registry/gcp_python_postgres", "session_store/gcp_python_postgres".
 [tool.uv.workspace]
 members = [
   "gen/python",
   "config_registry/local_python_jsonl",
+  "session_store/local_python_jsonl",
 ]
 
 # Test tooling, shared across all backends. Installed by `uv sync`.

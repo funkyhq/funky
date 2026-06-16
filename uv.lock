@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 members = [
     "funky-config-registry-jsonl",
     "funky-protos",
+    "funky-session-store-jsonl",
 ]
 
 [manifest.dependency-groups]
@@ -70,6 +71,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "connectrpc", specifier = ">=0.10.1" }]
+
+[[package]]
+name = "funky-session-store-jsonl"
+version = "0.0.0"
+source = { editable = "session_store/local_python_jsonl" }
+dependencies = [
+    { name = "funky-protos" },
+    { name = "waitress" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "funky-protos", editable = "gen/python" },
+    { name = "waitress", specifier = ">=3" },
+]
 
 [[package]]
 name = "iniconfig"
