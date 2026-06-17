@@ -62,15 +62,18 @@ message TextBlock {
 }
 
 // AgentToolUse is one built-in tool call the agent made during a turn: which
-// tool, and with what input.
+// tool, with what input, and an id that pairs it with its result.
 //
-// Like UserMessage and AgentMessage, it is a payload of an Event, so the call's
-// identity and timing live on the Event envelope (id, processed_at), not here. A
-// tool call and its result are separate events — the result comes back as its
-// own payload (an AgentToolResult), the same way the agent's text and its tool
-// calls arrive as distinct events rather than nested in one message. How a call's
-// permission was resolved (allow / ask / deny) is a later addition, once a backend
-// gates tools; field 3 is left for it.
+// Like UserMessage and AgentMessage, it is a payload of an Event, so the event's
+// place in history — its Event id and processed_at — lives on the envelope. The
+// id field here is a different handle: the tool call's own id, set when the agent
+// makes the call, that the matching AgentToolResult references as tool_use_id. It
+// exists because Event ids are assigned later (by the SessionStore on append), so
+// a result can't point at its call by Event id when the call is made. A tool call
+// and its result are separate events — the result is its own AgentToolResult —
+// just as the agent's text and its tool calls arrive as distinct events rather
+// than nested in one message. How a call's permission was resolved (allow / ask /
+// deny) is a later addition, once a backend gates tools.
 message AgentToolUse {
   // Name of the tool being invoked.
   string name = 1;
@@ -78,18 +81,22 @@ message AgentToolUse {
   // Input arguments for the call, an arbitrary JSON object. Struct is proto's
   // JSON-object type, so this round-trips through proto3 JSON unchanged.
   google.protobuf.Struct input = 2;
+
+  // The tool call's own id, unique within the turn. The AgentToolResult that
+  // answers this call carries it as tool_use_id.
+  string id = 3;
 }
 
 // AgentToolResult is the outcome of one AgentToolUse: what the tool returned, and
 // whether it failed.
 //
-// Like the other payloads, it is carried by an Event, so its own id and timing
-// live on the Event envelope. It points back to the call it answers by that
-// call's Event id (tool_use_id), pairing a result with its tool use. The content
-// reuses ContentBlock, so a result is text today and grows image/document/...
-// blocks exactly as ContentBlock does.
+// Like the other payloads, it is carried by an Event, so its own Event id and
+// timing live on the envelope. It points back to the call it answers by that
+// call's id (tool_use_id = AgentToolUse.id), pairing a result with its tool use.
+// The content reuses ContentBlock, so a result is text today and grows
+// image/document/... blocks exactly as ContentBlock does.
 message AgentToolResult {
-  // Event id of the AgentToolUse this result answers.
+  // The AgentToolUse.id this result answers.
   string tool_use_id = 1;
 
   // What the tool returned, in order.

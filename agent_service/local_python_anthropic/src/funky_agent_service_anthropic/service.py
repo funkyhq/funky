@@ -2,9 +2,9 @@
 
 Structurally satisfies the generated ``AgentServiceSync`` protocol: ``run_turn``
 takes its request plus a ``RequestContext`` and returns a ``RunTurnResponse``. The
-loop owns the model call and produces the Events; this layer unpacks the request,
-collects the events into the response, and builds the default Anthropic client
-when one isn't injected.
+loop owns the model call and the sandbox tool calls and produces the Events; this
+layer unpacks the request, collects the events into the response, and builds the
+default Anthropic client when one isn't injected.
 """
 
 from __future__ import annotations
@@ -22,13 +22,18 @@ class AgentServiceAnthropic:
     """Anthropic-backed ``funky.agent.v1.AgentService``."""
 
     def __init__(
-        self, client: anthropic.Anthropic | None = None, *, max_tokens: int = DEFAULT_MAX_TOKENS
+        self,
+        sandbox_client,
+        *,
+        client: anthropic.Anthropic | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
-        # anthropic.Anthropic() reads ANTHROPIC_API_KEY from the environment. The
-        # client is injectable so tests can drive the turn with a fake model
-        # instead of the real API (see tests/test_agent_service.py).
+        # sandbox_client is a SandboxRuntime client the agent execs its tools in.
+        # anthropic.Anthropic() reads ANTHROPIC_API_KEY from the environment. Both
+        # clients are injectable so tests can drive the turn with a fake model and
+        # a fake sandbox instead of the real services (see tests/).
         self._loop = AnthropicAgentLoop(
-            client or anthropic.Anthropic(), max_tokens=max_tokens
+            client or anthropic.Anthropic(), sandbox_client, max_tokens=max_tokens
         )
 
     def run_turn(

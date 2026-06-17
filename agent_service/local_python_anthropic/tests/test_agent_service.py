@@ -1,9 +1,11 @@
 """End-to-end test: boot the WSGI server on an ephemeral port and drive RunTurn
-through the generated ConnectRPC client, with a fake Anthropic client standing in
-for the model so the test stays hermetic — no API key, no network."""
+through the generated ConnectRPC client, with a fake Anthropic client and a fake
+SandboxRuntime standing in for the model and the sandbox so the test stays
+hermetic — no API key, no Docker, no network."""
 
 from __future__ import annotations
 
+import copy
 import threading
 from dataclasses import dataclass, field
 
@@ -20,54 +22,102 @@ from funky.type.v1 import agent_pb2, event_pb2, sandbox_pb2
 from funky_agent_service_anthropic.service import AgentServiceAnthropic
 
 
+# --- fake Anthropic model -------------------------------------------------
+
+
 @dataclass
-class _Block:
-    """A content block of an Anthropic response, shaped like the SDK's TextBlock."""
+class _Text:
+    """A text content block, shaped like the SDK's TextBlock."""
 
     text: str
     type: str = "text"
 
 
 @dataclass
-class _Message:
-    """An Anthropic Messages response: a list of content blocks."""
+class _ToolUse:
+    """A tool_use content block, shaped like the SDK's ToolUseBlock."""
+
+    id: str
+    name: str
+    input: dict
+    type: str = "tool_use"
+
+
+@dataclass
+class _Response:
+    """An Anthropic Messages response: content blocks plus a stop reason."""
 
     content: list
+    stop_reason: str = "end_turn"
 
 
 class _Messages:
-    """The ``client.messages`` namespace: records each create() and replies canned."""
+    """The ``client.messages`` namespace: returns the canned responses in order,
+    one per create() call, and records each call's kwargs for inspection."""
 
-    def __init__(self, blocks: list, calls: list) -> None:
-        self._blocks = blocks
+    def __init__(self, responses: list, calls: list) -> None:
+        self._responses = list(responses)
         self._calls = calls
 
-    def create(self, **kwargs) -> _Message:
-        self._calls.append(kwargs)
-        return _Message(content=list(self._blocks))
+    def create(self, **kwargs) -> _Response:
+        # Snapshot the kwargs: the loop keeps mutating the messages list in place
+        # after the call, and the real SDK serializes the request, so a live
+        # reference would not reflect what was actually sent.
+        self._calls.append(copy.deepcopy(kwargs))
+        return self._responses.pop(0)
 
 
 @dataclass
 class FakeAnthropic:
-    """Stands in for ``anthropic.Anthropic``: ``messages.create`` returns the given
-    blocks and stashes its kwargs in ``calls`` for the test to inspect."""
+    """Stands in for ``anthropic.Anthropic``: ``messages.create`` returns the next
+    canned response and stashes its kwargs in ``calls``."""
 
-    blocks: list
+    responses: list
     calls: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        self.messages = _Messages(self.blocks, self.calls)
+        self.messages = _Messages(self.responses, self.calls)
+
+
+# --- fake SandboxRuntime --------------------------------------------------
+
+
+@dataclass
+class _ExecResult:
+    """An ExecCommandResponse stand-in."""
+
+    exit_code: int = 0
+    stdout: str = ""
+    stderr: str = ""
+
+
+class FakeSandbox:
+    """Stands in for the SandboxRuntime client: ``exec_command`` returns a canned
+    result and records each request."""
+
+    def __init__(self, result: _ExecResult | None = None) -> None:
+        self._result = result or _ExecResult()
+        self.calls: list = []
+
+    def exec_command(self, request) -> _ExecResult:
+        self.calls.append(request)
+        return self._result
+
+
+# --- harness --------------------------------------------------------------
 
 
 @pytest.fixture
 def serve():
-    """Yields ``start(fake) -> client``: boots a server wired to the fake model and
-    returns a ConnectRPC client for it. All servers are torn down at teardown."""
+    """Yields ``start(model, sandbox) -> client``: boots a server wired to the fake
+    model and sandbox, returns a ConnectRPC client. Servers torn down at teardown."""
     started: list = []
 
-    def start(fake: FakeAnthropic) -> AgentServiceClientSync:
-        app = AgentServiceWSGIApplication(AgentServiceAnthropic(client=fake))
-        server = create_server(app, host="127.0.0.1", port=0)
+    def start(model: FakeAnthropic, sandbox: FakeSandbox) -> AgentServiceClientSync:
+        service = AgentServiceAnthropic(sandbox, client=model)
+        server = create_server(
+            AgentServiceWSGIApplication(service), host="127.0.0.1", port=0
+        )
         port = server.socket.getsockname()[1]
         stopping = threading.Event()
 
@@ -112,50 +162,152 @@ def _agent_config(system_prompt: str = "You are a careful research assistant.") 
     )
 
 
-def test_run_turn_returns_all_events_at_once(serve):
-    client = serve(FakeAnthropic([_Block("Hello"), _Block(" world")]))
-
-    response = client.run_turn(
-        pb.RunTurnRequest(
-            agent_config=_agent_config(),
-            prompt=_user("hi"),
-            sandbox=sandbox_pb2.Sandbox(id="sbx_1"),
-        )
+def _request(events=(), prompt="hi", sandbox_id="sbx_1", system="You are a careful research assistant.") -> pb.RunTurnRequest:
+    return pb.RunTurnRequest(
+        agent_config=_agent_config(system),
+        events=list(events),
+        prompt=_user(prompt),
+        sandbox=sandbox_pb2.Sandbox(id=sandbox_id),
     )
 
-    # The unary RPC returns one response holding every event the turn produced —
-    # one AgentMessage per text block the model returned.
+
+# --- tests ----------------------------------------------------------------
+
+
+def test_text_only_turn_returns_agent_messages(serve):
+    sandbox = FakeSandbox()
+    client = serve(FakeAnthropic([_Response([_Text("Hello"), _Text(" world")])]), sandbox)
+
+    response = client.run_turn(_request())
+
     assert [
         e.agent_message.content[0].text.text for e in response.events
     ] == ["Hello", " world"]
-    # The events are payload-only: id/session_id/processed_at are the
-    # SessionStore's to assign when the Client appends them to history.
+    # No tool calls -> the sandbox is never touched.
+    assert sandbox.calls == []
+    # Events are payload-only: id/session_id/processed_at are the SessionStore's.
     assert all(
         e.id == "" and e.session_id == "" and not e.HasField("processed_at")
         for e in response.events
     )
 
 
+def test_agent_runs_a_tool_in_the_sandbox(serve):
+    model = FakeAnthropic(
+        [
+            _Response(
+                [_ToolUse(id="toolu_1", name="bash", input={"command": "echo hi"})],
+                stop_reason="tool_use",
+            ),
+            _Response([_Text("It printed hi.")]),
+        ]
+    )
+    sandbox = FakeSandbox(_ExecResult(exit_code=0, stdout="hi\n"))
+    client = serve(model, sandbox)
+
+    response = client.run_turn(_request(prompt="run echo hi", sandbox_id="sbx_42"))
+
+    # The command ran in the right sandbox, wrapped for a shell.
+    [exec_call] = sandbox.calls
+    assert exec_call.sandbox_id == "sbx_42"
+    assert list(exec_call.command) == ["bash", "-c", "echo hi"]
+
+    # The turn's events: the tool call, its result, then the agent's reply.
+    use, result, message = response.events
+    assert use.agent_tool_use.id == "toolu_1"
+    assert use.agent_tool_use.name == "bash"
+    assert use.agent_tool_use.input["command"] == "echo hi"
+    assert result.agent_tool_result.tool_use_id == "toolu_1"
+    assert result.agent_tool_result.content[0].text.text == "hi\n"
+    assert result.agent_tool_result.is_error is False
+    assert message.agent_message.content[0].text.text == "It printed hi."
+
+    # The second model call carried the tool_use back and the tool_result in.
+    second = model.calls[1]["messages"]
+    assert second[-2] == {
+        "role": "assistant",
+        "content": [
+            {"type": "tool_use", "id": "toolu_1", "name": "bash", "input": {"command": "echo hi"}}
+        ],
+    }
+    assert second[-1] == {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_1", "content": "hi\n", "is_error": False}
+        ],
+    }
+
+
+def test_failed_command_is_flagged_as_an_error(serve):
+    model = FakeAnthropic(
+        [
+            _Response(
+                [_ToolUse(id="toolu_x", name="bash", input={"command": "false"})],
+                stop_reason="tool_use",
+            ),
+            _Response([_Text("That failed.")]),
+        ]
+    )
+    sandbox = FakeSandbox(_ExecResult(exit_code=1, stderr="boom"))
+    client = serve(model, sandbox)
+
+    response = client.run_turn(_request())
+
+    result = response.events[1].agent_tool_result
+    assert result.is_error is True
+    assert "boom" in result.content[0].text.text
+    assert "[exit code 1]" in result.content[0].text.text
+    # The error flag is carried back to the model too.
+    assert model.calls[1]["messages"][-1]["content"][0]["is_error"] is True
+
+
+def test_history_with_tool_events_round_trips_to_the_model(serve):
+    model = FakeAnthropic([_Response([_Text("ok")])])
+    sandbox = FakeSandbox()
+    client = serve(model, sandbox)
+
+    use = event_pb2.AgentToolUse(id="toolu_h", name="bash")
+    use.input.update({"command": "ls"})
+    result = event_pb2.AgentToolResult(
+        tool_use_id="toolu_h",
+        content=[event_pb2.ContentBlock(text=event_pb2.TextBlock(text="a\nb"))],
+    )
+    history = [
+        event_pb2.Event(user_message=_user("list files")),
+        event_pb2.Event(agent_tool_use=use),
+        event_pb2.Event(agent_tool_result=result),
+    ]
+    client.run_turn(_request(events=history, prompt="thanks"))
+
+    # The prior tool call and its result reconstruct into a valid Anthropic
+    # exchange: tool_use in an assistant message, tool_result in a user message,
+    # paired by id.
+    messages = model.calls[0]["messages"]
+    assert messages[0] == {"role": "user", "content": [{"type": "text", "text": "list files"}]}
+    assert messages[1] == {
+        "role": "assistant",
+        "content": [{"type": "tool_use", "id": "toolu_h", "name": "bash", "input": {"command": "ls"}}],
+    }
+    assert messages[2] == {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_h", "content": "a\nb", "is_error": False},
+            {"type": "text", "text": "thanks"},
+        ],
+    }
+
+
 def test_history_and_prompt_become_anthropic_messages(serve):
-    fake = FakeAnthropic([_Block("ok")])
-    client = serve(fake)
+    model = FakeAnthropic([_Response([_Text("ok")])])
+    client = serve(model, FakeSandbox())
 
     history = [
         event_pb2.Event(user_message=_user("first question")),
         event_pb2.Event(agent_message=_agent_message("first answer")),
     ]
-    client.run_turn(
-        pb.RunTurnRequest(
-            agent_config=_agent_config(),
-            events=history,
-            prompt=_user("second question"),
-            sandbox=sandbox_pb2.Sandbox(id="sbx_1"),
-        )
-    )
+    client.run_turn(_request(events=history, prompt="second question"))
 
-    # The model is asked with the agent's model + system prompt, and the history
-    # in order with the new prompt appended as the trailing user turn.
-    [call] = fake.calls
+    [call] = model.calls
     assert call["model"] == "claude-sonnet-4-6"
     assert call["system"] == "You are a careful research assistant."
     assert call["messages"] == [
@@ -166,17 +318,10 @@ def test_history_and_prompt_become_anthropic_messages(serve):
 
 
 def test_empty_system_prompt_is_omitted(serve):
-    fake = FakeAnthropic([_Block("ok")])
-    client = serve(fake)
+    model = FakeAnthropic([_Response([_Text("ok")])])
+    client = serve(model, FakeSandbox())
 
-    client.run_turn(
-        pb.RunTurnRequest(
-            agent_config=_agent_config(system_prompt=""),
-            prompt=_user("hi"),
-            sandbox=sandbox_pb2.Sandbox(id="sbx_1"),
-        )
-    )
+    client.run_turn(_request(system=""))
 
-    # A blank system prompt is left off the request rather than sent as "".
-    [call] = fake.calls
+    [call] = model.calls
     assert "system" not in call
