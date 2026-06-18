@@ -1,0 +1,42 @@
+# funky-client — the thin orchestrator developers call. It wires the four Funky
+# services together over their generated ConnectRPC clients; it has no server and
+# no backend of its own. See README.md.
+[project]
+name = "funky-client"
+version = "0.0.0"
+description = "FunkyClient — the orchestrator that ties the four Funky services together."
+requires-python = ">=3.10"
+dependencies = [
+  "funky-protos",
+]
+
+# `funky-chat --local` boots the four backends in-process. They're optional: the
+# client only needs them for --local, so they live behind a `local` extra
+# (`pip install "funky-client[local]"`). In this uv workspace they're already
+# present, so --local works out of the box.
+[project.optional-dependencies]
+local = [
+  "funky-config-registry-jsonl",
+  "funky-session-store-jsonl",
+  "funky-sandbox-runtime-docker",
+  "funky-agent-service-anthropic",
+]
+
+# funky-chat: one command to start a conversation in the terminal.
+[project.scripts]
+funky-chat = "funky_client.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/funky_client"]
+
+# Resolve the funky packages from the workspace rather than PyPI.
+[tool.uv.sources]
+funky-protos = { workspace = true }
+funky-config-registry-jsonl = { workspace = true }
+funky-session-store-jsonl = { workspace = true }
+funky-sandbox-runtime-docker = { workspace = true }
+funky-agent-service-anthropic = { workspace = true }

@@ -11,6 +11,7 @@ members = [
   "session_store/local_python_jsonl",
   "sandbox_runtime/local_python_docker",
   "agent_service/local_python_anthropic",
+  "client/python",
 ]
 
 # Test tooling, shared across all backends. Installed by `uv sync`.

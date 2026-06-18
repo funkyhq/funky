@@ -5,6 +5,7 @@ requires-python = ">=3.10"
 [manifest]
 members = [
     "funky-agent-service-anthropic",
+    "funky-client",
     "funky-config-registry-jsonl",
     "funky-protos",
     "funky-sandbox-runtime-docker",
@@ -252,6 +253,32 @@ requires-dist = [
     { name = "funky-protos", editable = "gen/python" },
     { name = "waitress", specifier = ">=3" },
 ]
+
+[[package]]
+name = "funky-client"
+version = "0.0.0"
+source = { editable = "client/python" }
+dependencies = [
+    { name = "funky-protos" },
+]
+
+[package.optional-dependencies]
+local = [
+    { name = "funky-agent-service-anthropic" },
+    { name = "funky-config-registry-jsonl" },
+    { name = "funky-sandbox-runtime-docker" },
+    { name = "funky-session-store-jsonl" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "funky-agent-service-anthropic", marker = "extra == 'local'", editable = "agent_service/local_python_anthropic" },
+    { name = "funky-config-registry-jsonl", marker = "extra == 'local'", editable = "config_registry/local_python_jsonl" },
+    { name = "funky-protos", editable = "gen/python" },
+    { name = "funky-sandbox-runtime-docker", marker = "extra == 'local'", editable = "sandbox_runtime/local_python_docker" },
+    { name = "funky-session-store-jsonl", marker = "extra == 'local'", editable = "session_store/local_python_jsonl" },
+]
+provides-extras = ["local"]
 
 [[package]]
 name = "funky-config-registry-jsonl"
