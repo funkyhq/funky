@@ -19,3 +19,9 @@ steps:
 
 images:
   - ${_IMAGE}
+
+options:
+  # A user-specified build service account (set on a Cloud Run deploy trigger)
+  # has no default logs bucket, so a logging destination must be chosen here or
+  # the build fails to start with "if 'build.service_account' is specified ...".
+  logging: CLOUD_LOGGING_ONLY
