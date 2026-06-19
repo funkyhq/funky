@@ -3,12 +3,13 @@
 # virtualenv and resolve each other by path instead of via PyPI.
 #
 # Members are added here as new backends land, e.g.
-#   "config_registry/gcp_python_postgres", "session_store/gcp_python_postgres".
+#   "config_registry/gcp_python_postgres".
 [tool.uv.workspace]
 members = [
   "gen/python",
   "config_registry/local_python_jsonl",
   "session_store/local_python_jsonl",
+  "session_store/gcp_python_postgres",
   "sandbox_runtime/local_python_docker",
   "agent_service/local_python_anthropic",
   "client/python",
@@ -18,4 +19,8 @@ members = [
 [dependency-groups]
 dev = [
   "pytest>=8",
+  # aiosqlite lets the Postgres backend's store run against an in-process SQLite
+  # engine in tests — the ORM is engine-agnostic, so the wire path is exercised
+  # without a live Cloud SQL instance (see session_store/gcp_python_postgres).
+  "aiosqlite>=0.20",
 ]
