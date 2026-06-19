@@ -1,0 +1,21 @@
+# Cloud Build config for the GCP Cloud SQL (Postgres) SessionStore image.
+#
+# Submit from the REPOSITORY ROOT so the whole uv workspace — proto/, buf.gen.yaml,
+# buf.yaml, gen/python — is uploaded as the build context. The Dockerfile's
+# `COPY . .` and `buf generate` need those files; building with a subdirectory as
+# the context is what produces "read buf.gen.yaml: file does not exist".
+#
+#   gcloud builds submit \
+#     --config session_store/gcp_python_postgres/cloudbuild.yaml \
+#     --substitutions=_IMAGE=REGION-docker.pkg.dev/PROJECT/REPO/funky-session-store-postgres
+#
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=session_store/gcp_python_postgres/Dockerfile
+      - --tag=${_IMAGE}
+      - .   # build context = the uploaded source root (the repository root)
+
+images:
+  - ${_IMAGE}

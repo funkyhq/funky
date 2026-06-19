@@ -102,16 +102,35 @@ FUNKY_SESSION_STORE_TEST_DATABASE_URL="postgresql+asyncpg://user:pass@localhost/
 
 The [`Dockerfile`](./Dockerfile) builds a self-contained image: it runs
 `buf generate` and installs this backend from the committed lockfile, then serves
-on `$PORT` bound to all interfaces (Cloud Run's contract). **Build with the
-repository root as the context** — the backend resolves `funky-protos` from the
-uv workspace.
+on `$PORT` bound to all interfaces (Cloud Run's contract).
+
+> **The build context must be the repository root, not this directory.** The
+> backend resolves `funky-protos` from the uv workspace, and `buf generate` reads
+> `buf.gen.yaml`, `buf.yaml`, and `proto/` — all at the repo root. Building with
+> the package directory as the context fails with
+> `read buf.gen.yaml: file does not exist`.
+
+**Cloud Build** — use [`cloudbuild.yaml`](./cloudbuild.yaml), and submit from the
+repository root so the workspace is uploaded as the context:
 
 ```bash
-# From the repository root. Cloud Run is linux/amd64.
+gcloud builds submit \
+  --config session_store/gcp_python_postgres/cloudbuild.yaml \
+  --substitutions=_IMAGE=REGION-docker.pkg.dev/PROJECT/REPO/funky-session-store-postgres
+```
+
+**Or build locally** and push (Cloud Run is linux/amd64):
+
+```bash
+# From the repository root.
 IMAGE="REGION-docker.pkg.dev/PROJECT/REPO/funky-session-store-postgres"
 docker build -f session_store/gcp_python_postgres/Dockerfile --platform linux/amd64 -t "$IMAGE" .
 docker push "$IMAGE"
+```
 
+Then deploy the image:
+
+```bash
 gcloud run deploy funky-session-store-postgres \
   --image "$IMAGE" --region REGION \
   --service-account funky-runtime@PROJECT.iam.gserviceaccount.com \
