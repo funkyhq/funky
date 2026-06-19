@@ -15,7 +15,7 @@ named by the three axes that distinguish a backend:
 | Directory | Deployment | Language | Storage |
 |---|---|---|---|
 | `local_python_jsonl` | local | Python | JSONL files |
-| *(future)* `gcp_python_postgres` | GCP (Cloud SQL) | Python | Postgres |
+| `gcp_python_postgres` | GCP (Cloud SQL) | Python | Postgres |
 
 Every backend implements the same wire contract, so the forthcoming **Client**
 orchestrator — and any ConnectRPC client — can talk to any of them unchanged.
