@@ -9,8 +9,11 @@ Cloud Run can scale it to zero and back.
 The four backend URLs come from the environment (``CONFIG_REGISTRY_URL``,
 ``SESSION_STORE_URL``, ``SANDBOX_RUNTIME_URL``, ``AGENT_SERVICE_URL``), which is
 how a Cloud Run deploy points it at the other services; each falls back to the
-local default port so it runs locally with no config. Auth is intentionally not
-handled yet — deploy the backends ``--allow-unauthenticated`` for now.
+local default port so it runs locally with no config. When those URLs are https
+(Cloud Run), the client calls each backend with a Google OIDC ID token, so the
+backends can be deployed private — ``--no-allow-unauthenticated`` with only this
+service's account granted ``roles/run.invoker``; local http backends are called
+without auth (see :func:`funky_client.client._id_token_auth`).
 
 Endpoints (JSON in, JSON out, snake_case throughout):
 

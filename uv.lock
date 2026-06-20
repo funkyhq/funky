@@ -912,6 +912,7 @@ local = [
     { name = "funky-session-store-jsonl" },
 ]
 server = [
+    { name = "google-auth" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -923,6 +924,7 @@ requires-dist = [
     { name = "funky-protos", editable = "gen/python" },
     { name = "funky-sandbox-runtime-docker", marker = "extra == 'local'", editable = "sandbox_runtime/local_python_docker" },
     { name = "funky-session-store-jsonl", marker = "extra == 'local'", editable = "session_store/local_python_jsonl" },
+    { name = "google-auth", marker = "extra == 'server'", specifier = ">=2.0" },
     { name = "starlette", marker = "extra == 'server'", specifier = ">=0.37" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30" },
 ]

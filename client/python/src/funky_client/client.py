@@ -22,6 +22,8 @@ The constructor takes the four clients directly, so tests can pass fakes;
 
 from __future__ import annotations
 
+import time
+
 from funky.agent.v1 import agent_service_pb2 as agent_service_pb
 from funky.agent.v1.agent_service_connect import AgentServiceClientSync
 from funky.registry.v1 import config_registry_pb2 as registry_pb
@@ -57,12 +59,26 @@ class FunkyClient:
         sandbox_runtime_url: str,
         agent_service_url: str,
     ) -> "FunkyClient":
-        """Build a client from the four service base URLs."""
+        """Build a client from the four service base URLs.
+
+        Backends served over https (i.e. on Cloud Run) are called with a Google
+        OIDC ID token, so they can be deployed private — ``--no-allow-unauthenticated``
+        with only this client's service account granted ``roles/run.invoker``.
+        Local http backends are called as-is. See :func:`_id_token_auth`.
+        """
         return cls(
-            ConfigRegistryClientSync(config_registry_url),
-            SessionStoreClientSync(session_store_url),
-            SandboxRuntimeClientSync(sandbox_runtime_url),
-            AgentServiceClientSync(agent_service_url),
+            ConfigRegistryClientSync(
+                config_registry_url, interceptors=_id_token_auth(config_registry_url)
+            ),
+            SessionStoreClientSync(
+                session_store_url, interceptors=_id_token_auth(session_store_url)
+            ),
+            SandboxRuntimeClientSync(
+                sandbox_runtime_url, interceptors=_id_token_auth(sandbox_runtime_url)
+            ),
+            AgentServiceClientSync(
+                agent_service_url, interceptors=_id_token_auth(agent_service_url)
+            ),
         )
 
 
@@ -191,3 +207,78 @@ def _user_message(prompt: str | event_pb2.UserMessage) -> event_pb2.UserMessage:
     return event_pb2.UserMessage(
         content=[event_pb2.ContentBlock(text=event_pb2.TextBlock(text=prompt))]
     )
+
+
+def _id_token_auth(url: str) -> tuple:
+    """ConnectRPC interceptors that authenticate calls to the backend at *url*.
+
+    Cloud Run backends locked down with ``--no-allow-unauthenticated`` (only the
+    client's service account granted ``roles/run.invoker``) reject any caller
+    without a Google-signed OIDC ID token whose audience is the backend's URL.
+    Those backends are always https; local-dev backends are plain http and need
+    no auth — so this returns nothing for http, leaving ``--local`` and the tests
+    (which inject fakes through the constructor, not ``from_urls``) untouched.
+    """
+    if not url.startswith("https://"):
+        return ()
+    try:
+        import google.auth.transport.requests  # noqa: F401
+        import google.oauth2.id_token  # noqa: F401
+    except ModuleNotFoundError as err:  # pragma: no cover - deploy-time dependency
+        raise RuntimeError(
+            f"Calling the https backend {url!r} needs a Cloud Run ID token, which "
+            "requires google-auth. Install the client's 'server' extra (the Cloud "
+            "Run image already does): pip install 'funky-client[server]'."
+        ) from err
+    return (_IdTokenAuth(url),)
+
+
+class _IdTokenAuth:
+    """Attaches a Cloud Run ID token to every request to one backend.
+
+    A ConnectRPC *metadata* interceptor: it implements ``on_start_sync`` /
+    ``on_end_sync``, so the runtime applies it to unary and streaming calls alike.
+    On Cloud Run, ``fetch_id_token`` mints an OIDC token for the runtime service
+    account via the metadata server, with the backend's URL as the audience —
+    exactly what the receiving service verifies. Tokens last an hour; we cache and
+    refresh five minutes early so we don't mint one per RPC.
+    """
+
+    def __init__(self, audience: str) -> None:
+        import google.auth.transport.requests
+
+        self._audience = audience
+        self._request = google.auth.transport.requests.Request()
+        self._token: str | None = None
+        self._refresh_at = 0.0
+
+    def on_start_sync(self, ctx):
+        ctx.request_headers()["authorization"] = f"Bearer {self._id_token()}"
+        return None
+
+    def on_end_sync(self, token, ctx, error) -> None:
+        return None
+
+    def _id_token(self) -> str:
+        if self._token is None or time.time() >= self._refresh_at:
+            import google.oauth2.id_token
+
+            self._token = google.oauth2.id_token.fetch_id_token(
+                self._request, self._audience
+            )
+            self._refresh_at = _jwt_expiry(self._token) - 300
+        return self._token
+
+
+def _jwt_expiry(token: str) -> float:
+    """The ``exp`` (epoch seconds) claim of a JWT, read without verifying it.
+
+    Used only to decide when to refresh a token we just minted ourselves, so
+    reading the claim without signature verification is fine here.
+    """
+    import base64
+    import json
+
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)  # restore base64 padding
+    return float(json.loads(base64.urlsafe_b64decode(payload))["exp"])

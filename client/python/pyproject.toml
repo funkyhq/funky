@@ -29,6 +29,9 @@ server = [
   "starlette>=0.37",
   # ASGI server, as the Postgres backends use; supports SSE streaming.
   "uvicorn>=0.30",
+  # Mint Cloud Run ID tokens so the client can call private (auth-required)
+  # backends; see funky_client.client._IdTokenAuth.
+  "google-auth>=2.0",
 ]
 
 # funky-chat: one command to start a conversation in the terminal.
