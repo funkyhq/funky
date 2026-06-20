@@ -21,10 +21,21 @@ local = [
   "funky-sandbox-runtime-docker",
   "funky-agent-service-anthropic",
 ]
+# `funky-client-server` exposes the client over HTTP for Cloud Run. The HTTP
+# stack is optional — the library and `funky-chat` don't need it — so it lives
+# behind a `server` extra (`pip install "funky-client[server]"`).
+server = [
+  # Small ASGI framework for the REST + SSE endpoints.
+  "starlette>=0.37",
+  # ASGI server, as the Postgres backends use; supports SSE streaming.
+  "uvicorn>=0.30",
+]
 
 # funky-chat: one command to start a conversation in the terminal.
+# funky-client-server: the same client over HTTP, for Cloud Run.
 [project.scripts]
 funky-chat = "funky_client.cli:main"
+funky-client-server = "funky_client.server:main"
 
 [build-system]
 requires = ["hatchling"]
