@@ -110,13 +110,18 @@ on `$PORT` bound to all interfaces (Cloud Run's contract).
 > the package directory as the context fails with
 > `read buf.gen.yaml: file does not exist`.
 
-**Cloud Build** — use [`cloudbuild.yaml`](./cloudbuild.yaml), and submit from the
-repository root so the workspace is uploaded as the context:
+**Cloud Build / Cloud Run trigger** — [`cloudbuild.yaml`](./cloudbuild.yaml) is the
+config a Cloud Run continuous-deployment trigger generates (build → push to
+Artifact Registry → deploy), with one fix: the Docker build context is the
+repository root (`.`), not the package directory. The `_AR_*`, `_SERVICE_NAME`,
+and `_DEPLOY_REGION` substitutions carry defaults in the file and are set by the
+trigger; `$REPO_NAME` / `$COMMIT_SHA` are Cloud Build built-ins. To run it by
+hand from the repository root, supply the built-ins the trigger would inject:
 
 ```bash
 gcloud builds submit \
   --config session_store/gcp_python_postgres/cloudbuild.yaml \
-  --substitutions=_IMAGE=REGION-docker.pkg.dev/PROJECT/REPO/funky-session-store-postgres
+  --substitutions=REPO_NAME=funky,COMMIT_SHA=manual
 ```
 
 **Or build locally** and push (Cloud Run is linux/amd64):
