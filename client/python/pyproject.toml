@@ -30,8 +30,10 @@ server = [
   # ASGI server, as the Postgres backends use; supports SSE streaming.
   "uvicorn>=0.30",
   # Mint Cloud Run ID tokens so the client can call private (auth-required)
-  # backends; see funky_client.client._IdTokenAuth.
-  "google-auth>=2.0",
+  # backends; see funky_client.client._IdTokenAuth. The [requests] extra pulls
+  # in `requests`, which google.auth.transport.requests needs but google-auth
+  # does not install on its own.
+  "google-auth[requests]>=2.0",
 ]
 
 # funky-chat: one command to start a conversation in the terminal.
