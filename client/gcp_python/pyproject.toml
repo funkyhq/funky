@@ -10,20 +10,10 @@ dependencies = [
   "funky-protos",
 ]
 
-# `funky-chat --local` boots the four backends in-process. They're optional: the
-# client only needs them for --local, so they live behind a `local` extra
-# (`pip install "funky-client[local]"`). In this uv workspace they're already
-# present, so --local works out of the box.
-[project.optional-dependencies]
-local = [
-  "funky-config-registry-jsonl",
-  "funky-session-store-jsonl",
-  "funky-sandbox-runtime-docker",
-  "funky-agent-service-anthropic",
-]
 # `funky-client-server` exposes the client over HTTP for Cloud Run. The HTTP
-# stack is optional — the library and `funky-chat` don't need it — so it lives
-# behind a `server` extra (`pip install "funky-client[server]"`).
+# stack is optional — the library itself doesn't need it — so it lives behind a
+# `server` extra (`pip install "funky-client[server]"`).
+[project.optional-dependencies]
 server = [
   # Small ASGI framework for the REST + SSE endpoints.
   "starlette>=0.37",
@@ -36,10 +26,8 @@ server = [
   "google-auth[requests]>=2.0",
 ]
 
-# funky-chat: one command to start a conversation in the terminal.
-# funky-client-server: the same client over HTTP, for Cloud Run.
+# funky-client-server: the client over HTTP, for Cloud Run.
 [project.scripts]
-funky-chat = "funky_client.cli:main"
 funky-client-server = "funky_client.server:main"
 
 [build-system]
@@ -49,10 +37,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/funky_client"]
 
-# Resolve the funky packages from the workspace rather than PyPI.
+# Resolve funky-protos from the workspace rather than PyPI.
 [tool.uv.sources]
 funky-protos = { workspace = true }
-funky-config-registry-jsonl = { workspace = true }
-funky-session-store-jsonl = { workspace = true }
-funky-sandbox-runtime-docker = { workspace = true }
-funky-agent-service-anthropic = { workspace = true }

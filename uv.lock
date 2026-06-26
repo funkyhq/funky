@@ -906,12 +906,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-local = [
-    { name = "funky-agent-service-anthropic" },
-    { name = "funky-config-registry-jsonl" },
-    { name = "funky-sandbox-runtime-docker" },
-    { name = "funky-session-store-jsonl" },
-]
 server = [
     { name = "google-auth", extra = ["requests"] },
     { name = "starlette" },
@@ -920,16 +914,12 @@ server = [
 
 [package.metadata]
 requires-dist = [
-    { name = "funky-agent-service-anthropic", marker = "extra == 'local'", editable = "agent_service/local_python_anthropic" },
-    { name = "funky-config-registry-jsonl", marker = "extra == 'local'", editable = "config_registry/local_python_jsonl" },
     { name = "funky-protos", editable = "gen/python" },
-    { name = "funky-sandbox-runtime-docker", marker = "extra == 'local'", editable = "sandbox_runtime/local_python_docker" },
-    { name = "funky-session-store-jsonl", marker = "extra == 'local'", editable = "session_store/local_python_jsonl" },
     { name = "google-auth", extras = ["requests"], marker = "extra == 'server'", specifier = ">=2.0" },
     { name = "starlette", marker = "extra == 'server'", specifier = ">=0.37" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30" },
 ]
-provides-extras = ["local", "server"]
+provides-extras = ["server"]
 
 [[package]]
 name = "funky-client-local"

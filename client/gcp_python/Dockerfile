@@ -32,8 +32,7 @@ COPY . .
 
 # Generate the stubs, then install just the client with its `server` extra (the
 # HTTP stack) plus funky-protos from the committed lockfile into /app/.venv.
-# --no-dev drops the test-only deps; the `local` extra (the in-process backends)
-# is left out — this image only runs the HTTP front door.
+# --no-dev drops the test-only deps — this image only runs the HTTP front door.
 RUN buf generate \
  && uv sync --frozen --no-dev --extra server --package funky-client
 

@@ -216,8 +216,8 @@ def _id_token_auth(url: str) -> tuple:
     client's service account granted ``roles/run.invoker``) reject any caller
     without a Google-signed OIDC ID token whose audience is the backend's URL.
     Those backends are always https; local-dev backends are plain http and need
-    no auth — so this returns nothing for http, leaving ``--local`` and the tests
-    (which inject fakes through the constructor, not ``from_urls``) untouched.
+    no auth — so this returns nothing for http, leaving local-dev runs and the
+    tests (which inject fakes through the constructor, not ``from_urls``) untouched.
     """
     if not url.startswith("https://"):
         return ()
