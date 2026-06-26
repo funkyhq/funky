@@ -48,6 +48,42 @@ Each is an interface. Funky doesn't care whether your `SandboxRuntime` is backed
 3. **Start a session.** Launch a session that references your agent and environment configuration.
 4. **Send events and stream responses.** Send user messages as events. The agent autonomously executes tools and streams back results through server-sent events (SSE). Event history is persisted server-side and can be fetched in full.
 
+## Run the whole stack locally with Docker Compose
+
+The repo ships a fully local implementation of each of the four contracts plus the
+REST client, wired together in [`docker-compose.yml`](./docker-compose.yml): a
+JSONL [`ConfigRegistry`](./config_registry/local_python_jsonl) and
+[`SessionStore`](./session_store/local_python_jsonl), a Docker-backed
+[`SandboxRuntime`](./sandbox_runtime/local_python_docker), an Anthropic
+[`AgentService`](./agent_service/local_python_anthropic), and the
+[`Client`](./client/local_python) as the one published front door (`:8000`).
+
+```bash
+cp .env.example .env        # then put your ANTHROPIC_API_KEY in it
+docker compose up --build
+```
+
+Then drive a turn against the client (see [its README](./client/local_python)):
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/agents \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"coder","model":"claude-sonnet-4-6","system_prompt":"Be brief."}'
+curl -s -X POST http://127.0.0.1:8000/v1/environments -d '{}'
+curl -s -X POST http://127.0.0.1:8000/v1/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_id":"agt_...","environment_id":"env_..."}'
+curl -s -X POST http://127.0.0.1:8000/v1/sessions/ses_.../messages \
+  -H 'Content-Type: application/json' -d '{"prompt":"List the files in the repo."}'
+```
+
+The `sandbox-runtime` service bind-mounts the host Docker socket and runs each
+sandbox as a *sibling* container on the host daemon (Docker-out-of-Docker). The
+config and session stores persist to named volumes, so they survive
+`docker compose down`; add `-v` to wipe them. A sandbox left behind by a crash is
+labelled and reapable with
+`docker rm -f $(docker ps -aq --filter label=funky.sandbox)`.
+
 ## Pluggable by design
 
 Every contract is an interface, so each layer is independently swappable. These are *examples of the kinds of backends that fit each contract*, not a list of shipped integrations.

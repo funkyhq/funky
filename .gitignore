@@ -11,3 +11,6 @@ __pycache__/
 
 # Example runtime data (the JSONL config stores).
 data/
+
+# Local Docker Compose secrets (ANTHROPIC_API_KEY); .env.example is committed.
+.env

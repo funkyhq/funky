@@ -16,3 +16,7 @@ gen/python/funky/
 # Example runtime data and workspace scratch.
 data/
 .context/
+
+# Local Compose secrets — never bake ANTHROPIC_API_KEY into an image layer. It's
+# passed to the agent-service at run time via the environment, not the build.
+.env

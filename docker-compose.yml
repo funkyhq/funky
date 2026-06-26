@@ -1,0 +1,92 @@
+# The whole local Funky stack in one file: the four backends plus the REST client,
+# all built from the repo as the build context (each Dockerfile generates the proto
+# stubs and installs just its own package). Bring it up from the repo root:
+#
+#   cp .env.example .env        # then put your ANTHROPIC_API_KEY in it
+#   docker compose up --build
+#
+# Then drive a turn against the client on http://127.0.0.1:8000 (see
+# client/local_python/README.md). Only the client is published to the host; the
+# four backends talk to each other over the compose network by service name.
+#
+# Ports mirror each backend's own default: config-registry 8080, session-store
+# 8081, sandbox-runtime 8082, agent-service 8083, client 8000. Every server is
+# launched with --host 0.0.0.0 (their default is loopback-only, which siblings
+# can't reach) via each image's CMD.
+
+services:
+  config-registry:
+    build:
+      context: .
+      dockerfile: config_registry/local_python_jsonl/Dockerfile
+    # JSONL configs persist in a named volume so they survive `compose down`.
+    volumes:
+      - config-data:/data
+    restart: unless-stopped
+
+  session-store:
+    build:
+      context: .
+      dockerfile: session_store/local_python_jsonl/Dockerfile
+    # JSONL sessions + events persist in a named volume.
+    volumes:
+      - session-data:/data
+    restart: unless-stopped
+
+  sandbox-runtime:
+    build:
+      context: .
+      dockerfile: sandbox_runtime/local_python_docker/Dockerfile
+    # Option 1 — Docker-out-of-Docker: bind-mount the host daemon's socket so the
+    # runtime can spawn each sandbox as a *sibling* container on the host. Simple
+    # and shares the host image cache, at the cost of giving this one service
+    # effective root on the host daemon. Sandboxes self-clean per turn (the client
+    # destroys them in a finally) and carry a funky.sandbox=true label, so any left
+    # by a crash are reapable:
+    #   docker rm -f $(docker ps -aq --filter label=funky.sandbox)
+    #
+    # To harden without code changes (the runtime honours DOCKER_HOST via
+    # docker.from_env()), drop the socket mount and put a docker-socket-proxy in
+    # front instead, then set `environment: DOCKER_HOST: tcp://docker-proxy:2375`.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  agent-service:
+    build:
+      context: .
+      dockerfile: agent_service/local_python_anthropic/Dockerfile
+    environment:
+      # A turn makes a real, billed Anthropic call; taken from .env (or the shell).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      # The sandbox URL is a CLI flag on the server (no env fallback); the image's
+      # CMD forwards this var into --sandbox-runtime-url.
+      SANDBOX_RUNTIME_URL: http://sandbox-runtime:8082
+    depends_on:
+      - sandbox-runtime
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: client/local_python/Dockerfile
+    # The one service published to the host.
+    ports:
+      - "8000:8000"
+    # The client reads each backend's base URL from the environment.
+    environment:
+      CONFIG_REGISTRY_URL: http://config-registry:8080
+      SESSION_STORE_URL: http://session-store:8081
+      SANDBOX_RUNTIME_URL: http://sandbox-runtime:8082
+      AGENT_SERVICE_URL: http://agent-service:8083
+    depends_on:
+      - config-registry
+      - session-store
+      - sandbox-runtime
+      - agent-service
+    restart: unless-stopped
+
+# Persist the JSONL stores across `compose down`. Remove with `compose down -v`.
+volumes:
+  config-data:
+  session-data:
