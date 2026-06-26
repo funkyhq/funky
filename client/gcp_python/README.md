@@ -1,4 +1,4 @@
-# funky-client (python)
+# funky-client (gcp_python)
 
 The thin **Client** from the [architecture](../../docs/architecture.mmd) — the
 orchestrator developers actually call. It wires the four Funky services together
@@ -185,7 +185,7 @@ hand from the repository root:
 
 ```bash
 gcloud builds submit \
-  --config client/python/cloudbuild.yaml \
+  --config client/gcp_python/cloudbuild.yaml \
   --substitutions=REPO_NAME=funky,COMMIT_SHA=manual
 ```
 
@@ -194,7 +194,7 @@ gcloud builds submit \
 ```bash
 # From the repository root.
 IMAGE="REGION-docker.pkg.dev/PROJECT/REPO/funky-client"
-docker build -f client/python/Dockerfile --platform linux/amd64 -t "$IMAGE" .
+docker build -f client/gcp_python/Dockerfile --platform linux/amd64 -t "$IMAGE" .
 docker push "$IMAGE"
 ```
 
@@ -215,7 +215,7 @@ A turn runs the model and tool calls synchronously, so it can be slow; bump
 ## Test
 
 ```bash
-uv run pytest client/python
+uv run pytest client/gcp_python
 ```
 
 The client tests drive `FunkyClient` against in-memory fakes of the four services

@@ -4,7 +4,7 @@
 # the client resolves `funky-protos` from the uv workspace (gen/python) and the
 # ConnectRPC stubs are generated from proto/ at build time. From the repo root:
 #
-#   docker build -f client/python/Dockerfile \
+#   docker build -f client/gcp_python/Dockerfile \
 #     --platform linux/amd64 -t funky-client .
 #
 # `buf generate` reaches Buf's remote plugins, so the build needs network access.

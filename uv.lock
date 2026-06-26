@@ -899,7 +899,7 @@ requires-dist = [
 [[package]]
 name = "funky-client"
 version = "0.0.0"
-source = { editable = "client/python" }
+source = { editable = "client/gcp_python" }
 dependencies = [
     { name = "funky-protos" },
 ]
