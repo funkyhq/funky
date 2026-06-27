@@ -1,0 +1,10 @@
+# Dependencies and build output for the Vite frontend.
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor/OS cruft
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
