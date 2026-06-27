@@ -48,29 +48,37 @@ Each is an interface. Funky doesn't care whether your `SandboxRuntime` is backed
 3. **Start a session.** Launch a session that references your agent and environment configuration.
 4. **Send events and stream responses.** Send user messages as events. The agent autonomously executes tools and streams back results through server-sent events (SSE). Event history is persisted server-side and can be fetched in full.
 
-## Run the whole stack locally with Docker Compose
+## Quickstart
 
-The repo ships a fully local implementation of each of the four contracts plus the
-REST client and a web UI, wired together in [`docker-compose.yml`](./docker-compose.yml):
-a JSONL [`ConfigRegistry`](./config_registry/local_python_jsonl) and
-[`SessionStore`](./session_store/local_python_jsonl), a Docker-backed
-[`SandboxRuntime`](./sandbox_runtime/local_python_docker), an Anthropic
-[`AgentService`](./agent_service/local_python_anthropic), the
-[`Client`](./client/local_python) front door (`:8000`), and a pixel-art
-[web frontend](./web) (`:5173`).
+Run the whole stack locally with [Docker Compose](./docker-compose.yml) — the four
+services, the REST [client](./client/local_python) (`:8000`), and the
+[web UI](./web) (`:5173`).
+
+**1. Set your API key** (each agent turn makes a real, billed Anthropic call):
 
 ```bash
 cp .env.example .env        # then put your ANTHROPIC_API_KEY in it
+```
+
+**2. Start the stack:**
+
+```bash
 docker compose up --build
 ```
 
-Then open the chat UI at <http://localhost:5173>, or drive the client directly
-(see [its README](./client/local_python)):
+Then interact with it however you like.
+
+**Web UI** — open <http://localhost:5173>, create an agent, and start chatting.
+
+**REST API** — drive the client on `:8000` with `curl`:
 
 ```bash
+# Create an agent -> {"id":"agt_..."}
 curl -s -X POST http://127.0.0.1:8000/v1/agents \
   -H 'Content-Type: application/json' \
   -d '{"name":"coder","model":"claude-sonnet-4-6","system_prompt":"Be brief."}'
+
+# Open an environment and a session, then send a message
 curl -s -X POST http://127.0.0.1:8000/v1/environments -d '{}'
 curl -s -X POST http://127.0.0.1:8000/v1/sessions \
   -H 'Content-Type: application/json' \
@@ -79,12 +87,9 @@ curl -s -X POST http://127.0.0.1:8000/v1/sessions/ses_.../messages \
   -H 'Content-Type: application/json' -d '{"prompt":"List the files in the repo."}'
 ```
 
-The `sandbox-runtime` service bind-mounts the host Docker socket and runs each
-sandbox as a *sibling* container on the host daemon (Docker-out-of-Docker). The
-config and session stores persist to named volumes, so they survive
-`docker compose down`; add `-v` to wipe them. A sandbox left behind by a crash is
-labelled and reapable with
-`docker rm -f $(docker ps -aq --filter label=funky.sandbox)`.
+To stop, `Ctrl-C` then `docker compose down` (add `-v` to also wipe the persisted
+config and session stores). A sandbox left behind by a crash is labelled and
+reapable with `docker rm -f $(docker ps -aq --filter label=funky.sandbox)`.
 
 ## Pluggable by design
 
