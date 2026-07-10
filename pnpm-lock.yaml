@@ -34,6 +34,18 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
+  packages/configs:
+    dependencies:
+      '@funky/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^1.0.0-beta.2
+        version: 1.0.0-rc.4-5d5b77c(@types/pg@8.20.0)(pg@8.22.0)
+      uuid:
+        specifier: ^13.0.0
+        version: 13.0.2
+
   packages/db:
     dependencies:
       drizzle-orm:
@@ -612,6 +624,10 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  uuid@13.0.2:
+    resolution: {integrity: sha512-vzi9uRZ926x4XV73S/4qQaTwPXM2JBj6/6lI/byHH1jOpCzb0zDbfytgA9LcN/hzb2l7WQSQnxITOVx5un/wGw==}
+    hasBin: true
+
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
@@ -942,5 +958,7 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@6.21.0: {}
+
+  uuid@13.0.2: {}
 
   xtend@4.0.2: {}
