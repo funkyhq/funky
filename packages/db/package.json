@@ -1,12 +1,22 @@
 {
+  "name": "@funky/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/client.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate"
+  },
   "dependencies": {
-    "dotenv": "^17.4.2",
-    "drizzle-orm": "^1.0.0-rc.4",
+    "drizzle-orm": "^1.0.0-beta.2",
     "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",
-    "drizzle-kit": "^1.0.0-rc.4",
-    "tsx": "^4.23.0"
+    "drizzle-kit": "^1.0.0-beta.2",
+    "dotenv": "^17.2.0"
   }
 }

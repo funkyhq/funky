@@ -36,11 +36,8 @@ importers:
 
   packages/db:
     dependencies:
-      dotenv:
-        specifier: ^17.4.2
-        version: 17.4.2
       drizzle-orm:
-        specifier: ^1.0.0-rc.4
+        specifier: ^1.0.0-beta.2
         version: 1.0.0-rc.4-5d5b77c(@types/pg@8.20.0)(pg@8.22.0)
       pg:
         specifier: ^8.22.0
@@ -49,12 +46,12 @@ importers:
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
+      dotenv:
+        specifier: ^17.2.0
+        version: 17.4.2
       drizzle-kit:
-        specifier: ^1.0.0-rc.4
+        specifier: ^1.0.0-beta.2
         version: 1.0.0-rc.4-ca0f029
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
 
 packages:
 
