@@ -1,0 +1,12 @@
+{
+    "compilerOptions": {
+      "target": "ES2022",
+      "module": "ESNext",
+      "moduleResolution": "bundler",
+      "strict": true,
+      "skipLibCheck": true,
+      "noUncheckedIndexedAccess": true,
+      "types": ["node"]
+    },
+    "include": ["apps/**/src/**/*.ts", "packages/**/src/**/*.ts", "packages/db/schema/**/*.ts"]
+}

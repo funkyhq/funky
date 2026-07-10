@@ -1,0 +1,15 @@
+{
+    "name": "funky",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@10.14.0",
+    "scripts": {
+      "preinstall": "npx only-allow pnpm",
+      "typecheck": "tsc --noEmit",
+      "dev": "pnpm -F api dev"
+    },
+    "devDependencies": {
+      "typescript": "^5.8.3",
+      "@types/node": "^22.0.0"
+    }
+}

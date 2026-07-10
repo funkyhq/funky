@@ -12,5 +12,27 @@ __pycache__/
 # Example runtime data (the JSONL config stores).
 data/
 
-# Local Docker Compose secrets (ANTHROPIC_API_KEY); .env.example is committed.
+# dependencies
+node_modules/
+
+# builds
+dist/
+*.tsbuildinfo
+
+# environment — commit .env.example instead
 .env
+.env.*
+!.env.example
+
+# logs & runtime junk
+*.log
+.pnpm-debug.log*
+
+# editor / OS noise
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test output
+coverage/
