@@ -148,6 +148,12 @@ importers:
       '@funky/db':
         specifier: workspace:*
         version: link:../db
+      '@funky/llm':
+        specifier: workspace:*
+        version: link:../ports/llm
+      '@funky/sandbox':
+        specifier: workspace:*
+        version: link:../ports/sandbox
       drizzle-orm:
         specifier: ^1.0.0-beta.2
         version: 1.0.0-rc.4-5d5b77c(@electric-sql/pglite@0.5.4)(@types/pg@8.20.0)(pg@8.22.0)(zod@4.4.3)
