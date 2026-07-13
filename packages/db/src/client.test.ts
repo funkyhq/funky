@@ -5,7 +5,14 @@
 import { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 import { createDb, tables, type Db } from "./client";
-import { agentConfigs, agentConfigVersions, envConfigs } from "./schema";
+import {
+  agentConfigs,
+  agentConfigVersions,
+  envConfigs,
+  sessionEvents,
+  sessions,
+  turnJobs,
+} from "./schema";
 
 const DUMMY_URL = "postgres://user:pass@localhost:5432/funky_test";
 
@@ -35,6 +42,15 @@ describe("createDb", () => {
 
       const envs = db.select().from(envConfigs).toSQL();
       expect(envs.sql).toMatch(/from "env_configs"/);
+
+      const sess = db.select().from(sessions).toSQL();
+      expect(sess.sql).toMatch(/from "sessions"/);
+
+      const events = db.select().from(sessionEvents).toSQL();
+      expect(events.sql).toMatch(/from "session_events"/);
+
+      const jobs = db.select().from(turnJobs).toSQL();
+      expect(jobs.sql).toMatch(/from "turn_jobs"/);
     } finally {
       await pool.end();
     }
@@ -46,8 +62,18 @@ describe("tables", () => {
     expect(tables.agentConfigs).toBe(agentConfigs);
     expect(tables.agentConfigVersions).toBe(agentConfigVersions);
     expect(tables.envConfigs).toBe(envConfigs);
+    expect(tables.sessions).toBe(sessions);
+    expect(tables.sessionEvents).toBe(sessionEvents);
+    expect(tables.turnJobs).toBe(turnJobs);
     expect(Object.keys(tables).sort()).toEqual(
-      ["agentConfigVersions", "agentConfigs", "envConfigs"].sort(),
+      [
+        "agentConfigVersions",
+        "agentConfigs",
+        "envConfigs",
+        "sessions",
+        "sessionEvents",
+        "turnJobs",
+      ].sort(),
     );
   });
 });

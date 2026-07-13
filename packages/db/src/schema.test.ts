@@ -6,7 +6,18 @@
 
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
-import { agentConfigs, agentConfigVersions, envConfigs, type ModelConfig } from "./schema";
+import {
+  agentConfigs,
+  agentConfigVersions,
+  envConfigs,
+  type JobState,
+  type ModelConfig,
+  type ResolvedEnv,
+  type SessionStatus,
+  sessionEvents,
+  sessions,
+  turnJobs,
+} from "./schema";
 
 type ColSpec = {
   type: string; // getSQLType() output, e.g. "uuid", "timestamp with time zone"
@@ -51,6 +62,13 @@ function indexSummaries(table: PgTable) {
       unique: i.config.unique,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Map index name → whether it carries a WHERE predicate (i.e. is partial). */
+function partialByName(table: PgTable) {
+  return new Map(
+    getTableConfig(table).indexes.map((i) => [i.config.name ?? "", i.config.where !== undefined]),
+  );
 }
 
 // ---------------------------------------------------------------- agent_configs
@@ -165,6 +183,149 @@ describe("env_configs", () => {
   });
 });
 
+// -------------------------------------------------------------------- sessions
+
+describe("sessions", () => {
+  it("has the expected table name", () => {
+    expect(getTableConfig(sessions).name).toBe("sessions");
+  });
+
+  it("columns match the schema", () => {
+    assertColumns(sessions, {
+      id: { type: "uuid", notNull: true, primary: true },
+      namespace: { type: "text", notNull: true },
+      agent_config_id: { type: "uuid", notNull: true },
+      agent_version: { type: "integer", notNull: true },
+      env_config_id: { type: "uuid", notNull: true },
+      // resolved_env / sandbox_handle are nullable: filled at provision time.
+      resolved_env: { type: "jsonb", notNull: false },
+      sandbox_handle: { type: "jsonb", notNull: false },
+      status: { type: "text", notNull: true, hasDefault: true, default: "provisioning" },
+      title: { type: "text", notNull: false },
+      metadata: { type: "jsonb", notNull: true, hasDefault: true, default: {} },
+      created_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
+      updated_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
+      archived_at: { type: "timestamp with time zone", notNull: false },
+    });
+  });
+
+  it("uses an inline primary key on id", () => {
+    const cfg = getTableConfig(sessions);
+    expect(cfg.primaryKeys, "sessions use an inline PK, not a composite one").toHaveLength(0);
+  });
+
+  it("pins the agent (by id) and the env config via two foreign keys", () => {
+    const refs = getTableConfig(sessions).foreignKeys.map((fk) => {
+      const r = fk.reference();
+      return {
+        column: r.columns.map((c) => c.name).join(","),
+        foreignTable: getTableConfig(r.foreignTable).name,
+        foreignColumn: r.foreignColumns.map((c) => c.name).join(","),
+      };
+    });
+    expect(refs).toHaveLength(2);
+    expect(refs).toContainEqual({
+      column: "agent_config_id",
+      foreignTable: "agent_configs",
+      foreignColumn: "id",
+    });
+    expect(refs).toContainEqual({
+      column: "env_config_id",
+      foreignTable: "env_configs",
+      foreignColumn: "id",
+    });
+  });
+
+  it("has a single namespace lookup index, non-unique", () => {
+    expect(indexSummaries(sessions)).toEqual([
+      { name: "sessions_ns", columns: ["namespace"], unique: false },
+    ]);
+  });
+});
+
+// --------------------------------------------------------------- session_events
+
+describe("session_events", () => {
+  it("has the expected table name", () => {
+    expect(getTableConfig(sessionEvents).name).toBe("session_events");
+  });
+
+  it("columns match the schema (append-only: no updated_at)", () => {
+    assertColumns(sessionEvents, {
+      session_id: { type: "uuid", notNull: true },
+      seq: { type: "bigint", notNull: true },
+      namespace: { type: "text", notNull: true },
+      type: { type: "text", notNull: true },
+      payload: { type: "jsonb", notNull: true },
+      created_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
+    });
+  });
+
+  it("has the composite primary key (session_id, seq) — THE conditional-append invariant", () => {
+    const pks = getTableConfig(sessionEvents).primaryKeys;
+    expect(pks).toHaveLength(1);
+    expect(pks[0]?.columns.map((c) => c.name)).toEqual(["session_id", "seq"]);
+  });
+
+  it("has no other unique constraint or index (the PK alone gates appends)", () => {
+    const cfg = getTableConfig(sessionEvents);
+    expect(cfg.uniqueConstraints, "no extra unique constraint").toHaveLength(0);
+    expect(cfg.indexes, "no secondary index").toHaveLength(0);
+  });
+
+  it("references sessions.id via session_id", () => {
+    const fks = getTableConfig(sessionEvents).foreignKeys;
+    expect(fks, "exactly one foreign key").toHaveLength(1);
+    const ref = fks[0]!.reference();
+    expect(ref.columns.map((c) => c.name)).toEqual(["session_id"]);
+    expect(ref.foreignColumns.map((c) => c.name)).toEqual(["id"]);
+    expect(getTableConfig(ref.foreignTable).name).toBe("sessions");
+  });
+});
+
+// ------------------------------------------------------------------- turn_jobs
+
+describe("turn_jobs", () => {
+  it("has the expected table name", () => {
+    expect(getTableConfig(turnJobs).name).toBe("turn_jobs");
+  });
+
+  it("columns match the schema (queue semantics live in columns)", () => {
+    assertColumns(turnJobs, {
+      id: { type: "uuid", notNull: true, primary: true },
+      namespace: { type: "text", notNull: true },
+      session_id: { type: "uuid", notNull: true },
+      kind: { type: "text", notNull: true, hasDefault: true, default: "turn" },
+      state: { type: "text", notNull: true, hasDefault: true, default: "queued" },
+      run_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
+      attempts: { type: "integer", notNull: true, hasDefault: true, default: 0 },
+      max_attempts: { type: "integer", notNull: true, hasDefault: true, default: 5 },
+      lease_expires_at: { type: "timestamp with time zone", notNull: false },
+      created_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
+    });
+  });
+
+  it("references sessions.id via session_id", () => {
+    const fks = getTableConfig(turnJobs).foreignKeys;
+    expect(fks, "exactly one foreign key").toHaveLength(1);
+    const ref = fks[0]!.reference();
+    expect(ref.columns.map((c) => c.name)).toEqual(["session_id"]);
+    expect(ref.foreignColumns.map((c) => c.name)).toEqual(["id"]);
+    expect(getTableConfig(ref.foreignTable).name).toBe("sessions");
+  });
+
+  it("has both partial indexes: the dequeue scan and the active-turn check", () => {
+    expect(indexSummaries(turnJobs)).toEqual([
+      { name: "turn_jobs_active_session", columns: ["session_id"], unique: false },
+      { name: "turn_jobs_queued", columns: ["run_at"], unique: false },
+    ]);
+    // Both MUST be partial (WHERE predicate) — a full index changes the semantics.
+    const partial = partialByName(turnJobs);
+    expect(partial.get("turn_jobs_queued"), "dequeue index must be partial").toBe(true);
+    expect(partial.get("turn_jobs_active_session"), "active-turn index must be partial").toBe(true);
+  });
+});
+
 // ------------------------------------------------------------------ ModelConfig
 
 describe("ModelConfig", () => {
@@ -182,5 +343,40 @@ describe("ModelConfig", () => {
     // @ts-expect-error "cohere" is not a member of the provider union
     const unsupported: ModelConfig = { provider: "cohere", model: "x" };
     void unsupported;
+  });
+});
+
+// -------------------------------------------------------------- session types
+
+describe("session domain types", () => {
+  it("ResolvedEnv snapshots base image, optional template, fs size and egress", () => {
+    const env: ResolvedEnv = {
+      base_image: "funky/base-python:3.12",
+      template_id: "e2b-abc123",
+      persistent_fs: { size_gb: 2 },
+      egress: { allow: ["api.example.com"] },
+    };
+    expect(env.persistent_fs.size_gb).toBe(2);
+
+    // template_id is optional — driver-specific, absent for drivers that don't use it.
+    const minimal: ResolvedEnv = {
+      base_image: "funky/base:latest",
+      persistent_fs: { size_gb: 1 },
+      egress: { allow: [] },
+    };
+    expect(minimal.template_id).toBeUndefined();
+  });
+
+  it("constrains SessionStatus and JobState to their unions", () => {
+    const status: SessionStatus = "provisioning";
+    const state: JobState = "queued";
+    expect([status, state]).toEqual(["provisioning", "queued"]);
+
+    // @ts-expect-error "running" is a JobState, not a SessionStatus
+    const badStatus: SessionStatus = "running";
+    void badStatus;
+    // @ts-expect-error "archived" is a SessionStatus, not a JobState
+    const badState: JobState = "archived";
+    void badState;
   });
 });

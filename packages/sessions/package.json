@@ -1,0 +1,20 @@
+{
+  "name": "@funky/sessions",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./events": "./src/events.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@funky/db": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}
