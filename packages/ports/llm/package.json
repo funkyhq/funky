@@ -1,0 +1,24 @@
+{
+  "name": "@funky/llm",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./port": "./src/port.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.0",
+    "@ai-sdk/openai": "^4.0.0",
+    "@funky/db": "workspace:*",
+    "@funky/sessions": "workspace:*",
+    "ai": "^7.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}
