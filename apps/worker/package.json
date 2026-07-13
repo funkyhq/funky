@@ -1,0 +1,31 @@
+{
+  "name": "worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "start:src": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@funky/db": "workspace:*",
+    "@funky/llm": "workspace:*",
+    "@funky/sandbox": "workspace:*",
+    "@funky/sessions": "workspace:*",
+    "dotenv": "^17.2.0",
+    "pg": "^8.16.0",
+    "uuid": "^13.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.0.4",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.7.1",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
+  }
+}

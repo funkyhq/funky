@@ -61,6 +61,52 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
+  apps/worker:
+    dependencies:
+      '@funky/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@funky/llm':
+        specifier: workspace:*
+        version: link:../../packages/ports/llm
+      '@funky/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/ports/sandbox
+      '@funky/sessions':
+        specifier: workspace:*
+        version: link:../../packages/sessions
+      dotenv:
+        specifier: ^17.2.0
+        version: 17.4.2
+      pg:
+        specifier: ^8.16.0
+        version: 8.22.0
+      uuid:
+        specifier: ^13.0.0
+        version: 13.0.2
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+    devDependencies:
+      '@testcontainers/postgresql':
+        specifier: ^12.0.4
+        version: 12.0.4
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.20.0
+      tsx:
+        specifier: ^4.7.1
+        version: 4.23.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
   packages/configs:
     dependencies:
       '@funky/db':
