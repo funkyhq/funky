@@ -154,16 +154,6 @@ packages/db        Drizzle schema + migrations
 
 `apps` are deployable processes; `packages` are libraries. Apps depend on packages, never the reverse.
 
-## Roadmap
-
-- [x] Agent configs (versioned, archive-only) — create/update/list/archive + version history
-- [x] Environment configs (unversioned, archive or delete) — the sandbox recipe: base image, persistent fs, egress policy
-- [x] Sessions & event log
-- [x] Agent runtime worker (the loop)
-- [x] Sandboxed execution — subprocess driver (dev default: commands run inside the worker container, no isolation) + E2B driver via ComputeSDK (isolated sandbox per session, outlives any worker)
-- [x] Chaos suite — durable execution proven at every crash point (I1–I4), required on `main` ([tests/chaos](tests/chaos))
-- [ ] SDKs (TypeScript, Python)
-
 ## Contributing
 
 This is an early-stage, contracts-first project. The best contribution right now is feedback on the interfaces. Open an issue to discuss the protocol, a missing method, or a backend you'd want to plug in.
