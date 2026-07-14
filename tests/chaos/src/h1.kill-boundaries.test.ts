@@ -45,6 +45,11 @@ describe("H1 — crash at each append boundary → the log always matches", () =
       await waitFor(() => dead, 30_000, `A reaches append #${n}`);
 
       // B can only claim once A's lease expires. Don't sleep 60s — expire it directly.
+      // But drain A's pull loop first: kill() can't cancel a pull() already on the wire,
+      // and on a slow DB that straggler executes AFTER the expiry below, re-claiming the
+      // job with a fresh 60s lease that the dying loop then abandons — starving B past
+      // the waitFor. Awaiting kill() guarantees any such claim landed before the expiry.
+      await workerA.kill();
       await world.expireLease(jobId);
       await world.startWorker(); // clean worker B
 

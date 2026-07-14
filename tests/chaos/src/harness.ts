@@ -184,6 +184,9 @@ export type World = {
 
   startWorker(opts?: StartWorkerOpts): Promise<RunningWorker>;
 
+  /** Backdate a job's lease so it is reclaimable NOW (instead of sleeping out LEASE_MS).
+   *  Callers must first `await kill()` on any worker that might still have a pull() on the
+   *  wire — a straggler claim landing after this expiry would re-lease the job for 60s. */
   expireLease(jobId: string): Promise<void>;
   jobState(jobId: string): Promise<string | null>;
   jobExists(jobId: string): Promise<boolean>;
@@ -297,7 +300,7 @@ export async function buildWorld(
         ...(o.heartbeatMs !== undefined ? { heartbeatMs: o.heartbeatMs } : {}),
       });
       cleanups.push(async () => {
-        worker.kill();
+        await worker.kill(); // await the loop's exit so no straggler pull outlives the test
         await listenClient.end().catch(() => {});
       });
       return { worker, metrics };

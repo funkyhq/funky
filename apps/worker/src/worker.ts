@@ -42,8 +42,13 @@ export type WorkerDeps = {
 export type WorkerHandle = {
   /** Graceful: stop pulling, let in-flight turns finish, resolve when idle. */
   stop(): Promise<void>;
-  /** Ungraceful: abandon everything immediately (simulates SIGKILL). Tests use this. */
-  kill(): void;
+  /** Ungraceful: abandon everything immediately (simulates SIGKILL). Tests use this.
+   *  Resolves when the pull loop has exited. Until then, a pull() already on the wire can
+   *  still land and CLAIM a job — which the dying loop abandons with a fresh full lease —
+   *  so anything that edits leases after a kill (the chaos suite's expireLease) must await
+   *  this first. In-flight turns are NOT awaited: they can't be cancelled, and their late
+   *  writes surface as harmless ErrConflict. */
+  kill(): Promise<void>;
 };
 
 /** Mutable counters shared with health.ts. `inFlight` is the concurrency dial observed;
@@ -193,6 +198,7 @@ export function startWorker(deps: WorkerDeps): WorkerHandle {
       // makes any late write from this worker a harmless ErrConflict.
       for (const beat of heartbeats) clearInterval(beat);
       heartbeats.clear();
+      return loopDone; // settles once any in-flight pull has landed — no further claims after this
     },
   };
 }

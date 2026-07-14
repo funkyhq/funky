@@ -73,7 +73,8 @@ it("50 sessions × 3 workers × random kills → all complete, zero double-execu
     if (Date.now() - start > CAP_MS) throw new Error(`soak timed out: ${await completedCount()}/${N} completed`);
     if (rand() < 0.1) {
       const idx = Math.floor(rand() * workers.length);
-      workers[idx]!.kill(); // stop pulling, stop heartbeats, abandon in-flight
+      await workers[idx]!.kill(); // stop pulling, stop heartbeats, abandon in-flight (awaited
+      // so a straggler pull can't land after the expiry below and re-lease a job for 60s)
       // Release the dead worker's orphaned jobs promptly (don't wait out the 60s lease). Live
       // workers re-extend within 200ms, so this only permanently frees the abandoned ones.
       await pool.query("update turn_jobs set lease_expires_at = now() - interval '1 minute' where state = 'running'");

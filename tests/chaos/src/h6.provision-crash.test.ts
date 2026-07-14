@@ -35,6 +35,10 @@ it("crash mid-provision → second worker provisions, one event, one workdir", a
   workerA = a.worker;
 
   await waitFor(() => dead, 30_000, "A crashed mid-provision");
+  // Drain A's pull loop before expiring: a pull() already on the wire when A was killed can
+  // execute after the expiry and re-claim the job with a fresh 60s lease (which the dying
+  // loop abandons), starving B past the waitFor below. See h1 for the full story.
+  await workerA.kill();
   await world.expireLease(jobId);
 
   // B — clean store — reclaims the provision job and completes it. B flips the session to

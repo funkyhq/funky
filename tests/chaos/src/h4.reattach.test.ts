@@ -54,6 +54,10 @@ it("B attaches to A's still-running command: it finishes the turn, running the c
   workerA = a.worker;
 
   await waitFor(() => killedAt > 0, 30_000, "A killed mid-command");
+  // Drain A's pull loop before expiring — a straggler pull() landing after the expiry would
+  // re-claim the job with a fresh 60s lease and abandon it, starving B. See h1. (kill(), not
+  // stop(): A's turn is hung in the sandbox forever, and kill() only awaits the loop.)
+  await workerA.kill();
   await world.expireLease(jobId);
 
   // B — real sandbox — replays the log and exec's the same idemKey → attaches.

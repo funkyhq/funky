@@ -99,12 +99,13 @@ async function startTestWorker(opts: {
   sandbox?: SandboxDriver;
   concurrency?: number;
   heartbeatMs?: number;
+  queue?: JobQueue; // fault-injection seam (the gated-pull kill test)
 }): Promise<{ worker: WorkerHandle; metrics: ReturnType<typeof createMetrics> }> {
   const listenClient = new Client({ connectionString: connectionUri });
   await listenClient.connect();
   const metrics = createMetrics();
   const worker = startWorker({
-    queue,
+    queue: opts.queue ?? queue,
     store,
     db,
     llm: opts.llm,
@@ -115,7 +116,7 @@ async function startTestWorker(opts: {
     ...(opts.heartbeatMs !== undefined ? { heartbeatMs: opts.heartbeatMs } : {}),
   });
   cleanups.push(async () => {
-    worker.kill();
+    await worker.kill(); // await the loop's exit so no straggler pull outlives the test
     await listenClient.end();
   });
   return { worker, metrics };
@@ -214,9 +215,11 @@ it("runs one enqueued turn to completion and acks the job", async () => {
 
   await startTestWorker({ llm: doneLlm() });
 
-  await waitFor(async () => (await eventTypes(sid)).at(-1) === "turn_completed", 15_000, "completed");
+  // Wait for the ACK (row gone), not the terminal event: the event is appended inside the
+  // turn BEFORE the worker acks, so asserting on the row right after the event races the
+  // delete. The job being gone is the unambiguous "fully processed" signal.
+  await waitFor(async () => !(await jobExists(jobId)), 15_000, "completed and acked");
   expect(await eventTypes(sid)).toEqual(["user_message", "assistant_message", "turn_completed"]);
-  expect(await jobExists(jobId)).toBe(false); // acked → row gone
 });
 
 it("interleaves many turns on one event loop (handle is not awaited)", async () => {
@@ -428,20 +431,21 @@ it("★ crash-resumes: worker B finishes the turn worker A abandoned, running th
     15_000,
     "A appended the tool call",
   );
-  workerA.kill(); // crash A: heartbeats stop, its in-flight turn is abandoned
+  await workerA.kill(); // crash A: heartbeats stop, its in-flight turn is abandoned (awaited
+  // so a pull already on the wire lands BEFORE the expiry below — it can't re-lease the job)
   await pool.query("update turn_jobs set lease_expires_at = now() - interval '1 second' where id=$1", [jobId]);
 
   // Worker B — real sandbox — reclaims the expired lease and finishes the turn.
   await startTestWorker({ llm, sandbox: realSandbox });
 
-  await waitFor(async () => (await eventTypes(sid)).at(-1) === "turn_completed", 15_000, "B completed");
+  // Job-gone = the terminal event landed AND B acked (the event alone races the ack).
+  await waitFor(async () => !(await jobExists(jobId)), 15_000, "B completed and acked");
 
   const events = await store.readEvents(NS, sid);
   const toolResults = events.filter((e) => e.type === "tool_result");
   expect(toolResults).toHaveLength(1); // the command ran ONCE (one tool_result)
   expect((toolResults[0]!.payload as { output: string }).output).toContain("RAN");
   expect(events.at(-1)?.type).toBe("turn_completed");
-  expect(await jobExists(jobId)).toBe(false);
 });
 
 it("drains: stop() resolves only after the in-flight turn finishes", async () => {
@@ -464,6 +468,71 @@ it("drains: stop() resolves only after the in-flight turn finishes", async () =>
   release();
   await stopP;
   expect(stopped).toBe(true);
+  expect((await eventTypes(sid)).at(-1)).toBe("turn_completed");
+});
+
+/** A queue whose FIRST pull() parks before touching the database — the claim is "on the
+ *  wire" while the caller does something else (kills the worker). Later pulls pass through. */
+class GatedPullQueue extends JobQueue {
+  private parked = false;
+  constructor(
+    dbase: Db,
+    private readonly onParked: () => void,
+    private readonly gate: Promise<void>,
+  ) {
+    super(dbase);
+  }
+  override async pull() {
+    if (!this.parked) {
+      this.parked = true;
+      this.onParked();
+      await this.gate;
+    }
+    return super.pull();
+  }
+}
+
+it("kill() resolves only after an in-flight pull lands, so post-kill lease edits stick", async () => {
+  // The chaos-suite race, made deterministic: kill() cannot cancel a pull already on the
+  // wire. If that straggler executes AFTER a test's lease-expiry, it re-claims the job with
+  // a fresh 60s lease that the dead loop abandons — starving the replacement worker. The
+  // contract under test: kill()'s promise settles only once the loop (and thus any in-flight
+  // claim) is done, so `await kill()` before a lease edit makes the edit the last word.
+  const sid = await seedSession();
+  await appendUser(sid);
+  const jobId = await insertTurnJob(sid);
+
+  let parkedResolve!: () => void;
+  const parked = new Promise<void>((r) => (parkedResolve = r));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const { worker } = await startTestWorker({
+    llm: doneLlm(),
+    queue: new GatedPullQueue(db, parkedResolve, gate),
+  });
+  await parked; // the loop's first pull is now in flight, pre-claim
+
+  let killSettled = false;
+  const killP = worker.kill().then(() => (killSettled = true));
+  await sleep(80);
+  expect(killSettled).toBe(false); // the parked pull hasn't landed — kill must still be pending
+
+  // Release the pull: it claims the job (fresh 60s lease), and the dying loop abandons it
+  // between pull and dispatch. Only then does kill() settle — with the claim visible.
+  release();
+  await killP;
+  const { rows } = await pool.query<{ state: string; attempts: number }>(
+    "select state, attempts from turn_jobs where id=$1",
+    [jobId],
+  );
+  expect(rows[0]).toMatchObject({ state: "running", attempts: 1 }); // the straggler claim landed first
+
+  // Because kill() was awaited, this expiry cannot be raced; a fresh worker reclaims at once.
+  await pool.query("update turn_jobs set lease_expires_at = now() - interval '1 second' where id=$1", [jobId]);
+  await startTestWorker({ llm: doneLlm() });
+  // Job-gone, not the terminal event: the event lands before the ack, so asserting on the
+  // row right after seeing the event would race B's delete.
+  await waitFor(async () => !(await jobExists(jobId)), 15_000, "B completed and acked");
   expect((await eventTypes(sid)).at(-1)).toBe("turn_completed");
 });
 
