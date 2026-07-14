@@ -66,6 +66,34 @@ describe("FakeLlm", () => {
     expect(r.content).toBe("ok");
   });
 
+  it("runs the DEFAULT_SCRIPT for a session it has no explicit script for", async () => {
+    // The zero-key demo path: no scripts registered, so any session gets the default —
+    // a real exec, then a summary turn, then terminal "done".
+    const llm = new FakeLlm({ scripts: {} });
+
+    const r1 = await llm.complete(req("unknown"));
+    expect(r1.content).toBe("");
+    expect(r1.toolCall).toEqual({ kind: "exec", cmd: 'echo "hello from the funky sandbox"; uname -a' });
+
+    const r2 = await llm.complete(req("unknown"));
+    expect(r2.content).toMatch(/ran a command in the sandbox/);
+    expect(r2.toolCall).toBeUndefined();
+
+    const r3 = await llm.complete(req("unknown"));
+    expect(r3.content).toBe("done");
+    expect(r3.toolCall).toBeUndefined();
+  });
+
+  it("an explicit per-session script still wins over the default", async () => {
+    const llm = new FakeLlm({ scripts: { s1: [{ content: "explicit" }] } });
+    expect((await llm.complete(req("s1"))).content).toBe("explicit");
+    // A different, unregistered session still gets the default's first tool turn.
+    expect((await llm.complete(req("s2"))).toolCall).toEqual({
+      kind: "exec",
+      cmd: 'echo "hello from the funky sandbox"; uname -a',
+    });
+  });
+
   it("requires trace.sessionId to pick a script", async () => {
     const llm = new FakeLlm({ scripts: { s1: [{ content: "ok" }] } });
     await expect(llm.complete({ model: MODEL, messages: MSGS })).rejects.toThrow(/sessionId/);

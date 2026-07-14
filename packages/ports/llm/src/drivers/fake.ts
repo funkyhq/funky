@@ -7,6 +7,18 @@ import { type LlmPort, type LlmRequest, type LlmResult, LlmTransientError } from
 
 export type FakeTurn = { content: string; toolCall?: LlmResult["toolCall"] };
 
+// The script used for any session with no explicit script — i.e. the zero-key demo path.
+// A fresh `docker compose up` (FUNKY_LLM=fake, no ANTHROPIC_API_KEY) drives THIS: the agent
+// runs a real command in the sandbox, then reports back. Deterministic on purpose — this is
+// a demo, not a simulation. Tests that register their own per-session script still win.
+const DEFAULT_SCRIPT: FakeTurn[] = [
+  {
+    content: "",
+    toolCall: { kind: "exec", cmd: 'echo "hello from the funky sandbox"; uname -a' },
+  },
+  { content: "I ran a command in the sandbox. It said hello, and reported the kernel." },
+];
+
 export class FakeLlm implements LlmPort {
   private readonly scripts: Record<string, FakeTurn[]>;
   private readonly cursor: Record<string, number> = {};
@@ -35,7 +47,9 @@ export class FakeLlm implements LlmPort {
     if (!sessionId) {
       throw new Error("FakeLlm requires req.trace.sessionId to select a script");
     }
-    const script = this.scripts[sessionId] ?? [];
+    // Explicit per-session script wins; otherwise an unknown session runs the DEFAULT_SCRIPT
+    // (the zero-key demo). Both are consumed in order via the same per-session cursor.
+    const script = this.scripts[sessionId] ?? DEFAULT_SCRIPT;
     const at = this.cursor[sessionId] ?? 0;
     const turn = script[at];
 

@@ -51,8 +51,9 @@ console.log(
     `llm=${cfg.llm} sandbox=${cfg.sandbox}`,
 );
 
-// The fake driver needs no API key: with an empty script every session's turn resolves to a
-// single terminal assistant message. Real work uses FUNKY_LLM=ai-sdk.
+// The fake driver needs no API key: with no registered scripts every session runs the
+// driver's DEFAULT_SCRIPT — a real sandbox command, then a summary. Real work uses
+// FUNKY_LLM=ai-sdk.
 function llmConfig(c: Config): LlmConfig {
   return c.llm === "ai-sdk"
     ? { driver: "ai-sdk" }

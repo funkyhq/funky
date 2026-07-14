@@ -64,4 +64,55 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
     const call = vi.mocked(generateText).mock.calls[0]![0];
     expect(call.providerOptions).toEqual({ anthropic: { disableParallelToolUse: true } });
   });
+
+  // ai@7 rejects system-role messages in `messages` ("Use the instructions option instead").
+  // The system prompt must travel as the top-level `instructions` option instead.
+  it("routes the system prompt to `instructions`, never into `messages`", async () => {
+    mockResult([]);
+
+    await new AiSdkLlm().complete({
+      model: MODEL,
+      messages: [
+        { role: "system", content: "You are a helpful engineer." },
+        { role: "user", content: "hi" },
+      ],
+    });
+
+    const call = vi.mocked(generateText).mock.calls[0]![0];
+    expect(call.instructions).toBe("You are a helpful engineer.");
+    expect(call.messages).toEqual([{ role: "user", content: "hi" }]);
+    // The regression this guards: no system-role message leaks into `messages`.
+    expect((call.messages ?? []).some((m) => m.role === "system")).toBe(false);
+  });
+
+  // Anthropic rejects a tool_use.id that isn't ^[a-zA-Z0-9_-]+$. Our idemKey
+  // (`sessionId:seq:index`) has colons, so the reconstructed history must sanitize it —
+  // identically on the assistant tool-call and its paired tool-result.
+  it("sanitizes the tool_use id (no colons) and keeps call/result paired", async () => {
+    mockResult([]);
+
+    await new AiSdkLlm().complete({
+      model: MODEL,
+      messages: [
+        { role: "user", content: "run something" },
+        { role: "assistant", content: "", toolCall: { kind: "exec", cmd: "echo hi" } },
+        { role: "tool", idemKey: "019f5e05-a667-732b-99f6-04fa6a4c38ea:3:0", output: "hi\n", exitCode: 0 },
+      ],
+    });
+
+    const call = vi.mocked(generateText).mock.calls[0]![0];
+    const PATTERN = /^[a-zA-Z0-9_-]+$/;
+    // deno-lint style narrowing kept loose: this is test-only shape inspection.
+    const assistant = (call.messages ?? []).find((m) => m.role === "assistant")!;
+    const toolMsg = (call.messages ?? []).find((m) => m.role === "tool")!;
+    const callPart = (assistant.content as Array<{ type: string; toolCallId?: string }>).find(
+      (p) => p.type === "tool-call",
+    )!;
+    const resultPart = (toolMsg.content as Array<{ type: string; toolCallId?: string }>)[0]!;
+
+    expect(callPart.toolCallId).toMatch(PATTERN);
+    expect(resultPart.toolCallId).toMatch(PATTERN);
+    expect(callPart.toolCallId).not.toContain(":");
+    expect(callPart.toolCallId).toBe(resultPart.toolCallId); // must stay paired
+  });
 });

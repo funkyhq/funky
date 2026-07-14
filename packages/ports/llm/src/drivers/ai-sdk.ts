@@ -52,7 +52,7 @@ const execTool = tool({
 export class AiSdkLlm implements LlmPort {
   async complete(req: LlmRequest): Promise<LlmResult> {
     const model = resolveModel(req.model);
-    const messages = toModelMessages(req.messages);
+    const { instructions, messages } = toModelMessages(req.messages);
     const providerOptions = parallelToolUseOff(req.model);
 
     let lastTransient: LlmTransientError | undefined;
@@ -60,6 +60,7 @@ export class AiSdkLlm implements LlmPort {
       try {
         const result = await generateText({
           model,
+          instructions, // the system prompt: ai@7 forbids it inside `messages`
           messages,
           tools: { [EXEC_TOOL]: execTool },
           providerOptions, // disables parallel tool use so the model plans sequentially
@@ -135,16 +136,23 @@ function pickSingleToolCall(
     : { kind: "exec", cmd: input.cmd };
 }
 
-// ChatMessage[] → the AI SDK's ModelMessage[]. An assistant tool call and its paired tool
-// result must share a toolCallId; we reuse the tool message's idemKey as that id (the log
-// already pairs result → call by idemKey), so the reconstruction round-trips cleanly.
-function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
+// ChatMessage[] → the AI SDK's top-level `instructions` (the system prompt) + ModelMessage[].
+// ai@7 forbids system-role messages inside `messages` (allowSystemInMessages defaults to
+// false → "System messages are not allowed… Use the instructions option instead"), so the
+// system prompt must travel as the separate `instructions` option. We collect every system
+// message (normally exactly one, at the head) and join them.
+//
+// An assistant tool call and its paired tool result must share a toolCallId; we reuse the
+// tool message's idemKey as that id (the log already pairs result → call by idemKey), so the
+// reconstruction round-trips cleanly.
+function toModelMessages(messages: ChatMessage[]): { instructions?: string; messages: ModelMessage[] } {
+  const systemParts: string[] = [];
   const out: ModelMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i]!;
     switch (m.role) {
       case "system":
-        out.push({ role: "system", content: m.content });
+        systemParts.push(m.content);
         break;
       case "user":
         out.push({ role: "user", content: m.content });
@@ -152,7 +160,7 @@ function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
       case "assistant": {
         if (m.toolCall) {
           const next = messages[i + 1];
-          const id = next && next.role === "tool" ? next.idemKey : `call-${i}`;
+          const id = next && next.role === "tool" ? toolUseId(next.idemKey) : `call-${i}`;
           const parts: Array<TextPart | ToolCallPart> = [];
           if (m.content) parts.push({ type: "text", text: m.content });
           parts.push({ type: "tool-call", toolCallId: id, toolName: EXEC_TOOL, input: execInput(m.toolCall) });
@@ -168,7 +176,7 @@ function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
           content: [
             {
               type: "tool-result",
-              toolCallId: m.idemKey,
+              toolCallId: toolUseId(m.idemKey),
               toolName: EXEC_TOOL,
               output: { type: "text", value: m.output },
             },
@@ -177,7 +185,18 @@ function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
         break;
     }
   }
-  return out;
+  return {
+    instructions: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
+    messages: out,
+  };
+}
+
+// Anthropic requires tool_use ids to match ^[a-zA-Z0-9_-]+$; our idemKey is
+// `sessionId:seq:index`, whose colons are rejected. Map every disallowed char to `_`.
+// Applied identically to the assistant tool-call and its paired tool-result so the two
+// still reference the same id (the pairing is by this value, within one request).
+function toolUseId(idemKey: string): string {
+  return idemKey.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 function execInput(tc: ToolCall): { cmd: string; timeout_ms?: number } {

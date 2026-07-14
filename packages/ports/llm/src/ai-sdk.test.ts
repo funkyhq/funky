@@ -30,4 +30,21 @@ describe.skipIf(!hasKey)("AiSdkLlm (real anthropic round-trip)", () => {
     expect(typeof result.toolCall?.cmd).toBe("string");
     expect(result.toolCall?.cmd.length).toBeGreaterThan(0);
   });
+
+  // The second inference of a turn: the context now replays a prior assistant tool_use and
+  // its tool_result, keyed by our idemKey (`sessionId:seq:index`). Anthropic rejects a
+  // tool_use.id containing colons, so this round-trip only succeeds once the id is sanitized.
+  it("accepts a replayed tool_use/tool_result history (idemKey has colons)", async () => {
+    const llm = new AiSdkLlm();
+    const messages: ChatMessage[] = [
+      { role: "system", content: "You control a Linux sandbox. Use the exec tool for shell commands." },
+      { role: "user", content: "run: echo hi" },
+      { role: "assistant", content: "", toolCall: { kind: "exec", cmd: 'echo "hi"' } },
+      { role: "tool", idemKey: "019f5e05-a667-732b-99f6-04fa6a4c38ea:3:0", output: "hi\n", exitCode: 0 },
+    ];
+
+    // Before the fix this threw LLM_PERMANENT: "tool_use.id: String should match pattern…".
+    const result = await llm.complete({ model, messages });
+    expect(result.usage.inputTokens).toBeGreaterThan(0);
+  });
 });
