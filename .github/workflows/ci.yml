@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm -F chaos-tests typecheck
+
+  unit:
+    # Everything except the chaos suite. These still use testcontainers Postgres, which the
+    # ubuntu runner provides via its preinstalled Docker.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter '!chaos-tests' -r --if-present test
+
+  chaos:
+    # The product's warranty — durable agent execution proven at every crash point, under
+    # duplicate delivery, under lease expiry, with no double execution (tests/chaos).
+    #
+    # This job is REQUIRED for merge on `main`: add it as a required status check in the
+    # repository's branch-protection rules. A red chaos run is a release blocker, not a flake.
+    #
+    # It is slower than the unit job (it starts real Postgres containers and runs turns
+    # end-to-end) but is designed to land in well under 5 minutes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # testcontainers needs Docker; ubuntu-latest ships with it running. Ryuk (the reaper)
+      # pulls its own image over the network — the suite disables it and stops containers
+      # explicitly, so keep it off here too.
+      - run: pnpm -F chaos-tests test
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"

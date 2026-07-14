@@ -17,8 +17,19 @@ export class ErrConflict extends Error {
   readonly kind = "conflict" as const;
 }
 
+/** Test-only fault seam (Phase H). Fired after every successful append so the chaos
+ *  suite can crash a worker at a PRECISE log position ("after the Nth append") without
+ *  mangling internals. In production it is `undefined`: the `?.` below is the only trace,
+ *  so there is no branch and no cost on the hot path. A hook may `worker.kill()` and/or
+ *  throw to abandon the turn mid-flight — see tests/chaos. */
+export type AppendHook = (e: { sessionId: string; seq: number }) => void | Promise<void>;
+
 export class EventStore {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    /** undefined in production; tests/chaos passes a crash injector. See AppendHook. */
+    private readonly onAfterAppend?: AppendHook,
+  ) {}
 
   /** Full log, ascending. (v1 sessions are short; API-level pagination uses readPage.) */
   async readEvents(ns: string, sessionId: string, afterSeq?: number): Promise<SessionEvent[]> {
@@ -90,8 +101,17 @@ export class EventStore {
     // With a caller's tx the append is atomic with their other writes (e.g. the job
     // enqueue). Without one, open a short tx so the insert and its NOTIFY commit —
     // or roll back — together.
-    if (tx) return write(tx);
-    await this.db.transaction(write);
+    if (tx) {
+      await write(tx);
+    } else {
+      await this.db.transaction(write);
+    }
+    // Fault seam (Phase H). No-op in production. With a caller's tx it runs before their
+    // COMMIT (a throw rolls the append back — the crash-mid-provision case); standalone it
+    // runs after COMMIT (the row is durable — the crash-mid-turn case). A hook that throws
+    // propagates like any append failure; runTurn's error policy treats it as a transient
+    // fault (retry_later) and, having also been `kill()`ed, the worker abandons the job.
+    await this.onAfterAppend?.({ sessionId, seq });
   }
 
   /** Highest seq for a session, 0 if empty. The API uses this to compute the next
