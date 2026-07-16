@@ -1,5 +1,5 @@
-# docker-compose.yml (repo root) — the quickstart stack: postgres + migrate + api + worker.
-# Bring up:   docker compose up --build
+# docker-compose.yml (repo root) — the quickstart stack: postgres + migrate + api + worker + web.
+# Bring up:   docker compose up --build          (console at http://localhost:5173)
 # Scale out:  docker compose up --build --scale worker=3
 # Tear down:  docker compose down          (-v to also wipe the database)
 
@@ -83,6 +83,36 @@ services:
           "node",
           "-e",
           "fetch('http://localhost:9090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The developer console (apps/web) — a Vite + React browser UI over the API. SAME image as
+  # the api/worker, different command. It serves same-origin: the Vite server proxies `/v1`
+  # and `/healthz` to the api and injects the bearer token, so the token never reaches the
+  # browser and the api needs no CORS (it stays untouched). Quickstart-grade — this is the
+  # Vite dev server, matching the rest of the stack running from source. Open :5173 after boot.
+  web:
+    build: .
+    command: ["pnpm", "-F", "web", "dev", "--host", "--port", "5173"]
+    ports:
+      - "5173:5173"
+    environment:
+      NODE_ENV: development # the image defaults to production; the Vite dev server wants development
+      FUNKY_API_URL: http://api:3000 # ← service name, not localhost (proxy target on the compose network)
+      FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any long random string}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # presence flips the console's Claude model option on
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s

@@ -1,8 +1,8 @@
 # Funky
 
-The open-source runtime for AI agents that do the work, not the talking.
+The durable runtime for agent swarms.
 
-Define an agent, give it a sandboxed environment, send it work. Funky handles the durability and the infrastructure. Built for agent swarms, background agents, and long-horizon tasks.
+Define an agent, give it a sandboxed environment, send it work. Funky handles the durability and the infrastructure.
 
 ## Quickstart
 
@@ -56,6 +56,15 @@ event: tool_result            { "output": "hello from the funky sandbox\n", "exi
 event: assistant_message      { "content": [{"type":"text","text":"I ran a command…"}] }
 event: turn_completed
 ```
+
+> **Prefer a UI?** The `curl` flow above is also a few clicks in the **Funky Console** — the
+> browser dev console that ships with the stack. `docker compose up` serves it at
+> http://localhost:5173: create an agent, environment, and session, then chat with the agent
+> and watch it run commands in its sandbox — with the equivalent `curl` shown alongside. It's
+> a thin client over the same REST API (see [`apps/web`](apps/web)).
+
+<!-- TODO: insert Funky Console screenshot here -->
+![Funky Console — the same agent → environment → session → chat flow in the browser](./docs/funky-console.png)
 
 ### Durability
 
@@ -146,6 +155,7 @@ Useful commands: `pnpm typecheck` · `pnpm -F @funky/db generate` (new migration
 ```
 apps/api           HTTP API (Hono): agents, environments, sessions, SSE
 apps/worker        the agent runtime — pulls turns off the queue and drives the loop
+apps/web           browser dev console (Vite + React); `docker compose` serves it at :5173
 packages/sessions  the event log, the reducer, the turn loop, the job queue
 packages/configs   agent + environment config domain logic
 packages/ports     provider-neutral ports (llm, sandbox) + their drivers

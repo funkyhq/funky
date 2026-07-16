@@ -24,12 +24,18 @@ no CORS to configure (the API is left untouched). Config is read from the **mono
 | `FUNKY_API_URL` | where the API listens | `http://localhost:3000` |
 | `FUNKY_AUTH_TOKEN` | bearer token; leave unset if the API runs `FUNKY_AUTH=disabled` | — |
 
-```bash
-# 1. bring up the backend (from the repo root) — see the top-level README Quickstart
-docker compose up --build
+`docker compose up --build` (from the repo root) now brings the console up **with** the
+backend — it's the `web` service, running this same dev server in a container:
 
-# 2. run the console
-pnpm -F web dev        # then open the printed URL (default http://localhost:5173)
+```bash
+docker compose up --build     # api + worker + console at http://localhost:5173
+```
+
+For local iteration with HMR, run the dev server on the host against the compose backend:
+
+```bash
+docker compose up --build     # backend only is fine too: --scale web=0
+pnpm -F web dev               # then open the printed URL (default http://localhost:5173)
 ```
 
 If the backend isn't reachable, the console shows a blocking "Backend API not reachable"

@@ -17,10 +17,11 @@ WORKDIR /app
 # Manifests first: dependency layers cache until a package.json/lockfile changes.
 # EVERY workspace package's manifest is needed — a frozen-lockfile install fails if any
 # package referenced by the lockfile is missing. (api → sessions → llm/sandbox/configs;
-# worker → the same graph.)
+# worker → the same graph; web is the Vite console served by the `web` compose service.)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
+COPY apps/web/package.json apps/web/
 COPY packages/db/package.json packages/db/
 COPY packages/configs/package.json packages/configs/
 COPY packages/sessions/package.json packages/sessions/
