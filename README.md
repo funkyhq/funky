@@ -100,6 +100,18 @@ docker compose down       # stop and remove the containers
 docker compose down -v    # ...and also delete the database volume
 ```
 
+## Why Funky?
+
+Most runtimes put the agent *inside* the sandbox: its reasoning loop, memory, and state all
+live in one box. When that box goes down, the agent and its in-flight work go with it. Funky
+decouples the agent from the box it runs in.
+
+Agents don't die when the server goes down. Funky records every session as an append-only
+event log, then safely resumes interrupted work when the runtime comes back online: a fresh,
+stateless worker replays the log and re-attaches to the still-running sandbox command, with
+nothing lost and nothing run twice. Run one agent or a multi-agent swarm on the same durable
+foundation.
+
 ## Contributing
 
 This is an early-stage project. The best contribution right now is feedback on the interfaces. Open an issue to discuss the protocol, a missing method, or a backend you'd want to plug in.
