@@ -87,8 +87,8 @@ beforeEach(async () => {
     "test-agent",
   ]);
   await pool.query(
-    "insert into env_configs (id, namespace, name, base_image) values ($1,$2,$3,$4)",
-    [envConfigId, NS, "test-env", "funky/base:latest"],
+    "insert into env_configs (id, namespace, name) values ($1,$2,$3)",
+    [envConfigId, NS, "test-env"],
   );
   sessionId = randomUUID();
 });
@@ -126,7 +126,7 @@ async function seedSession(opts: {
   let handle: SandboxHandle | null = opts.handle ?? null;
   if (!handle && opts.provision !== false) {
     handle = await sandbox.provision(
-      { base_image: "x", persistent_fs: { size_gb: 1 }, egress: { allow: [] } },
+      { egress: { allow: [] } },
       sessionId,
     );
     handles.push(handle);
@@ -535,7 +535,7 @@ describe("runProvision", () => {
       sandbox_handle: { driver?: string } | null;
     }>("select status, resolved_env, sandbox_handle from sessions where id = $1", [sessionId]);
     expect(rows[0]!.status).toBe("ready");
-    expect(rows[0]!.resolved_env).toMatchObject({ base_image: "funky/base:latest" });
+    expect(rows[0]!.resolved_env).toMatchObject({ egress: { allow: [] } });
     expect(rows[0]!.sandbox_handle?.driver).toBe("subprocess");
     if (rows[0]!.sandbox_handle) handles.push(rows[0]!.sandbox_handle as SandboxHandle);
 

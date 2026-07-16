@@ -13,7 +13,6 @@ import { isUniqueViolation, jsonEq } from "./util";
 import type { CreateEnvInput, Environment, UpdateEnvInput } from "./envs-types";
 import type { AuthContext, Page } from "./types";
 
-const DEFAULT_PERSISTENT_FS = { size_gb: 2 };
 const DEFAULT_EGRESS = { allow: [] as string[] }; // deny-all egress by default
 
 type EnvRow = typeof envConfigs.$inferSelect;
@@ -40,8 +39,6 @@ export class EnvsService {
           name: input.name,
           description: input.description ?? null,
           metadata: input.metadata ?? {},
-          baseImage: input.base_image,
-          persistentFs: input.persistent_fs ?? DEFAULT_PERSISTENT_FS,
           egress: input.egress ?? DEFAULT_EGRESS,
         })
         .returning();
@@ -64,8 +61,6 @@ export class EnvsService {
       existing.name === input.name &&
       (existing.description ?? null) === (input.description ?? null) &&
       jsonEq(existing.metadata, input.metadata ?? {}) &&
-      existing.baseImage === input.base_image &&
-      jsonEq(existing.persistentFs, input.persistent_fs ?? DEFAULT_PERSISTENT_FS) &&
       jsonEq(existing.egress, input.egress ?? DEFAULT_EGRESS);
     if (!same) {
       throw new ConflictError("an environment with this id exists with a different configuration");
@@ -116,8 +111,6 @@ export class EnvsService {
         ...(patch.name !== undefined && { name: patch.name }),
         ...(patch.description !== undefined && { description: patch.description }),
         ...(patch.metadata !== undefined && { metadata: patch.metadata }), // replace, not merge
-        ...(patch.base_image !== undefined && { baseImage: patch.base_image }),
-        ...(patch.persistent_fs !== undefined && { persistentFs: patch.persistent_fs }),
         ...(patch.egress !== undefined && { egress: patch.egress }),
         updatedAt: new Date(),
       })
@@ -173,8 +166,6 @@ function toEnvironment(row: EnvRow): Environment {
     name: row.name,
     description: row.description,
     metadata: row.metadata,
-    base_image: row.baseImage,
-    persistent_fs: row.persistentFs,
     egress: row.egress,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),

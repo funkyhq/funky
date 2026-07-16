@@ -80,9 +80,9 @@ export function Environments({
                   <div className="row__name" style={{ fontSize: 16, fontWeight: 800 }}>
                     {e.name}
                   </div>
-                  <div className="row__sub">{slug(e.name) || e.base_image}</div>
+                  <div className="row__sub">{slug(e.name)}</div>
                 </div>
-                <div className="row__excerpt">{e.description ?? e.base_image}</div>
+                <div className="row__excerpt">{e.description ?? ''}</div>
                 <Badge tone="green" dot>
                   Active
                 </Badge>

@@ -33,7 +33,6 @@ export type Agent = {
   archived_at: string | null
 }
 
-export type PersistentFs = { size_gb: number }
 export type Egress = { allow: string[] }
 
 export type Environment = {
@@ -42,8 +41,6 @@ export type Environment = {
   name: string
   description: string | null
   metadata: Record<string, string>
-  base_image: string
-  persistent_fs: PersistentFs
   egress: Egress
   created_at: string
   updated_at: string

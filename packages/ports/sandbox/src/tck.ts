@@ -13,8 +13,6 @@ import { type ExecEvent, type Executor, type SandboxDriver, SandboxUnavailableEr
 import type { ResolvedEnv } from "@funky/db/schema";
 
 const SPEC: ResolvedEnv = {
-  base_image: "funky/tck",
-  persistent_fs: { size_gb: 1 },
   egress: { allow: [] },
 };
 

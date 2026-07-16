@@ -68,7 +68,7 @@ async function seedAgent(ctx: AuthContext = CTX): Promise<string> {
 }
 
 async function seedEnv(ctx: AuthContext = CTX): Promise<string> {
-  const { environment } = await envs.create(ctx, { name: "env", base_image: "funky/base:latest" });
+  const { environment } = await envs.create(ctx, { name: "env" });
   return environment.id;
 }
 

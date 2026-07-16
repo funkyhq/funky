@@ -66,8 +66,8 @@ beforeAll(async () => {
     [agentConfigId, NS, "You are a test agent.", JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" })],
   );
   await pool.query(
-    "insert into env_configs (id, namespace, name, base_image) values ($1,$2,$3,$4)",
-    [envConfigId, NS, "test-env", "funky/base:latest"],
+    "insert into env_configs (id, namespace, name) values ($1,$2,$3)",
+    [envConfigId, NS, "test-env"],
   );
 
   db = createDb(pool);
@@ -382,7 +382,7 @@ it("★ crash-resumes: worker B finishes the turn worker A abandoned, running th
   // A provisioned subprocess sandbox both workers share (same session → same workdir).
   const sid = randomUUID();
   const handle = await realSandbox.provision(
-    { base_image: "x", persistent_fs: { size_gb: 1 }, egress: { allow: [] } },
+    { egress: { allow: [] } },
     sid,
   );
   await seedSession({ id: sid, status: "ready", handle });

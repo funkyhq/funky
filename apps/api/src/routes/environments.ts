@@ -9,20 +9,9 @@ type Env = { Variables: { auth: AuthContext; requestId: string } };
 
 // ------------------------------------------------------------ zod schemas
 
-// loose image-ref sanity (repo[:tag][@digest]); no whitespace
-const baseImageSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .regex(/^[\w][\w.\-\/:@]*$/, "must be a valid image reference");
-
 // bare or wildcard-prefixed domain, no scheme, no path
 const hostnameRegex =
   /^(\*\.)?[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)*$/i;
-
-const persistentFsSchema = z
-  .object({ size_gb: z.number().int().min(1).max(100) })
-  .strict();
 
 const egressSchema = z
   .object({
@@ -38,8 +27,6 @@ const createSchema = z
     name: z.string().min(1).max(256),
     description: z.string().max(2048).nullish(),
     metadata: metadataSchema.optional(),
-    base_image: baseImageSchema,
-    persistent_fs: persistentFsSchema.optional(),
     egress: egressSchema.optional(),
   })
   .strict();

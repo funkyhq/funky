@@ -22,9 +22,7 @@ import { envConfigs } from "./envs"; // ⚠ adjust if the env iteration named th
 /** Snapshot captured at sandbox provision; reboots rebuild from THIS, never from the
  *  (mutable) env config. template_id is driver-specific (e.g. E2B template). */
 export type ResolvedEnv = {
-  base_image: string;
   template_id?: string;
-  persistent_fs: { size_gb: number };
   egress: { allow: string[] };
 };
 

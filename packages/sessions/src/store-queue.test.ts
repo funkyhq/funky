@@ -62,8 +62,8 @@ beforeAll(async () => {
     "test-agent",
   ]);
   await pool.query(
-    "insert into env_configs (id, namespace, name, base_image) values ($1, $2, $3, $4)",
-    [envConfigId, NS, "test-env", "funky/base:latest"],
+    "insert into env_configs (id, namespace, name) values ($1, $2, $3)",
+    [envConfigId, NS, "test-env"],
   );
 
   db = createDb(pool);

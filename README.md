@@ -32,8 +32,7 @@ AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
 
 # 2. an environment: where its commands run
 EID=$(curl -s -X POST localhost:3000/v1/environments -H "$H" -H "$J" -d '{
-  "name": "basic",
-  "base_image": "funky/base:latest"
+  "name": "basic"
 }' | jq -r .id)
 
 # 3. a session: an agent + an environment, with a sandbox and a durable event log

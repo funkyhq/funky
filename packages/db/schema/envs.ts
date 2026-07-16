@@ -1,14 +1,21 @@
 // packages/db/schema/envs.ts
-// Environment config = the recipe for a session's sandbox (base image, persistent
-// filesystem, egress policy). Single table + archive, NOT versioned: the config is
-// consumed once at sandbox provision, so updates only affect future sessions.
-// When sessions land they snapshot resolved_env at provision; see configs.ts.
+// Environment config = the reusable, template-like recipe for a session's sandbox
+// (egress policy). One environment fans out to many sessions; each session provisions
+// its OWN isolated sandbox (filesystem is per-session, never shared). Single table +
+// archive, NOT versioned: the config is consumed once at sandbox provision, so updates
+// only affect future sessions. When sessions land they snapshot resolved_env at
+// provision; see configs.ts.
+//
+// Deliberately NOT here: base_image and persistent_fs. Neither is honored by any driver
+// (E2B has no create-time image/disk-size param — both are template-build-time concerns;
+// subprocess runs in the worker container). The runtime image is the backend's concern;
+// per-session durable storage, if ever needed, belongs on the session as a volume
+// resource, not as a knob on the template.
 
 import {
   index, jsonb, pgTable, text, timestamp, uuid,
 } from "drizzle-orm/pg-core";
 
-export type PersistentFs = { size_gb: number };
 export type EgressPolicy = { allow: string[] }; // domain allowlist; [] = deny all egress
 
 export const envConfigs = pgTable(
@@ -21,8 +28,6 @@ export const envConfigs = pgTable(
     metadata: jsonb("metadata").$type<Record<string, string>>().notNull().default({}),
 
     // ---- the recipe ----
-    baseImage: text("base_image").notNull(),  // e.g. "funky/base-python:3.12"
-    persistentFs: jsonb("persistent_fs").$type<PersistentFs>().notNull().default({ size_gb: 2 }),
     egress: jsonb("egress").$type<EgressPolicy>().notNull().default({ allow: [] }),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

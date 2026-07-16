@@ -158,8 +158,6 @@ describe("env_configs", () => {
       name: { type: "text", notNull: true },
       description: { type: "text", notNull: false },
       metadata: { type: "jsonb", notNull: true, hasDefault: true, default: {} },
-      base_image: { type: "text", notNull: true },
-      persistent_fs: { type: "jsonb", notNull: true, hasDefault: true, default: { size_gb: 2 } },
       egress: { type: "jsonb", notNull: true, hasDefault: true, default: { allow: [] } },
       created_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
       updated_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
@@ -349,19 +347,15 @@ describe("ModelConfig", () => {
 // -------------------------------------------------------------- session types
 
 describe("session domain types", () => {
-  it("ResolvedEnv snapshots base image, optional template, fs size and egress", () => {
+  it("ResolvedEnv snapshots optional template and egress", () => {
     const env: ResolvedEnv = {
-      base_image: "funky/base-python:3.12",
       template_id: "e2b-abc123",
-      persistent_fs: { size_gb: 2 },
       egress: { allow: ["api.example.com"] },
     };
-    expect(env.persistent_fs.size_gb).toBe(2);
+    expect(env.egress.allow).toEqual(["api.example.com"]);
 
     // template_id is optional — driver-specific, absent for drivers that don't use it.
     const minimal: ResolvedEnv = {
-      base_image: "funky/base:latest",
-      persistent_fs: { size_gb: 1 },
       egress: { allow: [] },
     };
     expect(minimal.template_id).toBeUndefined();

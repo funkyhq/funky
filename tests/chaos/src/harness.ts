@@ -75,8 +75,8 @@ async function startPg(): Promise<Pg> {
     [AGENT_ID, NS, "You are a chaos test agent.", JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" })],
   );
   await pool.query(
-    "insert into env_configs (id, namespace, name, base_image) values ($1,$2,$3,$4)",
-    [ENV_ID, NS, "chaos-env", "funky/base:latest"],
+    "insert into env_configs (id, namespace, name) values ($1,$2,$3)",
+    [ENV_ID, NS, "chaos-env"],
   );
 
   return { container, pool, db: createDb(pool), uri };
@@ -214,8 +214,6 @@ export async function buildWorld(
   const llm = scriptedLlm({ [sessionId]: script });
 
   const resolvedEnv: ResolvedEnv = {
-    base_image: "funky/base:latest",
-    persistent_fs: { size_gb: 1 },
     egress: { allow: [] },
   };
   // Most scenarios seed the session ALREADY provisioned — provisioning is not what they

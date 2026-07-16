@@ -37,8 +37,8 @@ beforeAll(async () => {
     "a",
   ]);
   await pg.pool.query(
-    "insert into env_configs (id, namespace, name, base_image) values ($1, $2, $3, $4)",
-    [envConfigId, NS, "e", "funky/base:latest"],
+    "insert into env_configs (id, namespace, name) values ($1, $2, $3)",
+    [envConfigId, NS, "e"],
   );
 }, 120_000);
 

@@ -75,14 +75,11 @@ export const agents = {
 
 // ---- environments -----------------------------------------------------------
 
-// The design collects only name + description; the API requires a base_image. We supply the
-// same base image the Quickstart uses so the console works without exposing that field.
-export const DEFAULT_BASE_IMAGE = 'funky/base:latest'
-
+// The environment is just identity + egress policy; the create form collects name +
+// description. The sandbox runtime image is the backend's concern, not a user field.
 export type CreateEnvInput = {
   name: string
   description?: string | null
-  base_image?: string
 }
 
 export const environments = {
@@ -90,7 +87,6 @@ export const environments = {
     request<Environment>('POST', '/v1/environments', {
       name: input.name,
       description: input.description ?? null,
-      base_image: input.base_image ?? DEFAULT_BASE_IMAGE,
     }),
   list: (params?: { limit?: number; after_id?: string; include_archived?: boolean }) =>
     request<Page<Environment>>('GET', `/v1/environments${query(params)}`),

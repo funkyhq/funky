@@ -1,4 +1,3 @@
-import { DEFAULT_BASE_IMAGE } from '../lib/api'
 import { modelConfigFor } from '../lib/models'
 
 // The Quick Start's right-hand code panel. Unlike the prototype's illustrative sample, this
@@ -37,8 +36,7 @@ AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
     code += `\n\n# 2. an environment: where its commands run
 EID=$(curl -s -X POST localhost:3000/v1/environments -H "$H" -H "$J" -d '{
   "name": ${j(st.envName || 'basic')},
-  "description": ${j(st.envDesc || 'default dev box')},
-  "base_image": ${j(DEFAULT_BASE_IMAGE)}
+  "description": ${j(st.envDesc || 'default dev box')}
 }' | jq -r .id)`
   }
 
