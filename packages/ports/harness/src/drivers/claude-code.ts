@@ -172,6 +172,13 @@ export class ClaudeCodeHarness implements HarnessPort {
       // the log + recovery make a retry safe.
       if (fatal === undefined) fatal = classify(err);
     } finally {
+      // Drain the projected appends before deciding the turn's fate: observe()'s
+      // assistant-text appends are fire-and-forget, and returning while one is still
+      // in flight would race the caller's commit for the next seq — losing that race
+      // silently drops the final message or fails a successful turn as a conflict.
+      // The chain never rejects; a failed append lands in `fatal` via fail() before
+      // this await resumes.
+      await appendChain;
       await rm(configDir, { recursive: true, force: true }).catch(() => {});
     }
 

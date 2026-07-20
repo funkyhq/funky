@@ -195,6 +195,55 @@ describe("ClaudeCodeHarness.runTurn — projection and result mapping", () => {
     expect(env["ANTHROPIC_API_KEY"]).toBe("sk-test");
   });
 
+  it("drains in-flight projected appends before returning — a slow appender never loses the final message", async () => {
+    const { queryFn } = fakeQuery([
+      {
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: "final answer" }] },
+      },
+      successResult, // arrives immediately after the text — the race window
+    ]);
+    // A DB-realistic appender: resolves on a macrotask, so it is still in flight
+    // when the result message is processed. Without the drain, runTurn resolves
+    // before the append lands and the caller's commit races it for the next seq.
+    const appended: HarnessProjectedEvent[] = [];
+    const { req } = makeRequest({
+      append: async (e) => {
+        await new Promise((r) => setTimeout(r, 10));
+        appended.push(e);
+        return { seq: appended.length };
+      },
+    });
+
+    await harness(queryFn).runTurn(req);
+    expect(appended).toEqual([
+      {
+        kind: "assistant_message",
+        content: [{ type: "text", text: "final answer" }],
+        toolCalls: [],
+      },
+    ]);
+  });
+
+  it("a slow append that REJECTS still fails the turn — the error is not lost after return", async () => {
+    const { queryFn } = fakeQuery([
+      {
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: "final answer" }] },
+      },
+      successResult,
+    ]);
+    const { req } = makeRequest({
+      append: async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        throw new Error("seq taken");
+      },
+    });
+    await expect(harness(queryFn).runTurn(req)).rejects.toThrow("seq taken");
+  });
+
   it("maps error_max_turns to a budget stop (still carrying the transcript tip)", async () => {
     const { queryFn } = fakeQuery([
       { ...successResult, subtype: "error_max_turns" },
