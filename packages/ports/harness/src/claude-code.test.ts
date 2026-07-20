@@ -149,7 +149,10 @@ describe("ClaudeCodeHarness.runTurn — projection and result mapping", () => {
       {
         type: "assistant",
         parent_tool_use_id: null,
-        message: { content: [{ type: "text", text: "working on it" }] },
+        message: {
+          content: [{ type: "text", text: "working on it" }],
+          usage: { input_tokens: 12, output_tokens: 34 },
+        },
       },
       {
         // Subagent output must NOT be projected.
@@ -173,6 +176,8 @@ describe("ClaudeCodeHarness.runTurn — projection and result mapping", () => {
         kind: "assistant_message",
         content: [{ type: "text", text: "working on it" }],
         toolCalls: [],
+        // Per-inference usage rides the projection — the log records it like native.
+        usage: { inputTokens: 12, outputTokens: 34 },
       },
     ]);
 

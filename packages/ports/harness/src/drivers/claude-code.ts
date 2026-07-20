@@ -229,8 +229,25 @@ export class ClaudeCodeHarness implements HarnessPort {
         .map((b) => (b as { text: string }).text)
         .join("");
       if (text.length > 0) {
+        // Per-inference usage rides the projection so harness sessions record token
+        // usage in the log just like native ones. Tool-call decisions are journaled
+        // by the exec bridge (which never sees the vendor message), so their
+        // inferences' usage is not recorded in v1.
+        const u = msg.message.usage;
         void ctx
-          .append({ kind: "assistant_message", content: textContent(text), toolCalls: [] })
+          .append({
+            kind: "assistant_message",
+            content: textContent(text),
+            toolCalls: [],
+            ...(u
+              ? {
+                  usage: {
+                    inputTokens: u.input_tokens ?? 0,
+                    outputTokens: u.output_tokens ?? 0,
+                  },
+                }
+              : {}),
+          })
           .catch(ctx.fail);
       }
       return;

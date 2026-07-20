@@ -214,6 +214,7 @@ describe("runHarnessTurn — the happy path", () => {
           kind: "assistant_message",
           content: textContent("done"),
           toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 7 },
         });
         return success("cc-session-1");
       },
@@ -234,6 +235,10 @@ describe("runHarnessTurn — the happy path", () => {
     // idemKey is the log position of the journaled decision.
     const result = events[3] as SessionEvent<"tool_result">;
     expect(result.payload.idem_key).toBe(`${sessionId}:3:0`);
+
+    // The projection's usage lands on the logged event — parity with the native loop.
+    const answer = events[4] as SessionEvent<"assistant_message">;
+    expect(answer.payload.usage).toEqual({ input_tokens: 5, output_tokens: 7 });
 
     // Fresh turn: the prompt is the user's message, no resume tip.
     expect(harness.requests[0]!.prompt).toBe("do the thing");
