@@ -101,6 +101,35 @@ export function ModelField({ value, onChange }: { value: string; onChange: (v: s
   )
 }
 
+// How the agent runs its turns. claude-code (the harness) requires an anthropic model,
+// which the UI's model picker always is — so the choice is always valid here.
+export function RuntimeField({
+  value,
+  onChange,
+}: {
+  value: 'native' | 'claude-code'
+  onChange: (v: 'native' | 'claude-code') => void
+}) {
+  return (
+    <div className="field">
+      <Select
+        label="Runtime"
+        value={value}
+        options={[
+          { value: 'native', label: 'Native — Funky’s built-in agent loop' },
+          { value: 'claude-code', label: 'Claude Code — run turns inside the Claude Agent SDK' },
+        ]}
+        onChange={(v) => onChange(v as 'native' | 'claude-code')}
+      />
+      {value === 'claude-code' ? (
+        <p className="model-hint">
+          Runs each turn inside Claude Code; needs <code>ANTHROPIC_API_KEY</code> on the worker.
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function NetworkFields({
   mode,
   allowedHosts,

@@ -5,7 +5,7 @@ import type { Agent } from '../lib/types'
 import { DEFAULT_MODEL_LABEL, modelConfigFor, modelLabel } from '../lib/models'
 import { errMsg, initials } from '../lib/format'
 import { Avatar, Badge, Button, Checkbox, Modal, Textarea, Input } from '../ui/ui'
-import { ArchiveItem, EmptyState, Kebab, ModelField, PageHeader, SelectionBar } from './parts'
+import { ArchiveItem, EmptyState, Kebab, ModelField, PageHeader, RuntimeField, SelectionBar } from './parts'
 import { useSelection } from './data'
 
 export function Agents({
@@ -21,6 +21,7 @@ export function Agents({
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [model, setModel] = useState(DEFAULT_MODEL_LABEL)
+  const [runtime, setRuntime] = useState<'native' | 'claude-code'>('native')
   const [prompt, setPrompt] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -35,11 +36,13 @@ export function Agents({
         name: name.trim(),
         system_prompt: prompt.trim(),
         model: modelConfigFor(model),
+        runtime: { type: runtime },
       })
       setOpen(false)
       setName('')
       setPrompt('')
       setModel(DEFAULT_MODEL_LABEL)
+      setRuntime('native')
       await reload()
     } catch (e) {
       notify(errMsg(e))
@@ -88,6 +91,7 @@ export function Agents({
                   <div className="row__sub">{modelLabel(a.model)}</div>
                 </div>
                 <div className="row__excerpt">{a.system_prompt}</div>
+                {a.runtime?.type === 'claude-code' ? <Badge tone="neutral">Claude Code</Badge> : null}
                 <Badge tone="green" dot>
                   Ready
                 </Badge>
@@ -116,6 +120,7 @@ export function Agents({
         <div className="modal__form">
           <Input label="Agent name" placeholder="Name your agent" value={name} onChange={setName} />
           <ModelField value={model} onChange={setModel} />
+          <RuntimeField value={runtime} onChange={setRuntime} />
           <Textarea
             label="System prompt"
             rows={4}

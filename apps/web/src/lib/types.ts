@@ -18,6 +18,10 @@ export type ModelConfig = {
   temperature?: number
 }
 
+// How an agent runs its turns: 'native' = Funky's built-in loop; 'claude-code' = inside
+// the Claude Agent SDK (the harness). claude-code requires an anthropic model.
+export type RuntimeConfig = { type: 'native' } | { type: 'claude-code' }
+
 export type Agent = {
   type: 'agent'
   id: string
@@ -28,6 +32,7 @@ export type Agent = {
   system_prompt: string
   model: ModelConfig
   tool_policy: Record<string, unknown>
+  runtime: RuntimeConfig | null
   created_at: string
   updated_at: string
   archived_at: string | null
@@ -75,6 +80,7 @@ export type SessionEventType =
   | 'tool_result'
   | 'turn_completed'
   | 'turn_failed'
+  | 'harness_attempt_started' // bookkeeping (claude-code sessions); not rendered
 
 export type SessionEvent = {
   type: SessionEventType

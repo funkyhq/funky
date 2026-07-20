@@ -18,7 +18,7 @@ import type {
 } from "./types";
 
 const LABEL_FIELDS = ["name", "description", "metadata"] as const;
-const BEHAVIOR_FIELDS = ["system_prompt", "model", "tool_policy"] as const;
+const BEHAVIOR_FIELDS = ["system_prompt", "model", "tool_policy", "runtime"] as const;
 
 type IdentityRow = typeof agentConfigs.$inferSelect;
 type VersionRow = typeof agentConfigVersions.$inferSelect;
@@ -53,6 +53,7 @@ export class AgentsService {
           systemPrompt: input.system_prompt,
           model: input.model,
           toolPolicy: input.tool_policy ?? {},
+          runtime: input.runtime ?? null,
           createdBy: ctx.principal,
         });
         const created = await this.findRaw(tx, ctx, id);
@@ -78,7 +79,8 @@ export class AgentsService {
       jsonEq(existing.a.metadata, input.metadata ?? {}) &&
       existing.v.systemPrompt === input.system_prompt &&
       jsonEq(existing.v.model, input.model) &&
-      jsonEq(existing.v.toolPolicy, input.tool_policy ?? {});
+      jsonEq(existing.v.toolPolicy, input.tool_policy ?? {}) &&
+      jsonEq(existing.v.runtime ?? null, input.runtime ?? null);
     if (!same) {
       throw new ConflictError("an agent with this id exists with a different configuration");
     }
@@ -152,6 +154,8 @@ export class AgentsService {
           systemPrompt: patch.system_prompt ?? cur!.systemPrompt,
           model: patch.model ?? cur!.model,
           toolPolicy: patch.tool_policy ?? cur!.toolPolicy,
+          // `?? ` would swallow an explicit null (= reset to native); check presence.
+          runtime: patch.runtime !== undefined ? patch.runtime : (cur!.runtime ?? null),
           createdBy: ctx.principal,
         });
       }
@@ -273,6 +277,7 @@ function toAgent(row: { a: IdentityRow; v: VersionRow }): Agent {
     system_prompt: row.v.systemPrompt,
     model: row.v.model,
     tool_policy: row.v.toolPolicy,
+    runtime: row.v.runtime ?? null,
     created_at: row.a.createdAt.toISOString(),
     updated_at: row.a.updatedAt.toISOString(),
     archived_at: row.a.archivedAt?.toISOString() ?? null,
@@ -287,6 +292,7 @@ function toAgentVersion(v: VersionRow): AgentVersion {
     system_prompt: v.systemPrompt,
     model: v.model,
     tool_policy: v.toolPolicy,
+    runtime: v.runtime ?? null,
     created_at: v.createdAt.toISOString(),
     created_by: v.createdBy,
   };

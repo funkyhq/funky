@@ -7,6 +7,7 @@ import type {
   ModelConfig,
   Page,
   NetworkPolicy,
+  RuntimeConfig,
   SendMessageResult,
   Session,
   SessionEvent,
@@ -63,6 +64,7 @@ export type CreateAgentInput = {
   name: string
   system_prompt: string
   model: ModelConfig
+  runtime?: RuntimeConfig | null
   description?: string | null
 }
 

@@ -83,6 +83,11 @@ services:
     # workloads prefer FUNKY_SANDBOX=e2b (remote) or run the containers under gVisor/Kata.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # RAM-backed scratch for the claude-code harness: each in-flight harness turn keeps
+    # its DISPOSABLE local session copy here (the durable transcript is in Postgres).
+    # tmpfs means a dead worker leaves nothing behind — statelessness by construction.
+    tmpfs:
+      - /dev/shm/funky-harness
     environment:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky # ← service name, not localhost
       FUNKY_LLM: ${FUNKY_LLM:-fake}
@@ -92,6 +97,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # empty unless the user sets it
       E2B_API_KEY: ${E2B_API_KEY:-} # empty unless the user sets it
       FUNKY_E2B_SANDBOX_TIMEOUT_MS: ${FUNKY_E2B_SANDBOX_TIMEOUT_MS:-1800000}
+      # Harness (agents with runtime=claude-code). CWD_ROOT must be identical across
+      # every worker replica — the transcript store's key derives from it.
+      FUNKY_HARNESS_SCRATCH_ROOT: /dev/shm/funky-harness
+      FUNKY_HARNESS_CWD_ROOT: /tmp/funky-harness-cwd
     depends_on:
       migrate:
         condition: service_completed_successfully

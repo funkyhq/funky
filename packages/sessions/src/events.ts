@@ -76,12 +76,23 @@ export const eventPayloadSchemas = {
       "LLM_PERMANENT",
       "SANDBOX_FATAL",
       "BUDGET",
+      "HARNESS", // permanent harness failure (bad config, auth) — harness sessions only
       "INTERNAL",
     ]), // transient classes never reach the log — they retry
     message: z.string(),
   }),
 
   session_provisioned: z.object({}),
+
+  // Harness sessions only (bookkeeping; skipped by buildContext). Appending this at
+  // lastSeq+1 IS acquiring the turn attempt: losing the seq race means another worker
+  // owns the turn. `attempt` is the write-fence token mirrored onto the session row
+  // (sessions.harness_attempt) in the same transaction. See ports/harness/DESIGN.md §5.
+  harness_attempt_started: z.object({
+    attempt: z.string().min(1),
+    /** The Claude session id this attempt resumes from; null on a session's first turn. */
+    resumed_from: z.string().nullable(),
+  }),
 } as const;
 
 export type EventType = keyof typeof eventPayloadSchemas;

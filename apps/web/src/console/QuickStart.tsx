@@ -5,7 +5,7 @@ import { modelConfigFor } from '../lib/models'
 import { networkPolicy, networkSummary, type NetworkMode } from '../lib/network'
 import { errMsg, initials } from '../lib/format'
 import { Avatar, Badge, Button, CodeBlock, Input, Textarea } from '../ui/ui'
-import { ModelField, NetworkFields } from './parts'
+import { ModelField, NetworkFields, RuntimeField } from './parts'
 import { buildCurl } from './curl'
 
 const DEFAULT_PROMPT = 'You are an autonomous research and coding agent.'
@@ -16,6 +16,7 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
   const [step, setStep] = useState(1)
   const [agentName, setAgentName] = useState('Funky Assistant')
   const [model, setModel] = useState('Sonnet 5')
+  const [runtime, setRuntime] = useState<'native' | 'claude-code'>('native')
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_PROMPT)
   const [envName, setEnvName] = useState('basic')
   const [envDesc, setEnvDesc] = useState('default dev box')
@@ -60,6 +61,7 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
         name: agentName.trim(),
         system_prompt: systemPrompt.trim(),
         model: modelConfigFor(model),
+        runtime: { type: runtime },
       })
       const env = await envsApi.create({
         name: envName.trim(),
@@ -79,7 +81,7 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
   }
 
   const network = networkPolicy(networkMode, allowedHosts)
-  const curl = buildCurl({ step, agentName, model, systemPrompt, envName, envDesc, network, message })
+  const curl = buildCurl({ step, agentName, model, runtime, systemPrompt, envName, envDesc, network, message })
 
   return (
     <div className="content">
@@ -100,6 +102,7 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
               </div>
               <Input label="Agent name" placeholder="Name your agent" value={agentName} onChange={setAgentName} />
               <ModelField value={model} onChange={setModel} />
+              <RuntimeField value={runtime} onChange={setRuntime} />
               <Textarea label="System prompt" rows={5} value={systemPrompt} onChange={setSystemPrompt} />
               <div className="qs-foot qs-foot--end">
                 <Button variant="accent" size="lg" onClick={guardStep1}>
@@ -143,6 +146,7 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
               <div className="review">
                 <ReviewRow label="Agent" value={agentName} strong />
                 <ReviewRow label="Model" value={model} mono />
+                <ReviewRow label="Runtime" value={runtime === 'claude-code' ? 'Claude Code' : 'Native'} />
                 <ReviewRow label="Environment" value={envName} mono />
                 <ReviewRow label="Network" value={networkSummary(network)} />
                 <ReviewRow label="System prompt" value={systemPrompt} />

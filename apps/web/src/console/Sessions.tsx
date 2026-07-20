@@ -193,7 +193,10 @@ function CreateSessionModal({
         <Select
           label="Agent"
           value={agentId}
-          options={agents.map((a) => ({ value: a.id, label: a.name }))}
+          options={agents.map((a) => ({
+            value: a.id,
+            label: a.runtime?.type === 'claude-code' ? `${a.name} · Claude Code` : a.name,
+          }))}
           onChange={setAgentId}
         />
         <Select

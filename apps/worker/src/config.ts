@@ -20,8 +20,15 @@ const EnvSchema = z
     // e2b: an isolated remote sandbox per session. (The in-process subprocess driver still
     // exists for the offline test suites, but is not a production sandbox option.)
     FUNKY_SANDBOX: z.enum(["docker", "e2b"]).default("docker"),
-    // Required ONLY when FUNKY_LLM=ai-sdk (the fake driver makes no network calls).
+    // Required when FUNKY_LLM=ai-sdk, and for agents with runtime=claude-code (the
+    // harness driver is only constructed when this key is present).
     ANTHROPIC_API_KEY: optionalSecret,
+    // Harness (claude-code) knobs. CWD_ROOT must be identical across the worker
+    // fleet — the harness derives the transcript store's projectKey from it.
+    // SCRATCH_ROOT holds the disposable per-attempt local session copy; point it at
+    // RAM-backed storage (tmpfs) in production.
+    FUNKY_HARNESS_CWD_ROOT: z.string().min(1).default("/tmp/funky-harness-cwd"),
+    FUNKY_HARNESS_SCRATCH_ROOT: z.string().min(1).default("/tmp/funky-harness-scratch"),
     // Required ONLY when FUNKY_SANDBOX=e2b (docker needs no account).
     E2B_API_KEY: optionalSecret,
     // Base image for the docker driver (built from docker/sandbox.Dockerfile).
@@ -55,6 +62,8 @@ export type Config = {
   sandbox: "docker" | "e2b";
   /** null = fake driver; no key needed. */
   anthropicApiKey: string | null;
+  harnessCwdRoot: string;
+  harnessScratchRoot: string;
   /** null = docker driver; no key needed. */
   e2bApiKey: string | null;
   e2bSandboxTimeoutMs: number;
@@ -81,6 +90,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llm: e.FUNKY_LLM,
     sandbox: e.FUNKY_SANDBOX,
     anthropicApiKey: e.ANTHROPIC_API_KEY ?? null,
+    harnessCwdRoot: e.FUNKY_HARNESS_CWD_ROOT,
+    harnessScratchRoot: e.FUNKY_HARNESS_SCRATCH_ROOT,
     e2bApiKey: e.E2B_API_KEY ?? null,
     e2bSandboxTimeoutMs: e.FUNKY_E2B_SANDBOX_TIMEOUT_MS,
     dockerImage: e.FUNKY_DOCKER_IMAGE,

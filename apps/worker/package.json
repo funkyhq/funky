@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@funky/db": "workspace:*",
+    "@funky/harness": "workspace:*",
     "@funky/llm": "workspace:*",
     "@funky/sandbox": "workspace:*",
     "@funky/sessions": "workspace:*",

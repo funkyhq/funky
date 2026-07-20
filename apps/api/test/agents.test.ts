@@ -27,6 +27,19 @@ describe("POST /v1/agents (create)", () => {
     expect(fake.create).toHaveBeenCalledWith(CTX, createBody());
   });
 
+  it("accepts runtime claude-code with an anthropic model and passes it through", async () => {
+    const agent = agentFixture();
+    const { app, fake } = makeApp({
+      agents: { create: vi.fn().mockResolvedValue({ agent, created: true }) },
+    });
+
+    const body = createBody({ runtime: { type: "claude-code" } });
+    const res = await post(app, "/v1/agents", body);
+
+    expect(res.status).toBe(201);
+    expect(fake.create).toHaveBeenCalledWith(CTX, body);
+  });
+
   it("returns 200 for an idempotent (already-exists) create", async () => {
     const agent = agentFixture();
     const { app } = makeApp({
@@ -50,6 +63,8 @@ describe("POST /v1/agents (create)", () => {
     ["unknown top-level field (strict)", createBody({ nope: true })],
     ["non-uuid id", createBody({ id: "not-a-uuid" })],
     ["too many metadata pairs", createBody({ metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, "v"])) })],
+    ["unknown runtime type", createBody({ runtime: { type: "langchain" } })],
+    ["runtime claude-code with a non-anthropic model", createBody({ runtime: { type: "claude-code" }, model: { provider: "openai", model: "gpt-x" } })],
   ])("rejects %s with 400 and does not call the service", async (_label, body) => {
     const { app, fake } = makeApp();
 

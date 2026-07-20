@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, Pool } from "pg";
 import { createDb } from "@funky/db";
+import { type HarnessPort, makeHarness } from "@funky/harness";
 import { FakeLlm, type LlmConfig, makeLlm } from "@funky/llm";
 import { makeSandbox, type SandboxConfig } from "@funky/sandbox";
 import { EventStore, JobQueue } from "@funky/sessions";
@@ -28,11 +29,24 @@ const metrics = createMetrics();
 const listenClient = new Client({ connectionString: cfg.databaseUrl });
 await listenClient.connect();
 
+// The claude-code harness needs an Anthropic key regardless of FUNKY_LLM; without
+// one, harness sessions fail their turns with a terminal HARNESS error instead.
+const harness: HarnessPort | undefined = cfg.anthropicApiKey
+  ? makeHarness({
+      driver: "claude-code",
+      db,
+      apiKey: cfg.anthropicApiKey,
+      cwdRoot: cfg.harnessCwdRoot,
+      scratchRoot: cfg.harnessScratchRoot,
+    })
+  : undefined;
+
 const worker = startWorker({
   queue,
   store,
   llm: makeLlm(llmConfig(cfg)), // fake by default — no API key needed
   sandbox: makeSandbox(sandboxConfig(cfg)), // docker by default — isolated, no account needed
+  ...(harness ? { harness } : {}),
   db,
   listenClient,
   concurrency: cfg.concurrency,

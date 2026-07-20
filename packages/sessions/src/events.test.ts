@@ -32,6 +32,10 @@ const samples: { [T in EventType]: EventPayload<T> } = {
   turn_completed: {},
   turn_failed: { error_class: "INTERNAL", message: "boom" },
   session_provisioned: {},
+  harness_attempt_started: {
+    attempt: "22222222-2222-2222-2222-222222222222",
+    resumed_from: null,
+  },
 };
 
 describe("event model coverage", () => {

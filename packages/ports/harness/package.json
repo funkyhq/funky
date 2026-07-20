@@ -1,29 +1,27 @@
 {
-  "name": "@funky/sessions",
+  "name": "@funky/harness",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./events": "./src/events.ts"
+    "./port": "./src/port.ts"
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@funky/configs": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.214",
     "@funky/db": "workspace:*",
-    "@funky/harness": "workspace:*",
-    "@funky/llm": "workspace:*",
     "@funky/sandbox": "workspace:*",
+    "@funky/sessions": "workspace:*",
     "drizzle-orm": "^1.0.0-beta.2",
-    "pg": "^8.22.0",
-    "uuid": "^13.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.0.4",
     "@types/pg": "^8.20.0",
+    "pg": "^8.22.0",
     "vitest": "^4.1.10"
   }
 }

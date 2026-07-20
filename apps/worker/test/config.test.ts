@@ -32,6 +32,8 @@ describe("loadConfig — valid input", () => {
       e2bSandboxTimeoutMs: 30 * 60_000,
       dockerImage: "funky-sandbox:trixie",
       dbPoolMax: 10,
+      harnessCwdRoot: "/tmp/funky-harness-cwd",
+      harnessScratchRoot: "/tmp/funky-harness-scratch",
     });
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -63,6 +65,8 @@ describe("loadConfig — valid input", () => {
       FUNKY_SANDBOX: "e2b",
       E2B_API_KEY: "e2b_secret",
       FUNKY_E2B_SANDBOX_TIMEOUT_MS: "600000",
+      FUNKY_HARNESS_CWD_ROOT: "/var/funky/cwd",
+      FUNKY_HARNESS_SCRATCH_ROOT: "/dev/shm/funky",
     });
     expect(cfg).toEqual({
       databaseUrl: BASE.DATABASE_URL,
@@ -75,6 +79,8 @@ describe("loadConfig — valid input", () => {
       e2bSandboxTimeoutMs: 600_000,
       dockerImage: "funky-sandbox:trixie",
       dbPoolMax: 25,
+      harnessCwdRoot: "/var/funky/cwd",
+      harnessScratchRoot: "/dev/shm/funky",
     });
   });
 });

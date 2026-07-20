@@ -8,6 +8,7 @@ export type CurlState = {
   step: number
   agentName: string
   model: string
+  runtime: 'native' | 'claude-code'
   systemPrompt: string
   envName: string
   envDesc: string
@@ -26,11 +27,14 @@ export function buildCurl(st: CurlState): string {
   ].join('\n')
 
   if (st.step >= 1) {
+    // claude-code runs turns inside the Claude Agent SDK (the harness); native omits the field.
+    const runtimeLine =
+      st.runtime === 'claude-code' ? `,\n  "runtime": { "type": "claude-code" }` : ''
     code += `\n\n# 1. an agent: who it is and what model it uses
 AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
   "name": ${j(st.agentName || 'my agent')},
   "system_prompt": ${j(st.systemPrompt || 'You are a helpful engineer.')},
-  "model": { "provider": ${j(provider)}, "model": ${j(model)} }
+  "model": { "provider": ${j(provider)}, "model": ${j(model)} }${runtimeLine}
 }' | jq -r .id)`
   }
 

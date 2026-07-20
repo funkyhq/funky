@@ -1,77 +1,51 @@
-// packages/sessions/src/turn.ts — Phase D: the turn loop.
+// packages/sessions/src/turn.ts — the turn SHELL.
 //
-// runTurn performs the single next Action the reducer computes, appends its result to the
-// log, and repeats — reading the log ONCE and keeping it current in memory thereafter.
-// buildContext is the ONLY source of provider messages: it rebuilds the conversation from
-// our log every inference, so the invariant "every assistant tool_use is answered by a
-// matching tool_result" holds even across crashes and the driver's v1 one-call cap. Raw
-// provider response objects are never cached or replayed.
+// runTurn is deliberately thin: it gates on session status, loads the PINNED agent
+// version, reads the log ONCE, builds the plumbing every runtime shares (the
+// conditional-append helper, terminalFail, exec-with-reboot), and hands a TurnShell to
+// the TurnStrategy selected by the pinned runtime. The strategies own everything that
+// genuinely differs:
+//
+//   - nativeStrategy (native-strategy.ts): Funky's own infer/exec loop. The model's
+//     context is a pure function of the log, so crash-resume is free (reducer replay).
+//   - harnessStrategy (harness-strategy.ts): a vendor agent SDK (e.g. Claude Code) owns
+//     the loop; the strategy adds a write fence, a crash-recovery pre-pass, and a commit
+//     to reconcile the opaque external transcript with the log.
+//
+// The pinned runtime never changes mid-session, so a session's strategy is stable for
+// its whole life. See ports/harness/DESIGN.md.
 
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@funky/db";
-import { agentConfigVersions, sessions } from "@funky/db/schema";
-import type { ChatMessage, LlmPort } from "@funky/llm";
-import { LlmPermanentError, LlmTransientError } from "@funky/llm";
-import type { Executor, SandboxDriver, SandboxHandle } from "@funky/sandbox";
+import { type RuntimeConfig, agentConfigVersions, sessions } from "@funky/db/schema";
+import type { HarnessPort } from "@funky/harness/port";
+import type { LlmPort } from "@funky/llm";
+import type { SandboxDriver, SandboxHandle } from "@funky/sandbox";
 import { SandboxUnavailableError } from "@funky/sandbox";
-import {
-  type EventPayload,
-  type EventType,
-  type SessionEvent,
-  type ToolCall,
-  makeEvent,
-  plainText,
-  textContent,
-} from "./events";
+import { type EventPayload, type EventType, makeEvent } from "./events";
+import { makeExecWithReboot } from "./exec";
+import { harnessStrategy } from "./harness-strategy";
+import { nativeStrategy } from "./native-strategy";
 import type { Job } from "./queue";
-import { nextAction } from "./reducer";
 import { ErrConflict, EventStore } from "./store";
+import type { ErrorClass, TurnShell, TurnStrategy } from "./strategy";
+
+// buildContext is native's context builder; re-exported here so `./turn`'s public
+// surface (and its importers/tests) stay stable after the strategy split.
+export { buildContext } from "./native-strategy";
 
 // ---------------------------------------------------------------------------
-// buildContext — log → provider messages
-// ---------------------------------------------------------------------------
-/** Rebuild the provider message list from the log. The system prompt comes from the
- *  PINNED agent version on the session row, never the agent's current latest. Bookkeeping
- *  events (turn_completed / turn_failed / session_provisioned) are skipped — they are not
- *  conversation. This is the sole producer of ChatMessage[]; never replay a raw response. */
-export function buildContext(events: SessionEvent[], systemPrompt: string): ChatMessage[] {
-  const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
-  for (const e of events) {
-    switch (e.type) {
-      case "user_message": {
-        const p = e.payload as EventPayload<"user_message">;
-        messages.push({ role: "user", content: plainText(p.content) });
-        break;
-      }
-      case "assistant_message": {
-        const p = e.payload as EventPayload<"assistant_message">;
-        messages.push({
-          role: "assistant",
-          content: plainText(p.content),
-          // v1 cap: at most one call; buildContext mirrors what the log recorded.
-          ...(p.tool_calls[0] ? { toolCall: p.tool_calls[0] } : {}),
-        });
-        break;
-      }
-      case "tool_result": {
-        const p = e.payload as EventPayload<"tool_result">;
-        messages.push({ role: "tool", idemKey: p.idem_key, output: p.output, exitCode: p.exit_code });
-        break;
-      }
-      // turn_completed / turn_failed / session_provisioned → skipped (bookkeeping).
-    }
-  }
-  return messages;
-}
-
-// ---------------------------------------------------------------------------
-// runTurn — perform the action, append, repeat
+// runTurn — gate, load, build the shell, dispatch to the strategy
 // ---------------------------------------------------------------------------
 export type TurnDeps = {
   store: EventStore;
   llm: LlmPort;
   sandbox: SandboxDriver;
   db: Db; // for reading session + agent version rows
+  /** Optional: agent versions with runtime {type:"claude-code"} dispatch to this
+   *  port (harness-strategy.ts). A harness session on a worker without a driver fails
+   *  the turn with a terminal HARNESS error. */
+  harness?: HarnessPort;
 };
 
 export type TurnOutcome =
@@ -96,32 +70,26 @@ export async function runTurn(job: Job, deps: TurnDeps): Promise<TurnOutcome> {
   if (session.status === "provisioning") return "retry_later"; // backoff waits; do NOT block
   if (session.status === "failed" || session.status === "archived") return "abandoned";
 
-  // 2. The PINNED agent version → system prompt, model, iteration budget.
+  // 2. The PINNED agent version → system prompt, model, iteration budget, runtime.
   const version = await loadAgentVersion(deps.db, session.agentConfigId, session.agentVersion);
   if (!version) return "abandoned"; // pinned version vanished — nothing coherent to run
-  const systemPrompt = version.systemPrompt;
-  const model = version.model;
-  const maxIterations = readMaxIterations(version.toolPolicy);
 
-  // 3. The log IS the state. Read once; keep it current in memory (never re-read per loop).
+  // 3. The log IS the state. Read once; the shell's append keeps it current in memory.
   const events = await deps.store.readEvents(ns, sessionId);
-  let handle = (session.sandboxHandle ?? null) as SandboxHandle | null;
 
-  // Append at lastSeq+1 and mirror the row into `events` so the loop reflects reality
-  // without another DB round-trip. A lost (session_id, seq) race surfaces as ErrConflict.
-  const append = async <T extends EventType>(type: T, payload: EventPayload<T>): Promise<void> => {
+  // 4. Shared plumbing: conditional append, terminal-failure recorder, exec+reboot.
+  const append = async <T extends EventType>(
+    type: T,
+    payload: EventPayload<T>,
+  ): Promise<number> => {
     const seq = (events.at(-1)?.seq ?? 0) + 1;
     const evt = makeEvent({ sessionId, namespace: ns, seq }, type, payload);
     await deps.store.appendEvent(ns, sessionId, seq, evt);
     events.push({ ...evt, createdAt: new Date() });
+    return seq;
   };
 
-  // Record a terminal failure. If even this append loses the seq race, another worker
-  // owns the turn → conflict; a non-conflict failure means we could not record it → retry.
-  const terminalFail = async (
-    errorClass: "LLM_PERMANENT" | "SANDBOX_FATAL" | "INTERNAL",
-    message: string,
-  ): Promise<TurnOutcome> => {
+  const terminalFail = async (errorClass: ErrorClass, message: string): Promise<TurnOutcome> => {
     try {
       await append("turn_failed", { error_class: errorClass, message });
     } catch (e) {
@@ -131,111 +99,72 @@ export async function runTurn(job: Job, deps: TurnDeps): Promise<TurnOutcome> {
     return "failed";
   };
 
-  // Run one exec. Non-zero exit / timeout(124) / OOM(137) are RESULTS (they carry an exit
-  // code) and are returned, never thrown. Only an unobservable command throws.
-  const runExec = async (executor: Executor, call: ToolCall, idemKey: string) => {
-    const req = {
-      cmd: call.cmd,
-      idemKey,
-      ...(call.timeout_ms !== undefined ? { timeoutMs: call.timeout_ms } : {}),
-    };
-    let output = "";
-    let exitCode = 0;
-    let truncated = false;
-    let sawExit = false;
-    for await (const ev of executor.exec(req)) {
-      if (ev.kind === "exit") {
-        exitCode = ev.code;
-        truncated = ev.truncated;
-        sawExit = true;
-      } else {
-        output += ev.data; // stdout / stderr both fold into combined output
-      }
-    }
-    // A stream that ends without an exit event is unobservable, not a zero exit.
-    if (!sawExit) throw new SandboxUnavailableError("exec stream ended without an exit event");
-    return { output, exitCode, truncated };
+  const exec = makeExecWithReboot({
+    db: deps.db,
+    sandbox: deps.sandbox,
+    ns,
+    sessionId,
+    handle: (session.sandboxHandle ?? null) as SandboxHandle | null,
+  });
+
+  const shell: TurnShell = {
+    job,
+    ns,
+    sessionId,
+    lastAttempt,
+    session,
+    version,
+    deps,
+    events,
+    append,
+    terminalFail,
+    exec,
   };
 
-  // Exec with a single reboot on an unobservable sandbox. The same idemKey re-attaches to
-  // a still-running command or re-runs it safely, so nothing runs twice. A second failure
-  // propagates to the error policy below.
-  const execWithReboot = async (call: ToolCall, idemKey: string) => {
-    if (!handle) throw new SandboxUnavailableError("session has no sandbox handle");
-    try {
-      return await runExec(deps.sandbox.connect(handle), call, idemKey);
-    } catch (err) {
-      if (!(err instanceof SandboxUnavailableError)) throw err;
-      handle = await deps.sandbox.reboot(handle); // persistent FS survives the reboot
-      await persistHandle(deps.db, ns, sessionId, handle);
-      return await runExec(deps.sandbox.connect(handle), call, idemKey);
-    }
-  };
-
+  // 5. Select the strategy by pinned runtime, run it, and map any escaping error onto
+  //    a TurnOutcome (strategy-specific classes first, shared classes as fallback).
+  const strategy = selectStrategy(version.runtime);
   try {
-    for (;;) {
-      const action = nextAction(events, maxIterations);
-      switch (action.kind) {
-        case "noop":
-          return "completed"; // redelivery of finished work — silent ack
-        case "finish":
-          await append("turn_completed", {});
-          return "completed";
-        case "fail":
-          await append("turn_failed", {
-            error_class: "BUDGET",
-            message: `iteration budget exhausted (max_iterations=${maxIterations})`,
-          });
-          return "failed";
-        case "infer": {
-          const result = await deps.llm.complete({
-            model,
-            messages: buildContext(events, systemPrompt),
-            trace: { sessionId },
-          });
-          await append("assistant_message", {
-            content: textContent(result.content),
-            tool_calls: result.toolCall ? [result.toolCall] : [],
-            usage: {
-              input_tokens: result.usage.inputTokens,
-              output_tokens: result.usage.outputTokens,
-            },
-          });
-          break;
-        }
-        case "exec_tool": {
-          const res = await execWithReboot(action.call, action.idemKey);
-          await append("tool_result", {
-            idem_key: action.idemKey,
-            output: res.output,
-            exit_code: res.exitCode, // a non-zero exit is a result the model reacts to
-            truncated: res.truncated,
-          });
-          break;
-        }
-      }
-    }
+    return await strategy.run(shell);
   } catch (err) {
-    // Error policy. A command that ran and failed never reaches here — that's a result.
-    if (err instanceof ErrConflict) return "conflict"; // someone else owns this turn
-    if (err instanceof LlmPermanentError) return terminalFail("LLM_PERMANENT", err.message);
-    if (err instanceof LlmTransientError) {
-      // Escaped the driver's retries. Append nothing; the queue's backoff replays the log.
-      return lastAttempt ? terminalFail("INTERNAL", `llm transient: ${err.message}`) : "retry_later";
-    }
-    if (err instanceof SandboxUnavailableError) {
-      return lastAttempt ? terminalFail("SANDBOX_FATAL", err.message) : "retry_later";
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    return lastAttempt ? terminalFail("INTERNAL", message) : "retry_later";
+    const mapped = await strategy.mapError?.(err, shell);
+    return mapped ?? (await mapError(err, shell));
   }
+}
+
+/** Pinned runtime → strategy. null / {type:"native"} → the native loop; {type:"claude-code"}
+ *  → the harness loop. Replaces the former inline dispatch branch. */
+function selectStrategy(runtime: RuntimeConfig | null): TurnStrategy {
+  switch (runtime?.type) {
+    case "claude-code":
+      return harnessStrategy;
+    case "native":
+    case undefined: // null runtime column → native (the historical default)
+      return nativeStrategy;
+    default: {
+      const never: never = runtime;
+      throw new Error(`unknown runtime: ${JSON.stringify(never)}`);
+    }
+  }
+}
+
+/** The shared error map: the classes every strategy resolves the same way. Strategy-
+ *  specific classes (Llm*, Harness*) are handled by the strategy's own mapError first;
+ *  anything it defers on lands here. */
+function mapError(err: unknown, shell: TurnShell): TurnOutcome | Promise<TurnOutcome> {
+  if (err instanceof ErrConflict) return "conflict"; // someone else owns this turn
+  if (err instanceof SandboxUnavailableError) {
+    return shell.lastAttempt ? shell.terminalFail("SANDBOX_FATAL", err.message) : "retry_later";
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return shell.lastAttempt ? shell.terminalFail("INTERNAL", message) : "retry_later";
 }
 
 // ---------------------------------------------------------------------------
 // Row access — every query scoped by namespace.
 // ---------------------------------------------------------------------------
-type SessionRow = typeof sessions.$inferSelect;
-type VersionRow = typeof agentConfigVersions.$inferSelect;
+export type SessionRow = typeof sessions.$inferSelect;
+export type VersionRow = typeof agentConfigVersions.$inferSelect;
 
 async function loadSession(db: Db, ns: string, sessionId: string): Promise<SessionRow | undefined> {
   const [row] = await db
@@ -264,21 +193,10 @@ async function loadAgentVersion(
   return row;
 }
 
-async function persistHandle(
-  db: Db,
-  ns: string,
-  sessionId: string,
-  handle: SandboxHandle,
-): Promise<void> {
-  await db
-    .update(sessions)
-    .set({ sandboxHandle: handle, updatedAt: new Date() })
-    .where(and(eq(sessions.namespace, ns), eq(sessions.id, sessionId)));
-}
-
 /** The spigot that stops a buggy agent looping forever against a paid LLM API.
- *  `tool_policy.max_iterations`, default 20. */
-function readMaxIterations(toolPolicy: Record<string, unknown>): number {
+ *  `tool_policy.max_iterations`, default 20. (Harness sessions map it onto the
+ *  vendor loop's maxTurns.) */
+export function readMaxIterations(toolPolicy: Record<string, unknown>): number {
   const v = toolPolicy["max_iterations"];
   return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 20;
 }

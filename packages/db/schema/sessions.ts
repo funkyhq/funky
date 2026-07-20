@@ -28,6 +28,12 @@ export type ResolvedEnv = {
 
 export type SessionStatus = "provisioning" | "ready" | "failed" | "archived";
 
+/** Committed harness state — opaque outside its own driver, like SandboxHandle.
+ *  For claude-code: { driver: "claude-code", sdk_session_id, project_key }.
+ *  A cache/audit field: the authoritative resume tip is derived from
+ *  harness_transcript_entries (see packages/ports/harness/DESIGN.md §5.2). */
+export type HarnessState = { driver: string } & Record<string, unknown>;
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -44,6 +50,13 @@ export const sessions = pgTable(
       .references(() => envConfigs.id),
     resolvedEnv: jsonb("resolved_env").$type<ResolvedEnv>(),
     sandboxHandle: jsonb("sandbox_handle").$type<Record<string, unknown>>(),
+
+    // Harness sessions only (agent version runtime = claude-code). harness_attempt is
+    // the WRITE FENCE: the current attempt's token; the transcript store's guarded
+    // INSERT checks it, so a zombie worker's mirror batches bounce instead of
+    // interleaving. Set transactionally with the harness_attempt_started event.
+    harnessAttempt: text("harness_attempt"),
+    harnessState: jsonb("harness_state").$type<HarnessState>(),
 
     status: text("status").$type<SessionStatus>().notNull().default("provisioning"),
     title: text("title"),

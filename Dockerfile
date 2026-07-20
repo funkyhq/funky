@@ -31,6 +31,7 @@ COPY apps/web/package.json apps/web/
 COPY packages/db/package.json packages/db/
 COPY packages/configs/package.json packages/configs/
 COPY packages/sessions/package.json packages/sessions/
+COPY packages/ports/harness/package.json packages/ports/harness/
 COPY packages/ports/llm/package.json packages/ports/llm/
 COPY packages/ports/sandbox/package.json packages/ports/sandbox/
 

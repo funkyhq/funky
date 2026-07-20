@@ -9,6 +9,7 @@ import {
   agentConfigs,
   agentConfigVersions,
   envConfigs,
+  harnessTranscriptEntries,
   sessionEvents,
   sessions,
   turnJobs,
@@ -62,6 +63,7 @@ describe("tables", () => {
     expect(tables.agentConfigs).toBe(agentConfigs);
     expect(tables.agentConfigVersions).toBe(agentConfigVersions);
     expect(tables.envConfigs).toBe(envConfigs);
+    expect(tables.harnessTranscriptEntries).toBe(harnessTranscriptEntries);
     expect(tables.sessions).toBe(sessions);
     expect(tables.sessionEvents).toBe(sessionEvents);
     expect(tables.turnJobs).toBe(turnJobs);
@@ -70,6 +72,7 @@ describe("tables", () => {
         "agentConfigVersions",
         "agentConfigs",
         "envConfigs",
+        "harnessTranscriptEntries",
         "sessions",
         "sessionEvents",
         "turnJobs",

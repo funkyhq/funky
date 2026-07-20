@@ -28,7 +28,13 @@ const modelSchema = z
   })
   .strict();
 
-const createSchema = z
+// How turns execute: omitted/null = the native loop; claude-code = the harness
+// (requires an anthropic model — enforced below, not at turn time).
+const runtimeSchema = z
+  .object({ type: z.enum(["native", "claude-code"]) })
+  .strict();
+
+const createFields = z
   .object({
     id: z.uuid().optional(),
     name: z.string().min(1).max(256),
@@ -37,14 +43,30 @@ const createSchema = z
     system_prompt: z.string().min(1).max(100_000),
     model: modelSchema,
     tool_policy: z.record(z.string(), z.unknown()).optional(),
+    runtime: runtimeSchema.nullish(),
   })
   .strict();
 
-const updateSchema = createSchema
+const createSchema = createFields.refine(
+  (o) => o.runtime?.type !== "claude-code" || o.model.provider === "anthropic",
+  "runtime claude-code requires an anthropic model",
+);
+
+// The runtime↔model cross-check only fires when BOTH travel in the patch; a patch
+// touching one alone is resolved against the current version by the service (and a
+// mismatch surfaces as a terminal HARNESS turn failure, never silent misbehavior).
+const updateSchema = createFields
   .omit({ id: true })
   .partial()
   .strict()
-  .refine((o) => Object.keys(o).length > 0, "at least one field is required");
+  .refine((o) => Object.keys(o).length > 0, "at least one field is required")
+  .refine(
+    (o) =>
+      o.runtime?.type !== "claude-code" ||
+      o.model === undefined ||
+      o.model.provider === "anthropic",
+    "runtime claude-code requires an anthropic model",
+  );
 
 const versionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),

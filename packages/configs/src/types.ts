@@ -1,5 +1,5 @@
 // packages/configs/src/types.ts
-import type { ModelConfig } from "@funky/db/schema";
+import type { ModelConfig, RuntimeConfig } from "@funky/db/schema";
 
 /** Set by the auth middleware; consumed by every service method. */
 export type AuthContext = {
@@ -17,6 +17,8 @@ export type Agent = {
   system_prompt: string;
   model: ModelConfig;
   tool_policy: Record<string, unknown>;
+  /** null = the native loop; {"type":"claude-code"} = the Claude Code harness. */
+  runtime: RuntimeConfig | null;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -29,6 +31,7 @@ export type AgentVersion = {
   system_prompt: string;
   model: ModelConfig;
   tool_policy: Record<string, unknown>;
+  runtime: RuntimeConfig | null;
   created_at: string;
   created_by: string | null;
 };
@@ -41,6 +44,7 @@ export type CreateAgentInput = {
   system_prompt: string;
   model: ModelConfig;
   tool_policy?: Record<string, unknown>;
+  runtime?: RuntimeConfig | null;
 };
 
 export type UpdateAgentInput = Partial<Omit<CreateAgentInput, "id">>;

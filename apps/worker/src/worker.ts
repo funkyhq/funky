@@ -12,6 +12,7 @@
 
 import type { Client } from "pg";
 import type { Db } from "@funky/db";
+import type { HarnessPort } from "@funky/harness/port";
 import type { LlmPort } from "@funky/llm";
 import type { SandboxDriver } from "@funky/sandbox";
 import {
@@ -31,6 +32,8 @@ export type WorkerDeps = {
   store: EventStore;
   llm: LlmPort;
   sandbox: SandboxDriver;
+  /** Optional — required only for agents whose runtime is a vendor harness. */
+  harness?: HarnessPort;
   db: Db;
   listenClient: Client; // DEDICATED client for LISTEN (never from the pool)
   concurrency: number; // FUNKY_WORKER_CONCURRENCY
@@ -75,7 +78,13 @@ export function startWorker(deps: WorkerDeps): WorkerHandle {
   const heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_MS;
   // The subset the domain loop needs. runTurn/runProvision must not touch the queue or the
   // listen client — those are lifecycle concerns owned here.
-  const turnDeps = { store: deps.store, llm: deps.llm, sandbox: deps.sandbox, db: deps.db };
+  const turnDeps = {
+    store: deps.store,
+    llm: deps.llm,
+    sandbox: deps.sandbox,
+    db: deps.db,
+    ...(deps.harness ? { harness: deps.harness } : {}),
+  };
 
   let inFlight = 0;
   let draining = false;

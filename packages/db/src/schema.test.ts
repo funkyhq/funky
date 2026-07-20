@@ -123,6 +123,8 @@ describe("agent_config_versions", () => {
       system_prompt: { type: "text", notNull: true },
       model: { type: "jsonb", notNull: true },
       tool_policy: { type: "jsonb", notNull: true, hasDefault: true, default: {} },
+      // null = native loop; {"type":"claude-code"} dispatches to the harness port.
+      runtime: { type: "jsonb", notNull: false },
       created_at: { type: "timestamp with time zone", notNull: true, hasDefault: true },
       created_by: { type: "text", notNull: false },
     });
@@ -203,6 +205,9 @@ describe("sessions", () => {
       // resolved_env / sandbox_handle are nullable: filled at provision time.
       resolved_env: { type: "jsonb", notNull: false },
       sandbox_handle: { type: "jsonb", notNull: false },
+      // Harness sessions only: the write-fence token + committed vendor session state.
+      harness_attempt: { type: "text", notNull: false },
+      harness_state: { type: "jsonb", notNull: false },
       status: { type: "text", notNull: true, hasDefault: true, default: "provisioning" },
       title: { type: "text", notNull: false },
       metadata: { type: "jsonb", notNull: true, hasDefault: true, default: {} },

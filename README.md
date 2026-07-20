@@ -93,6 +93,65 @@ Now every session provisions an isolated [E2B](https://e2b.dev) sandbox, through
 [ComputeSDK](https://computesdk.com) so further providers can slot in behind the same
 driver.
 
+### Running an agent on the Claude Code harness
+
+Agents can run their turns inside [Claude Code](https://code.claude.com/docs/en/agent-sdk)
+(the Agent SDK) instead of Funky's native loop — same sessions, same sandboxes, same
+durable event log. This is a self-contained walkthrough; no need to run the Quickstart first.
+
+**1. Add your key to `.env`** (independent of `FUNKY_LLM`) and bring up the stack:
+
+```bash
+# .env
+FUNKY_AUTH_TOKEN=<any long random string>
+ANTHROPIC_API_KEY=sk-ant-...
+```
+```bash
+docker compose up --build -d
+# already running from the Quickstart? pick up the new key with: docker compose up -d --build worker
+```
+
+The stack is ready when the `worker` and `api` services report healthy (`docker compose ps`).
+
+**2. Create a harness agent, an environment, a session, and send it work.** The only
+difference from a native agent is the `"runtime"` field on the agent:
+
+```bash
+export TOKEN=<your FUNKY_AUTH_TOKEN>
+export H="Authorization: Bearer $TOKEN"
+export J="content-type: application/json"
+
+# an agent that runs its turns on the Claude Code harness (requires an anthropic model)
+AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
+  "name": "Claude Code Agent",
+  "system_prompt": "You are an autonomous research and coding agent.",
+  "model":   { "provider": "anthropic", "model": "claude-sonnet-5" },
+  "runtime": { "type": "claude-code" }
+}' | jq -r .id)
+
+# an environment, then a session on it
+EID=$(curl -s -X POST localhost:3000/v1/environments -H "$H" -H "$J" \
+  -d '{"name":"basic","network":{"type":"unrestricted"}}' | jq -r .id)
+SID=$(curl -s -X POST localhost:3000/v1/sessions -H "$H" -H "$J" \
+  -d "{\"agent\":\"$AID\",\"environment_id\":\"$EID\"}" | jq -r .id)
+
+# watch it think (leave running), then give it work
+curl -N -H "$H" localhost:3000/v1/sessions/$SID/events/stream &
+curl -s -X POST localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
+  -d '{"content":"create a file hello.txt containing hi, then read it back to me"}'
+```
+
+You'll see a `harness_attempt_started` event, then the agent run commands in its sandbox
+(`assistant_message` → `tool_result`) and answer — the same event stream as a native turn.
+
+> The **Console** at http://localhost:5173 can *view* a harness session, but can't yet
+> *create* one — use the `curl` above to create the agent with `runtime`.
+
+The harness's commands execute in the session's Funky sandbox (exactly-once, crash-safe),
+and the Claude Code transcript is stored in Funky's Postgres — so a session survives worker
+crashes and can be resumed by any worker, keeping turns fully stateless. Design and
+guarantees: [`packages/ports/harness/DESIGN.md`](packages/ports/harness/DESIGN.md).
+
 ### Tear down
 
 ```bash

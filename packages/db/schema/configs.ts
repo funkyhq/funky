@@ -25,6 +25,12 @@ import {
 } from "drizzle-orm/pg-core";
 
 /** Mirrors what the AI SDK needs to construct a model. Validated with zod at the API edge. */
+/** How the agent's turns execute. null/omitted = "native": Funky's own loop
+ *  (reducer + LLM port). "claude-code" = the Claude Code harness drives the turn
+ *  (packages/ports/harness). Behavior, so it lives on VERSIONS and is pinned per
+ *  session — a session's runtime never changes mid-life. */
+export type RuntimeConfig = { type: "native" } | { type: "claude-code" };
+
 export type ModelConfig = {
   provider:
     | "anthropic"
@@ -90,6 +96,8 @@ export const agentConfigVersions = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}), // allowed tools, max turns/iterations, budgets
+    // null = native loop (backwards compatible). Validated with zod at the API edge.
+    runtime: jsonb("runtime").$type<RuntimeConfig>(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"), // opaque principal: "user:123" | "key:fk_live_a1b2"
