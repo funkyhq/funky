@@ -47,7 +47,7 @@ export async function checkHealth(timeoutMs = 2500): Promise<boolean> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch('/healthz', { signal: ctrl.signal })
+    const res = await fetch('/health', { signal: ctrl.signal })
     if (!res.ok) return false
     const json = await res.json().catch(() => null)
     return json?.status === 'ok'

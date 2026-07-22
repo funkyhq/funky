@@ -32,11 +32,15 @@ export function buildApp(deps: AppDeps) {
 
   app.use(requestId());
 
-  // unauthenticated by design (k8s probes, load balancers)
-  app.get("/healthz", async (c) => {
+  // Unauthenticated by design (probes and load balancers). `/healthz` remains as a
+  // compatibility alias for existing deployments while `/health` avoids platforms that
+  // reserve or intercept the conventional probe path.
+  const health = async () => {
     await deps.ping();
-    return c.json({ status: "ok" });
-  });
+    return { status: "ok" as const };
+  };
+  app.get("/health", async (c) => c.json(await health()));
+  app.get("/healthz", async (c) => c.json(await health()));
 
   app.use("/v1/*", auth(deps.authToken));
   app.route("/v1/agents", agentRoutes(deps.agents));
