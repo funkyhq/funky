@@ -39,13 +39,20 @@ it("crash mid-provision → second worker provisions, one event, one workdir", a
   // execute after the expiry and re-claim the job with a fresh 60s lease (which the dying
   // loop abandons), starving B past the waitFor below. See h1 for the full story.
   await workerA.kill();
+  // kill() deliberately waits only for the pull loop, not in-flight work. H6's in-flight
+  // provision is finite, so drain it before moving on: this lets the failed transaction
+  // roll back and release its Postgres connection without changing SIGKILL semantics.
+  await workerA.stop();
   await world.expireLease(jobId);
 
   // B — clean store — reclaims the provision job and completes it. B flips the session to
   // ready and appends session_provisioned in one tx, THEN acks — wait for the ack so the
   // assertions don't race it (the ready commit lands before the ack).
-  await world.startWorker();
+  const b = await world.startWorker();
   await waitFor(async () => !(await world.jobExists(jobId)), 30_000, "B provisions and acks");
+  // The ack can become visible one microtask before handle()'s finally block decrements
+  // inFlight. Drain B so stopPg never races the last database operation.
+  await b.worker.stop();
 
   const events = await world.readEvents();
   expect(events.filter((e) => e.type === "session_provisioned")).toHaveLength(1); // exactly one
