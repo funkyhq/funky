@@ -40,6 +40,8 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       __ANTHROPIC_ENABLED__: JSON.stringify(anthropicEnabled),
+      // Safe to expose: this is the API location, never the bearer token.
+      __FUNKY_API_URL__: JSON.stringify(target.replace(/\/+$/, '')),
     },
     server: {
       // Bind all interfaces + allow any Host so the container's mapped port works; harmless
