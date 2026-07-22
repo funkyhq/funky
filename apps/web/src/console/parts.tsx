@@ -8,6 +8,9 @@ import { useClickOutside } from './data'
 
 export type Tab = 'quickstart' | 'agents' | 'sessions' | 'environments'
 
+const API_URL =
+  typeof __FUNKY_API_URL__ !== 'undefined' ? __FUNKY_API_URL__ : 'http://localhost:3000'
+
 const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'quickstart', label: 'Quick Start', icon: <Zap size={19} /> },
   { id: 'agents', label: 'Agents', icon: <Cpu size={19} /> },
@@ -231,8 +234,8 @@ export function HealthGate({ onRetry }: { onRetry: () => void }) {
           <h3 className="gate__title">Backend API not reachable</h3>
         </div>
         <p className="gate__body">
-          The console can&rsquo;t reach the Funky API at <code>localhost:3000/health</code>. Start the
-          stack, then retry:
+          The console can&rsquo;t reach the Funky API at <code>{API_URL}/health</code>. Start the stack,
+          then retry:
         </p>
         <pre className="gate__pre">
           {`cp .env.example .env        # set FUNKY_AUTH_TOKEN to any long random string
