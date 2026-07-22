@@ -152,6 +152,31 @@ and the Claude Code transcript is stored in Funky's Postgres — so a session su
 crashes and can be resumed by any worker, keeping turns fully stateless. Design and
 guarantees: [`packages/ports/harness/DESIGN.md`](packages/ports/harness/DESIGN.md).
 
+### Worker metrics (Prometheus scrape or OpenTelemetry push)
+
+The worker is instrumented with the OpenTelemetry metrics API; `FUNKY_METRICS` picks the
+export mechanism (comma-separated to combine):
+
+```bash
+# in .env
+FUNKY_METRICS=prometheus       # default: serve GET /metrics on the health port (:9090)
+FUNKY_METRICS=otlp             # push OTLP/HTTP to any receiver — configure with the
+                               # standard OTel env vars (OTEL_EXPORTER_OTLP_ENDPOINT,
+                               # OTEL_EXPORTER_OTLP_HEADERS, OTEL_METRIC_EXPORT_INTERVAL,
+                               # OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES)
+FUNKY_METRICS=gcm              # push directly to Google Cloud Monitoring
+FUNKY_METRICS=prometheus,otlp  # both at once
+```
+
+The default is unchanged from previous releases: self-hosted Prometheus keeps scraping
+`:9090/metrics`, and `/healthz` is untouched. `otlp` is the vendor-neutral push path for
+runtimes with no scraper (serverless workers) — it works with an otel-collector, Grafana,
+Datadog, Honeycomb, Google's OTLP ingest, or anything else that speaks OTLP.
+
+The metric names and label sets are a **stable contract** across all exporters — dashboards
+and alerts can key on them: `funky_queue_depth{state}`, `funky_worker_turns_inflight`,
+`funky_worker_jobs_total{outcome}`, `funky_worker_append_conflicts_total`.
+
 ### Tear down
 
 ```bash

@@ -16,6 +16,12 @@
   "dependencies": {
     "@funky/db": "workspace:*",
     "@funky/harness": "workspace:*",
+    "@google-cloud/opentelemetry-cloud-monitoring-exporter": "^0.21.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.221.0",
+    "@opentelemetry/exporter-prometheus": "^0.221.0",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-metrics": "^2.10.0",
     "@funky/llm": "workspace:*",
     "@funky/sandbox": "workspace:*",
     "@funky/sessions": "workspace:*",
