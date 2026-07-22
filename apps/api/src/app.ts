@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import type { AgentsService, AuthContext, EnvsService } from "@funky/configs";
 import type { EventStore, SessionsService } from "@funky/sessions";
+import type { NamespaceSource } from "./config";
 import { errorHandler, errorResponse } from "./http";
 import { auth } from "./middleware/auth";
 import { requestId } from "./middleware/request-id";
@@ -21,6 +22,7 @@ export type AppDeps = {
   bus: EventBus;
   /** null = auth disabled (dev only) */
   authToken: string | null;
+  namespaceSource: NamespaceSource;
   /** liveness of the DB, e.g. () => pool.query("SELECT 1") */
   ping: () => Promise<unknown>;
 };
@@ -42,7 +44,7 @@ export function buildApp(deps: AppDeps) {
   app.get("/health", async (c) => c.json(await health()));
   app.get("/healthz", async (c) => c.json(await health()));
 
-  app.use("/v1/*", auth(deps.authToken));
+  app.use("/v1/*", auth(deps.authToken, deps.namespaceSource));
   app.route("/v1/agents", agentRoutes(deps.agents));
   app.route("/v1/environments", envRoutes(deps.envs));
   app.route(

@@ -16,6 +16,7 @@ import type {
   SessionsService,
 } from "@funky/sessions";
 import { buildApp } from "../src/app";
+import type { NamespaceSource } from "../src/config";
 import type { EventBus } from "../src/sse";
 
 /** What the static auth middleware injects for every /v1 request. */
@@ -114,6 +115,7 @@ export type App = ReturnType<typeof buildApp>;
 export function makeApp(
   opts: {
     authToken?: string | null;
+    namespaceSource?: NamespaceSource;
     ping?: () => Promise<unknown>;
     agents?: Partial<FakeAgents>;
     envs?: Partial<FakeEnvs>;
@@ -130,6 +132,7 @@ export function makeApp(
     store: {} as unknown as EventStore,
     bus: {} as unknown as EventBus,
     authToken: opts.authToken ?? null, // auth disabled by default; auth tests opt in
+    namespaceSource: opts.namespaceSource ?? "static",
     ping: opts.ping ?? (async () => ({ rows: [{ "?column?": 1 }] })),
   });
   return { app, fake, fakeEnvs, fakeSessions };
