@@ -45,6 +45,7 @@ beforeAll(async () => {
     store,
     bus,
     authToken: null, // auth disabled → app.request needs no header
+    namespaceSource: "static",
     ping: () => pg.pool.query("SELECT 1"),
   });
 }, 120_000);

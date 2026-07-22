@@ -40,6 +40,7 @@ const app = buildApp({
   store,
   bus,
   authToken: cfg.authToken,
+  namespaceSource: cfg.namespaceSource,
   ping: () => pool.query("SELECT 1"),
 });
 

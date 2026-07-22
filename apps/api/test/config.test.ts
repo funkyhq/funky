@@ -31,6 +31,7 @@ describe("loadConfig — valid input", () => {
       port: 8080,
       dbPoolMax: 25,
       authToken: BASE.FUNKY_AUTH_TOKEN,
+      namespaceSource: "static",
     });
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -39,6 +40,12 @@ describe("loadConfig — valid input", () => {
     const cfg = loadConfig(BASE);
     expect(cfg.port).toBe(3000);
     expect(cfg.dbPoolMax).toBe(10);
+    expect(cfg.namespaceSource).toBe("static");
+  });
+
+  it("parses header namespace source mode", () => {
+    const cfg = loadConfig({ ...BASE, FUNKY_NAMESPACE_SOURCE: "header" });
+    expect(cfg.namespaceSource).toBe("header");
   });
 
   it("returns a null token and warns when auth is disabled", () => {
@@ -63,6 +70,15 @@ describe("loadConfig — invalid input exits the process", () => {
     ["PORT not a number", { ...BASE, PORT: "notaport" }],
     ["DB_POOL_MAX below 1", { ...BASE, DB_POOL_MAX: "0" }],
     ["invalid FUNKY_AUTH value", { ...BASE, FUNKY_AUTH: "maybe" }],
+    ["invalid FUNKY_NAMESPACE_SOURCE value", { ...BASE, FUNKY_NAMESPACE_SOURCE: "query" }],
+    [
+      "header namespace source with auth disabled",
+      {
+        DATABASE_URL: BASE.DATABASE_URL,
+        FUNKY_AUTH: "disabled",
+        FUNKY_NAMESPACE_SOURCE: "header",
+      },
+    ],
   ])("exits on %s", (_label, env) => {
     expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow("process.exit(1)");
     expect(exitSpy).toHaveBeenCalledWith(1);

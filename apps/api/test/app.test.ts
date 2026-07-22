@@ -1,8 +1,18 @@
 // Cross-cutting behavior wired up in app.ts: health probe, auth gate,
 // request-id middleware, the error envelope, and the not-found fallback.
 import { describe, it, expect, vi } from "vitest";
-import { ConflictError, NotFoundError } from "@funky/configs";
-import { AGENT_ID, UUID_V7, agentFixture, get, makeApp, post } from "./helpers";
+import { ConflictError, NotFoundError, type AuthContext } from "@funky/configs";
+import {
+  AGENT_ID,
+  CTX,
+  SESSION_ID,
+  UUID_V7,
+  agentFixture,
+  createBody,
+  get,
+  makeApp,
+  post,
+} from "./helpers";
 
 describe("GET /health", () => {
   it("returns ok and pings the database", async () => {
@@ -46,6 +56,7 @@ describe("GET /health", () => {
 
 describe("auth middleware", () => {
   const token = "super-secret-token-1234";
+  const bearer = { authorization: `Bearer ${token}` };
 
   it("rejects requests with no Authorization header", async () => {
     const { app, fake } = makeApp({ authToken: token });
@@ -95,6 +106,133 @@ describe("auth middleware", () => {
     const res = await get(app, `/v1/agents/${AGENT_ID}`); // no header
     expect(res.status).toBe(200);
     expect(fake.get).toHaveBeenCalledOnce();
+  });
+
+  it("uses a valid namespace header to isolate requests in header mode", async () => {
+    const agentsByNamespace = new Map<string, ReturnType<typeof agentFixture>[]>();
+    const { app } = makeApp({
+      authToken: token,
+      namespaceSource: "header",
+      agents: {
+        create: vi.fn(async (ctx: AuthContext) => {
+          const agent = agentFixture();
+          agentsByNamespace.set(ctx.namespace, [
+            ...(agentsByNamespace.get(ctx.namespace) ?? []),
+            agent,
+          ]);
+          return { agent, created: true };
+        }),
+        list: vi.fn(async (ctx: AuthContext) => ({
+          object: "list",
+          data: agentsByNamespace.get(ctx.namespace) ?? [],
+          has_more: false,
+        })),
+      },
+    });
+
+    const nsAHeaders = { ...bearer, "X-Funky-Namespace": "ns-a" };
+    const created = await post(app, "/v1/agents", createBody(), nsAHeaders);
+    expect(created.status).toBe(201);
+
+    const nsB = await get(app, "/v1/agents", {
+      ...bearer,
+      "X-Funky-Namespace": "ns-b",
+    });
+    expect((await nsB.json()).data).toEqual([]);
+
+    const nsA = await get(app, "/v1/agents", nsAHeaders);
+    expect((await nsA.json()).data).toHaveLength(1);
+  });
+
+  it("falls back to the default namespace when the namespace header is absent", async () => {
+    const { app, fake } = makeApp({
+      authToken: token,
+      namespaceSource: "header",
+      agents: { get: vi.fn().mockResolvedValue(agentFixture()) },
+    });
+
+    const res = await get(app, `/v1/agents/${AGENT_ID}`, bearer);
+
+    expect(res.status).toBe(200);
+    expect(fake.get).toHaveBeenCalledWith(CTX, AGENT_ID);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["too long", "a".repeat(65)],
+    ["path-like", "ns/../x"],
+    ["unicode", "ténant"],
+  ])("rejects a %s namespace header", async (_label, namespace) => {
+    const { app, fake } = makeApp({ authToken: token, namespaceSource: "header" });
+
+    const res = await get(app, `/v1/agents/${AGENT_ID}`, {
+      ...bearer,
+      "X-Funky-Namespace": namespace,
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: { type: "invalid_request_error", message: "invalid X-Funky-Namespace" },
+    });
+    expect(fake.get).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["incorrect", "Bearer wrong-token"],
+  ])(
+    "checks a %s bearer token before validating the namespace",
+    async (_label, authorization) => {
+      const { app, fake } = makeApp({ authToken: token, namespaceSource: "header" });
+      const headers: Record<string, string> = { "X-Funky-Namespace": "invalid/value" };
+      if (authorization !== undefined) headers.authorization = authorization;
+
+      const res = await get(app, `/v1/agents/${AGENT_ID}`, headers);
+
+      expect(res.status).toBe(401);
+      expect((await res.json()).error.type).toBe("authentication_error");
+      expect(fake.get).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores namespace headers in static mode", async () => {
+    const { app, fake } = makeApp({
+      authToken: token,
+      namespaceSource: "static",
+      agents: { get: vi.fn().mockResolvedValue(agentFixture()) },
+    });
+
+    const res = await get(app, `/v1/agents/${AGENT_ID}`, {
+      ...bearer,
+      "X-Funky-Namespace": "evil",
+    });
+
+    expect(res.status).toBe(200);
+    expect(fake.get).toHaveBeenCalledWith(CTX, AGENT_ID);
+  });
+
+  it("returns 404 before opening an SSE stream for the wrong namespace", async () => {
+    const getSession = vi.fn(async (ctx: AuthContext) => {
+      if (ctx.namespace !== "default") throw new NotFoundError("session not found");
+      return {};
+    });
+    const { app } = makeApp({
+      authToken: token,
+      namespaceSource: "header",
+      sessions: { get: getSession },
+    });
+
+    const res = await get(app, `/v1/sessions/${SESSION_ID}/events/stream`, {
+      ...bearer,
+      "X-Funky-Namespace": "wrong",
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(getSession).toHaveBeenCalledWith(
+      { namespace: "wrong", principal: "token:wrong" },
+      SESSION_ID,
+    );
   });
 });
 
