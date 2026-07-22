@@ -11,6 +11,7 @@ import { makeSandbox, type SandboxConfig } from "@funky/sandbox";
 import { EventStore, JobQueue } from "@funky/sessions";
 import { type Config, loadConfig } from "./config";
 import { startHealthServer } from "./health";
+import { startTelemetry } from "./telemetry";
 import { createMetrics, startWorker } from "./worker";
 
 // repo root .env, resolved from this file's location (cwd-independent), like apps/api.
@@ -41,6 +42,16 @@ const harness: HarnessPort | undefined = cfg.anthropicApiKey
     })
   : undefined;
 
+// OTel bridge over the shared metrics object; exporters per FUNKY_METRICS. The standard
+// OTEL_* env vars (endpoint, headers, interval, resource attributes) are read here and
+// natively by the SDK — index.ts is still the only funky file touching process.env.
+const telemetry = await startTelemetry({
+  modes: cfg.metricsModes,
+  metrics,
+  depth: () => queue.depth(),
+  env: process.env,
+});
+
 const worker = startWorker({
   queue,
   store,
@@ -56,13 +67,12 @@ const worker = startWorker({
 const health = await startHealthServer({
   port: cfg.healthPort,
   ping: () => pool.query("SELECT 1"),
-  metrics,
-  depth: () => queue.depth(),
+  ...(telemetry.metricsHandler ? { metricsHandler: telemetry.metricsHandler } : {}),
 });
 
 console.log(
   `funky-worker: concurrency=${cfg.concurrency} health=:${health.port} ` +
-    `llm=${cfg.llm} sandbox=${cfg.sandbox}`,
+    `llm=${cfg.llm} sandbox=${cfg.sandbox} metrics=${cfg.metricsModes.join(",")}`,
 );
 
 // The fake driver needs no API key: with no registered scripts every session runs the
@@ -101,6 +111,7 @@ async function shutdown(sig: string): Promise<void> {
   // safety net: if drain hasn't finished in 120s, exit anyway.
   setTimeout(() => process.exit(1), 120_000).unref();
   await worker.stop();
+  await telemetry.shutdown(); // final push-mode flush — while the pool is still alive
   await health.close();
   await listenClient.end();
   await pool.end();

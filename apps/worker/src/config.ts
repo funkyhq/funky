@@ -2,6 +2,7 @@
 // The only place process.env is read. dotenv is loaded by index.ts (entrypoint), not here.
 // Mirrors apps/api/src/config.ts: zod, fail-fast via process.exit(1); never boot half-configured.
 import { z } from "zod";
+import { METRICS_MODES, type MetricsMode } from "./telemetry";
 
 // Compose interpolation (`${VAR:-}`) delivers an UNSET optional secret as an EMPTY
 // STRING, not as a missing variable — treat "" as absent so the zero-key path boots.
@@ -15,6 +16,25 @@ const EnvSchema = z
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     FUNKY_WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(50),
     FUNKY_WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(9090),
+    // Comma-separated metric exporters: "prometheus" (default; GET /metrics on the health
+    // port), "otlp" (push via OTEL_EXPORTER_OTLP_* env vars), "gcm" (direct to Google
+    // Cloud Monitoring). E.g. FUNKY_METRICS=prometheus,otlp.
+    FUNKY_METRICS: z.preprocess(
+      (v) => (v === "" ? undefined : v), // compose `${VAR:-}` sends "" for unset — use the default
+      z
+        .string()
+        .default("prometheus")
+        .transform((s) => [...new Set(s.split(",").map((m) => m.trim()).filter(Boolean))])
+        .pipe(
+          z
+            .array(
+              z.enum(METRICS_MODES, {
+                error: `FUNKY_METRICS entries must be one of: ${METRICS_MODES.join(", ")}`,
+              }),
+            )
+            .min(1, "FUNKY_METRICS must name at least one exporter"),
+        ),
+    ),
     FUNKY_LLM: z.enum(["fake", "ai-sdk"]).default("fake"),
     // docker (default): an isolated container per session on the local daemon — no account.
     // e2b: an isolated remote sandbox per session. (The in-process subprocess driver still
@@ -58,6 +78,8 @@ export type Config = {
   databaseUrl: string;
   concurrency: number;
   healthPort: number;
+  /** Metric exporters, deduped, in FUNKY_METRICS order. Default ["prometheus"]. */
+  metricsModes: MetricsMode[];
   llm: "fake" | "ai-sdk";
   sandbox: "docker" | "e2b";
   /** null = fake driver; no key needed. */
@@ -87,6 +109,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: e.DATABASE_URL,
     concurrency: e.FUNKY_WORKER_CONCURRENCY,
     healthPort: e.FUNKY_WORKER_HEALTH_PORT,
+    metricsModes: e.FUNKY_METRICS,
     llm: e.FUNKY_LLM,
     sandbox: e.FUNKY_SANDBOX,
     anthropicApiKey: e.ANTHROPIC_API_KEY ?? null,

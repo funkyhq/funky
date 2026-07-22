@@ -25,6 +25,7 @@ describe("loadConfig — valid input", () => {
       databaseUrl: BASE.DATABASE_URL,
       concurrency: 50,
       healthPort: 9090,
+      metricsModes: ["prometheus"],
       llm: "fake",
       sandbox: "docker",
       anthropicApiKey: null,
@@ -54,6 +55,22 @@ describe("loadConfig — valid input", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("parses FUNKY_METRICS: default, single, comma list (spaces ok), dedupe, '' as unset", () => {
+    expect(loadConfig(BASE).metricsModes).toEqual(["prometheus"]);
+    expect(loadConfig({ ...BASE, FUNKY_METRICS: "otlp" }).metricsModes).toEqual(["otlp"]);
+    expect(loadConfig({ ...BASE, FUNKY_METRICS: "prometheus, otlp" }).metricsModes).toEqual([
+      "prometheus",
+      "otlp",
+    ]);
+    expect(loadConfig({ ...BASE, FUNKY_METRICS: "otlp,otlp,gcm" }).metricsModes).toEqual([
+      "otlp",
+      "gcm",
+    ]);
+    // compose `${VAR:-}` sends "" for unset — falls back to the default
+    expect(loadConfig({ ...BASE, FUNKY_METRICS: "" }).metricsModes).toEqual(["prometheus"]);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("parses a fully-specified environment", () => {
     const cfg = loadConfig({
       ...BASE,
@@ -67,11 +84,13 @@ describe("loadConfig — valid input", () => {
       FUNKY_E2B_SANDBOX_TIMEOUT_MS: "600000",
       FUNKY_HARNESS_CWD_ROOT: "/var/funky/cwd",
       FUNKY_HARNESS_SCRATCH_ROOT: "/dev/shm/funky",
+      FUNKY_METRICS: "prometheus,otlp",
     });
     expect(cfg).toEqual({
       databaseUrl: BASE.DATABASE_URL,
       concurrency: 8,
       healthPort: 9191,
+      metricsModes: ["prometheus", "otlp"],
       llm: "ai-sdk",
       sandbox: "e2b",
       anthropicApiKey: "sk-ant-secret",
@@ -103,6 +122,9 @@ describe("loadConfig — invalid input exits the process", () => {
     ["unknown FUNKY_SANDBOX", { ...BASE, FUNKY_SANDBOX: "podman" }],
     ["subprocess is not a production sandbox option", { ...BASE, FUNKY_SANDBOX: "subprocess" }],
     ["DB_POOL_MAX below 1", { ...BASE, DB_POOL_MAX: "0" }],
+    ["unknown FUNKY_METRICS mode", { ...BASE, FUNKY_METRICS: "statsd" }],
+    ["unknown mode mixed into a valid list", { ...BASE, FUNKY_METRICS: "prometheus,statsd" }],
+    ["FUNKY_METRICS with no modes at all", { ...BASE, FUNKY_METRICS: "," }],
   ])("exits on %s", (_label, env) => {
     expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow("process.exit(1)");
     expect(exitSpy).toHaveBeenCalledWith(1);

@@ -97,6 +97,14 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # empty unless the user sets it
       E2B_API_KEY: ${E2B_API_KEY:-} # empty unless the user sets it
       FUNKY_E2B_SANDBOX_TIMEOUT_MS: ${FUNKY_E2B_SANDBOX_TIMEOUT_MS:-1800000}
+      # Metric exporters: "prometheus" (default, scrape :9090/metrics), "otlp" (push via
+      # the standard OTEL_* env vars below), "gcm", or a comma-separated combination.
+      FUNKY_METRICS: ${FUNKY_METRICS:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
       # Harness (agents with runtime=claude-code). CWD_ROOT must be identical across
       # every worker replica — the transcript store's key derives from it.
       FUNKY_HARNESS_SCRATCH_ROOT: /dev/shm/funky-harness

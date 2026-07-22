@@ -24,6 +24,8 @@ import type { LlmPort } from "@funky/llm";
 import { FakeLlm } from "@funky/llm";
 import { type SandboxDriver, SubprocessDriver } from "@funky/sandbox";
 import { EventStore, JobQueue, makeEvent, textContent } from "@funky/sessions";
+import { startHealthServer } from "../src/health";
+import { startTelemetry } from "../src/telemetry";
 import { createMetrics, startWorker, type WorkerHandle } from "../src/worker";
 
 // testcontainers' Ryuk reaper pulls its own image; disable it and rely on afterAll.
@@ -259,6 +261,32 @@ it("respects the concurrency limit (backpressure)", async () => {
 
   expect(maxInFlight).toBeGreaterThan(0);
   expect(maxInFlight).toBeLessThanOrEqual(2); // turns_inflight never exceeds the limit
+});
+
+it("exports a completed turn through the OTel prometheus path (frozen-name contract, end to end)", async () => {
+  const { metrics } = await startTestWorker({ llm: doneLlm() });
+  const telemetry = await startTelemetry({
+    modes: ["prometheus"],
+    metrics,
+    depth: () => queue.depth(),
+  });
+  cleanups.push(() => telemetry.shutdown());
+  const health = await startHealthServer({
+    port: 0,
+    ping: async () => 1,
+    ...(telemetry.metricsHandler ? { metricsHandler: telemetry.metricsHandler } : {}),
+  });
+  cleanups.push(() => health.close());
+
+  const sid = await seedSession();
+  await appendUser(sid);
+  await insertTurnJob(sid);
+  await waitFor(() => metrics.jobs.completed >= 1, 15_000, "turn completed");
+
+  const body = await (await fetch(`http://localhost:${health.port}/metrics`)).text();
+  expect(body).toContain('funky_worker_jobs_total{outcome="completed"} 1');
+  expect(body).toContain("funky_worker_turns_inflight 0");
+  expect(body).toContain('funky_queue_depth{state="queued"}'); // live probe, same DB
 });
 
 it("NACKs a retry_later outcome (job stays queued with a future run_at)", async () => {

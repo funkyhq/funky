@@ -1,18 +1,17 @@
-// apps/worker/src/health.ts — Phase E: liveness probe + Prometheus metrics.
+// apps/worker/src/health.ts — Phase E: liveness probe + metrics mount point.
 //
 // Plain node:http — NO Hono. This is plumbing, not an API. There is no readiness concept
 // for a worker: nothing routes to it, so /healthz is liveness only (a SELECT 1).
+// Metrics rendering lives in telemetry.ts (OTel); when prometheus mode is on, its
+// request handler is mounted here so /healthz and /metrics share one port, one server.
 
-import { createServer, type ServerResponse } from "node:http";
-import type { Metrics } from "./worker";
-
-export type QueueDepth = { queued: number; running: number; dead: number };
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 export type HealthDeps = {
   port: number;
   ping: () => Promise<unknown>; // SELECT 1 — liveness only
-  metrics: Metrics;
-  depth: () => Promise<QueueDepth>; // queue.depth() — the autoscaling signal
+  /** GET /metrics handler (telemetry.ts, prometheus mode). Absent → /metrics 404s. */
+  metricsHandler?: (req: IncomingMessage, res: ServerResponse) => void;
 };
 
 export type HealthServer = {
@@ -32,12 +31,8 @@ export function startHealthServer(deps: HealthDeps): Promise<HealthServer> {
         .catch(() => sendJson(res, 503, { status: "error" }));
       return;
     }
-    if (path === "/metrics") {
-      // Never let a transient depth() failure blank the worker's own counters.
-      deps
-        .depth()
-        .then((d) => sendText(res, 200, renderPrometheus(deps.metrics, d)))
-        .catch(() => sendText(res, 200, renderPrometheus(deps.metrics, null)));
+    if (path === "/metrics" && deps.metricsHandler) {
+      deps.metricsHandler(req, res);
       return;
     }
     sendJson(res, 404, { error: "not found" });
@@ -58,51 +53,7 @@ export function startHealthServer(deps: HealthDeps): Promise<HealthServer> {
   });
 }
 
-/** Render the minimum metric set in Prometheus text format. depth === null when the
- *  queue.depth() probe failed — the worker's own counters still render. */
-export function renderPrometheus(metrics: Metrics, depth: QueueDepth | null): string {
-  const lines: string[] = [];
-  const family = (name: string, type: string, help: string, samples: string[]) => {
-    lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} ${type}`, ...samples);
-  };
-
-  family("funky_worker_turns_inflight", "gauge", "Turns currently in flight.", [
-    `funky_worker_turns_inflight ${metrics.inFlight}`,
-  ]);
-
-  family(
-    "funky_worker_jobs_total",
-    "counter",
-    "Jobs processed, by queue outcome.",
-    (Object.keys(metrics.jobs) as Array<keyof Metrics["jobs"]>).map(
-      (outcome) => `funky_worker_jobs_total{outcome="${outcome}"} ${metrics.jobs[outcome]}`,
-    ),
-  );
-
-  family(
-    "funky_worker_append_conflicts_total",
-    "counter",
-    "Conditional-append races lost to another worker (split-brain smoke detector).",
-    [`funky_worker_append_conflicts_total ${metrics.appendConflicts}`],
-  );
-
-  if (depth) {
-    family("funky_queue_depth", "gauge", "Jobs in the queue by state (autoscaling signal).", [
-      `funky_queue_depth{state="queued"} ${depth.queued}`,
-      `funky_queue_depth{state="running"} ${depth.running}`,
-      `funky_queue_depth{state="dead"} ${depth.dead}`,
-    ]);
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
-}
-
-function sendText(res: ServerResponse, status: number, body: string): void {
-  res.writeHead(status, { "content-type": "text/plain; version=0.0.4; charset=utf-8" });
-  res.end(body);
 }
