@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 // The console is a browser app; the Funky API is bearer-authenticated and has no CORS
 // headers (by design — we don't touch the API for the UI's sake). So instead of calling
 // the API cross-origin from the browser, the dev server proxies same-origin `/v1/*` and
-// `/healthz` to the API and injects the Authorization header here. The token stays in the
+// `/health` to the API and injects the Authorization header here. The token stays in the
 // Node process and never ships in the browser bundle.
 //
 // Config is read from the *monorepo root* `.env` (the same file `docker compose` uses), so
@@ -48,7 +48,7 @@ export default defineConfig(({ mode }) => {
       allowedHosts: true,
       proxy: {
         '/v1': proxy,
-        '/healthz': proxy,
+        '/health': proxy,
       },
     },
   }

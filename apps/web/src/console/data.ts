@@ -38,7 +38,7 @@ export function useClickOutside<T extends HTMLElement>(active: boolean, onOutsid
 
 export type HealthStatus = 'checking' | 'ok' | 'down'
 
-/** Health gate: probe /healthz on mount, auto-retry while down, expose a manual retry. */
+/** Health gate: probe /health on mount, auto-retry while down, expose a manual retry. */
 export function useHealth() {
   const [status, setStatus] = useState<HealthStatus>('checking')
   const busy = useRef(false)

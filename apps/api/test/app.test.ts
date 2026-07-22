@@ -4,12 +4,12 @@ import { describe, it, expect, vi } from "vitest";
 import { ConflictError, NotFoundError } from "@funky/configs";
 import { AGENT_ID, UUID_V7, agentFixture, get, makeApp, post } from "./helpers";
 
-describe("GET /healthz", () => {
+describe("GET /health", () => {
   it("returns ok and pings the database", async () => {
     const ping = vi.fn(async () => ({ rows: [] }));
     const { app } = makeApp({ ping });
 
-    const res = await get(app, "/healthz");
+    const res = await get(app, "/health");
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: "ok" });
@@ -18,7 +18,7 @@ describe("GET /healthz", () => {
 
   it("is reachable without auth even when a token is configured", async () => {
     const { app } = makeApp({ authToken: "super-secret-token-1234" });
-    const res = await get(app, "/healthz"); // no Authorization header
+    const res = await get(app, "/health"); // no Authorization header
     expect(res.status).toBe(200);
   });
 
@@ -26,7 +26,7 @@ describe("GET /healthz", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { app } = makeApp({ ping: async () => Promise.reject(new Error("db down")) });
 
-    const res = await get(app, "/healthz");
+    const res = await get(app, "/health");
     const body = await res.json();
 
     expect(res.status).toBe(500);
@@ -34,6 +34,13 @@ describe("GET /healthz", () => {
     expect(res.headers.get("request-id")).toMatch(UUID_V7);
     expect(errSpy).toHaveBeenCalled(); // the failure is logged, not swallowed
     errSpy.mockRestore();
+  });
+
+  it("keeps /healthz as a compatibility alias", async () => {
+    const { app } = makeApp();
+    const res = await get(app, "/healthz");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "ok" });
   });
 });
 
@@ -94,7 +101,7 @@ describe("auth middleware", () => {
 describe("request-id middleware", () => {
   it("sets a uuid v7 request-id header on every response", async () => {
     const { app } = makeApp();
-    const res = await get(app, "/healthz");
+    const res = await get(app, "/health");
     expect(res.headers.get("request-id")).toMatch(UUID_V7);
   });
 
@@ -112,7 +119,7 @@ describe("request-id middleware", () => {
 
   it("issues a distinct id per request", async () => {
     const { app } = makeApp();
-    const [a, b] = await Promise.all([get(app, "/healthz"), get(app, "/healthz")]);
+    const [a, b] = await Promise.all([get(app, "/health"), get(app, "/health")]);
     expect(a.headers.get("request-id")).not.toBe(b.headers.get("request-id"));
   });
 });

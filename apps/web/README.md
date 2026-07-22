@@ -39,7 +39,7 @@ pnpm -F web dev               # then open the printed URL (default http://localh
 ```
 
 If the backend isn't reachable, the console shows a blocking "Backend API not reachable"
-gate with the commands to start it, and recovers automatically once `/healthz` is green.
+gate with the commands to start it, and recovers automatically once `/health` is green.
 
 ## How it maps to the API
 
