@@ -63,12 +63,22 @@ export class ComputeSdkDriver implements SandboxDriver {
       throw new Error(`${this.providerName} does not support limited network policies`);
     }
 
-    // autoPause makes the timeout a pause (disk persisted, resumed on connect) instead
-    // of a kill; that's what keeps reboot honest.
+    // lifecycle makes the timeout a pause (disk persisted, resumed on connect) instead of a
+    // kill; that's what keeps reboot honest. E2B's default is onTimeout:'kill', so getting
+    // this wrong DESTROYS the filesystem at sandboxTimeoutMs and every session older than it
+    // dies with "sandbox is gone (cannot reboot)". autoResume wakes a paused sandbox on
+    // inbound traffic, so connect() resumes it transparently; it also implies the default
+    // full-memory snapshot, which is what lets a detached runner survive the pause and keeps
+    // the idemKey attach protocol working across one.
+    //
+    // ComputeSDK types create options with an index signature and forwards unknown keys
+    // straight to the provider, so a wrong option name here is silent — neither tsc nor the
+    // provider complains, it just never takes effect. The lifecycle test in computesdk.test.ts
+    // pins the exact shape for that reason; keep it in sync with the e2b SDK's SandboxOpts.
     const sb = await this.manager.sandbox.create({
       timeout: this.sandboxTimeoutMs,
       metadata: { funky_session_id: sessionId },
-      autoPause: true,
+      lifecycle: { onTimeout: "pause", autoResume: true },
       ...(spec.network.type === "limited" && {
         network: { allowOut: spec.network.allowed_hosts },
       }),

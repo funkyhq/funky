@@ -51,6 +51,36 @@ if (apiKey) {
   });
 }
 
+// The create options are the one part of the driver a passing TCK cannot cover: the fake
+// provider ignores them, so a wrong option name still runs green everywhere while silently
+// doing nothing in production. ComputeSDK's CreateSandboxOptions ends in `[key: string]: any`
+// and its e2b provider spreads unrecognised keys into E2BSandbox.create(), so tsc won't catch
+// a typo either. These assert the exact shape we hand the provider.
+describe("ComputeSDK sandbox lifecycle", () => {
+  it("asks the provider to pause on timeout, not kill", async () => {
+    let createOptions: CreateSandboxOptions | undefined;
+    const driver = new ComputeSdkDriver({
+      providerName: "e2b",
+      provider: localShellProvider((options) => {
+        createOptions = options;
+      }),
+      sandboxTimeoutMs: 30 * 60_000,
+    });
+
+    const handle = await driver.provision({ network: { type: "unrestricted" } }, randomUUID());
+    try {
+      // Matches the e2b SDK's SandboxOpts.lifecycle. `autoPause` — the name this used to
+      // pass — is NOT a field there; E2B ignored it and fell back to onTimeout:'kill',
+      // destroying the filesystem at the timeout instead of pausing it.
+      expect(createOptions?.lifecycle).toEqual({ onTimeout: "pause", autoResume: true });
+      expect(createOptions).not.toHaveProperty("autoPause");
+      expect(createOptions?.timeout).toBe(30 * 60_000);
+    } finally {
+      await driver.teardown(handle);
+    }
+  });
+});
+
 describe("ComputeSDK network policies", () => {
   it("maps a limited policy to E2B allowOut", async () => {
     let createOptions: CreateSandboxOptions | undefined;
