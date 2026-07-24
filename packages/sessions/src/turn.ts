@@ -153,6 +153,16 @@ function selectStrategy(runtime: RuntimeConfig | null): TurnStrategy {
  *  anything it defers on lands here. */
 function mapError(err: unknown, shell: TurnShell): TurnOutcome | Promise<TurnOutcome> {
   if (err instanceof ErrConflict) return "conflict"; // someone else owns this turn
+  // TODO(sessions): SANDBOX_FATAL ends the TURN and should not end the SESSION. Losing the
+  // sandbox mid-exec is unrecoverable for *this* turn — the in-flight command's fate is
+  // unknowable, so it can be neither replayed nor safely re-run — but a later turn starts
+  // with nothing in flight, so it could re-provision and continue (no idemKey in flight ⇒
+  // no side effect to duplicate). Two things block that today: terminalFail leaves
+  // sessions.status alone, so the session keeps accepting messages and burns maxAttempts on
+  // each; and this branch cannot tell "destroyed" from "unreachable N times" (computesdk.ts
+  // maps both to one error), so it must not be made session-terminal before that distinction
+  // exists. Design: turn-start loss → re-provision + a sandbox_replaced event; mid-exec loss
+  // → fail the turn only.
   if (err instanceof SandboxUnavailableError) {
     return shell.lastAttempt ? shell.terminalFail("SANDBOX_FATAL", err.message) : "retry_later";
   }

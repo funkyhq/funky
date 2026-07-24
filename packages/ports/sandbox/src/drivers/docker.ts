@@ -87,7 +87,7 @@ export function dockerProvider(opts: DockerProviderOptions): ComputeProvider {
     sandbox: {
       // `sleep infinity` (overriding the image CMD) keeps the container alive so later
       // `docker exec`s have something to attach to. --init reaps the detached nohup runners
-      // the protocol spawns. autoPause/timeout options don't map to Docker — a container
+      // the protocol spawns. lifecycle/timeout options don't map to Docker — a container
       // just runs until teardown — so they're ignored; the label aids `docker ps` triage.
       create: async (options?: CreateSandboxOptions): Promise<SandboxInterface> => {
         const session = options?.metadata?.funky_session_id;
