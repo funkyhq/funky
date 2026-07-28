@@ -23,6 +23,8 @@ no CORS to configure (the API is left untouched). Config is read from the **mono
 | --- | --- | --- |
 | `FUNKY_API_URL` | where the API listens | `http://localhost:3000` |
 | `FUNKY_AUTH_TOKEN` | bearer token; leave unset if the API runs `FUNKY_AUTH=disabled` | — |
+| `ANTHROPIC_API_KEY` | enables Anthropic models in the model picker | — |
+| `TOGETHER_API_KEY` | enables Together AI models in the model picker | — |
 
 `docker compose up --build` (from the repo root) now brings the console up **with** the
 backend — it's the `web` service, running this same dev server in a container:
@@ -46,8 +48,8 @@ gate with the commands to start it, and recovers automatically once `/health` is
 The UI is intentionally simpler than the API; a few fields are filled in for you:
 
 - **Model** — the dropdown labels map to the API's `{ provider, model }` shape
-  (`src/lib/models.ts`). With the default zero-key `fake` LLM any choice works; with
-  `FUNKY_LLM=ai-sdk` + `ANTHROPIC_API_KEY`, pick the Claude option.
+  (`src/lib/models.ts`). Options appear when the matching provider key is configured.
+  Together AI models use the native runtime; Claude Code remains Anthropic-only.
 - **Environment** — the create form asks for name, description, and network access. There
   is no image to pick: the sandbox runtime is the backend's concern (the dev driver runs
   commands in the worker container), so the environment is just identity + network policy.

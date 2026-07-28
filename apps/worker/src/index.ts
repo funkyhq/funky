@@ -80,7 +80,14 @@ console.log(
 // FUNKY_LLM=ai-sdk.
 function llmConfig(c: Config): LlmConfig {
   return c.llm === "ai-sdk"
-    ? { driver: "ai-sdk" }
+    ? {
+        driver: "ai-sdk",
+        credentials: {
+          ...(c.anthropicApiKey ? { anthropicApiKey: c.anthropicApiKey } : {}),
+          ...(c.openaiApiKey ? { openaiApiKey: c.openaiApiKey } : {}),
+          ...(c.togetherApiKey ? { togetherApiKey: c.togetherApiKey } : {}),
+        },
+      }
     : { driver: "fake", instance: new FakeLlm({ scripts: {} }) };
 }
 

@@ -25,6 +25,11 @@ export function Agents({
   const [prompt, setPrompt] = useState('')
   const [saving, setSaving] = useState(false)
 
+  function chooseModel(next: string) {
+    setModel(next)
+    if (modelConfigFor(next).provider !== 'anthropic') setRuntime('native')
+  }
+
   async function create() {
     if (!name.trim() || !prompt.trim()) {
       notify('Name and system prompt are required.')
@@ -119,8 +124,12 @@ export function Agents({
       >
         <div className="modal__form">
           <Input label="Agent name" placeholder="Name your agent" value={name} onChange={setName} />
-          <ModelField value={model} onChange={setModel} />
-          <RuntimeField value={runtime} onChange={setRuntime} />
+          <ModelField value={model} onChange={chooseModel} />
+          <RuntimeField
+            value={runtime}
+            onChange={setRuntime}
+            modelProvider={modelConfigFor(model).provider}
+          />
           <Textarea
             label="System prompt"
             rows={4}

@@ -23,10 +23,11 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, repoRoot, '')
   const target = env.FUNKY_API_URL || process.env.FUNKY_API_URL || 'http://localhost:3000'
   const token = env.FUNKY_AUTH_TOKEN || process.env.FUNKY_AUTH_TOKEN
-  // Real Claude models are only offered when the worker has a key. We expose a *boolean*
-  // (never the key itself) so the model picker can gate on it. Reflects the root .env at
-  // dev-server start — restart `pnpm dev` after changing it.
+  // Real models are only offered when the worker has the matching key. We expose booleans
+  // (never the keys themselves) so the model picker can gate on them. Reflects the root
+  // .env at dev-server start — restart `pnpm dev` after changing it.
   const anthropicEnabled = Boolean((env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '').trim())
+  const togetherEnabled = Boolean((env.TOGETHER_API_KEY || process.env.TOGETHER_API_KEY || '').trim())
 
   const proxyHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
   const proxy = {
@@ -40,6 +41,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       __ANTHROPIC_ENABLED__: JSON.stringify(anthropicEnabled),
+      __TOGETHER_ENABLED__: JSON.stringify(togetherEnabled),
       // Safe to expose: this is the API location, never the bearer token.
       __FUNKY_API_URL__: JSON.stringify(target.replace(/\/+$/, '')),
     },

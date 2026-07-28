@@ -17,6 +17,7 @@ import { getCounter, resetCounters } from "./metrics";
 import type { ChatMessage } from "./port";
 
 const MODEL: ModelConfig = { provider: "anthropic", model: "claude-sonnet-5" };
+const CREDENTIALS = { anthropicApiKey: "sk-ant-test" };
 const MSGS: ChatMessage[] = [{ role: "user", content: "do three things" }];
 
 function mockResult(toolCalls: Array<{ toolName: string; input: unknown }>) {
@@ -41,7 +42,7 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
       { toolName: "exec", input: { cmd: "whoami" } },
     ]);
 
-    const r = await new AiSdkLlm().complete({ model: MODEL, messages: MSGS });
+    const r = await new AiSdkLlm(CREDENTIALS).complete({ model: MODEL, messages: MSGS });
 
     expect(r.toolCall).toEqual({ kind: "exec", cmd: "ls" });
     expect(getCounter("llm_tool_calls_dropped_total")).toBe(2); // 3 returned − 1 kept
@@ -50,7 +51,7 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
   it("does not count drops when the provider returns a single call", async () => {
     mockResult([{ toolName: "exec", input: { cmd: "ls" } }]);
 
-    const r = await new AiSdkLlm().complete({ model: MODEL, messages: MSGS });
+    const r = await new AiSdkLlm(CREDENTIALS).complete({ model: MODEL, messages: MSGS });
 
     expect(r.toolCall).toEqual({ kind: "exec", cmd: "ls" });
     expect(getCounter("llm_tool_calls_dropped_total")).toBe(0);
@@ -59,10 +60,31 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
   it("requests provider-side disable of parallel tool use", async () => {
     mockResult([]);
 
-    await new AiSdkLlm().complete({ model: MODEL, messages: MSGS });
+    await new AiSdkLlm(CREDENTIALS).complete({ model: MODEL, messages: MSGS });
 
     const call = vi.mocked(generateText).mock.calls[0]![0];
     expect(call.providerOptions).toEqual({ anthropic: { disableParallelToolUse: true } });
+  });
+
+  it("resolves Together AI models and disables parallel tool calls on its compatible API", async () => {
+    mockResult([]);
+    const model: ModelConfig = {
+      provider: "togetherai",
+      model: "openai/gpt-oss-20b",
+    };
+
+    await new AiSdkLlm({ togetherApiKey: "together-test" }).complete({
+      model,
+      messages: MSGS,
+    });
+
+    const call = vi.mocked(generateText).mock.calls[0]![0];
+    const resolved = call.model as Exclude<typeof call.model, string>;
+    expect(resolved.provider).toBe("togetherai.chat");
+    expect(resolved.modelId).toBe(model.model);
+    expect(call.providerOptions).toEqual({
+      togetherai: { parallel_tool_calls: false },
+    });
   });
 
   // ai@7 rejects system-role messages in `messages` ("Use the instructions option instead").
@@ -70,7 +92,7 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
   it("routes the system prompt to `instructions`, never into `messages`", async () => {
     mockResult([]);
 
-    await new AiSdkLlm().complete({
+    await new AiSdkLlm(CREDENTIALS).complete({
       model: MODEL,
       messages: [
         { role: "system", content: "You are a helpful engineer." },
@@ -91,7 +113,7 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
   it("sanitizes the tool_use id (no colons) and keeps call/result paired", async () => {
     mockResult([]);
 
-    await new AiSdkLlm().complete({
+    await new AiSdkLlm(CREDENTIALS).complete({
       model: MODEL,
       messages: [
         { role: "user", content: "run something" },

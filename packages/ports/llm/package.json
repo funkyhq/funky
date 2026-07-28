@@ -13,6 +13,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.0",
     "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/togetherai": "^3.0.17",
     "@funky/db": "workspace:*",
     "@funky/sessions": "workspace:*",
     "ai": "^7.0.0",

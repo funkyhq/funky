@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
 import { agents as agentsApi, environments as envsApi, sessions as sessApi } from '../lib/api'
-import { modelConfigFor } from '../lib/models'
+import { DEFAULT_MODEL_LABEL, modelConfigFor } from '../lib/models'
 import { networkPolicy, networkSummary, type NetworkMode } from '../lib/network'
 import { errMsg, initials } from '../lib/format'
 import { Avatar, Badge, Button, CodeBlock, Input, Textarea } from '../ui/ui'
@@ -15,7 +15,7 @@ const STEP_LABELS = ['Create agent', 'Configure environment', 'Start session', '
 export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Promise<void> }) {
   const [step, setStep] = useState(1)
   const [agentName, setAgentName] = useState('Funky Assistant')
-  const [model, setModel] = useState('Sonnet 5')
+  const [model, setModel] = useState(DEFAULT_MODEL_LABEL)
   const [runtime, setRuntime] = useState<'native' | 'claude-code'>('native')
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_PROMPT)
   const [envName, setEnvName] = useState('basic')
@@ -28,6 +28,11 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
 
   const next = () => setStep((s) => Math.min(4, s + 1))
   const back = () => setStep((s) => Math.max(1, s - 1))
+
+  function chooseModel(nextModel: string) {
+    setModel(nextModel)
+    if (modelConfigFor(nextModel).provider !== 'anthropic') setRuntime('native')
+  }
 
   function guardStep1() {
     if (!agentName.trim() || !systemPrompt.trim()) {
@@ -101,8 +106,12 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
                 <p className="qs-form__sub">Who it is and which model powers it.</p>
               </div>
               <Input label="Agent name" placeholder="Name your agent" value={agentName} onChange={setAgentName} />
-              <ModelField value={model} onChange={setModel} />
-              <RuntimeField value={runtime} onChange={setRuntime} />
+              <ModelField value={model} onChange={chooseModel} />
+              <RuntimeField
+                value={runtime}
+                onChange={setRuntime}
+                modelProvider={modelConfigFor(model).provider}
+              />
               <Textarea label="System prompt" rows={5} value={systemPrompt} onChange={setSystemPrompt} />
               <div className="qs-foot qs-foot--end">
                 <Button variant="accent" size="lg" onClick={guardStep1}>

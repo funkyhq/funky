@@ -67,17 +67,35 @@ event: turn_completed
 
 <img width="1462" height="753" alt="Screenshot 2026-07-16 at 10 22 12 AM" src="https://github.com/user-attachments/assets/46dd31b9-0388-46bf-a12d-f28abdb6a263" />
 
-### Using a real model (e.g. sonnet-5)
+### Using a real model
 
 ```bash
 # in .env
 FUNKY_LLM=ai-sdk
+# set the key matching the provider in your agent's model config
 ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# TOGETHER_API_KEY=...
 ```
 ```bash
 docker compose up -d --build worker
 ```
-Now the same curl commands drive a real Claude, writing and running its own shell commands.
+Now the same curl commands drive a real model, writing and running its own shell commands.
+The native runtime supports Anthropic, OpenAI, and Together AI through their direct AI SDK
+providers. For example, a Together AI agent uses:
+
+```json
+{
+  "model": {
+    "provider": "togetherai",
+    "model": "openai/gpt-oss-20b"
+  }
+}
+```
+
+Use a current Together model with function-calling support, since Funky's native agent loop
+exposes its sandbox through an `exec` tool. See Together's
+[serverless model catalog](https://docs.together.ai/docs/serverless/models).
 
 ### Using a remote sandbox (e.g. E2B)
 
