@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { AlertTriangle, Archive, Cpu, Layers, MessageSquare, MoreVertical, X, Zap } from 'lucide-react'
 import { Button, Select, Textarea } from '../ui/ui'
-import { ANTHROPIC_ENABLED, MODEL_OPTIONS } from '../lib/models'
+import { MODEL_OPTIONS } from '../lib/models'
+import type { Provider } from '../lib/types'
 import type { NetworkMode } from '../lib/network'
 import { useClickOutside } from './data'
 
@@ -80,16 +81,17 @@ export function EmptyState({
 }
 
 /**
- * The Model picker. With an ANTHROPIC_API_KEY present it offers the Claude models; without
- * one there's nothing usable to pick, so it points the user at their .env instead.
+ * The model picker only exposes providers whose worker key was present at Vite startup.
+ * Unreleased models can remain visible as disabled options.
  */
 export function ModelField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  if (!ANTHROPIC_ENABLED) {
+  if (MODEL_OPTIONS.length === 0) {
     return (
       <div className="field">
         <span className="field__label">Model</span>
         <p className="model-hint">
-          Please specify <code>ANTHROPIC_API_KEY</code> in your <code>.env</code> file.
+          Please specify <code>ANTHROPIC_API_KEY</code> or <code>TOGETHER_API_KEY</code> in
+          your <code>.env</code> file.
         </p>
       </div>
     )
@@ -98,21 +100,28 @@ export function ModelField({ value, onChange }: { value: string; onChange: (v: s
     <Select
       label="Model"
       value={value}
-      options={MODEL_OPTIONS.map((m) => ({ value: m.label, label: m.label }))}
+      options={MODEL_OPTIONS.map((m) => ({
+        value: m.label,
+        label: m.label,
+        disabled: m.disabled,
+      }))}
       onChange={onChange}
     />
   )
 }
 
-// How the agent runs its turns. claude-code (the harness) requires an anthropic model,
-// which the UI's model picker always is — so the choice is always valid here.
+// How the agent runs its turns. Claude Code is only valid for Anthropic models; Together
+// models use Funky's provider-neutral native loop.
 export function RuntimeField({
   value,
   onChange,
+  modelProvider,
 }: {
   value: 'native' | 'claude-code'
   onChange: (v: 'native' | 'claude-code') => void
+  modelProvider: Provider
 }) {
+  const claudeCodeAvailable = modelProvider === 'anthropic'
   return (
     <div className="field">
       <Select
@@ -120,7 +129,11 @@ export function RuntimeField({
         value={value}
         options={[
           { value: 'native', label: 'Native — Funky’s built-in agent loop' },
-          { value: 'claude-code', label: 'Claude Code — run turns inside the Claude Agent SDK' },
+          {
+            value: 'claude-code',
+            label: 'Claude Code — run turns inside the Claude Agent SDK',
+            disabled: !claudeCodeAvailable,
+          },
         ]}
         onChange={(v) => onChange(v as 'native' | 'claude-code')}
       />
@@ -128,6 +141,8 @@ export function RuntimeField({
         <p className="model-hint">
           Runs each turn inside Claude Code; needs <code>ANTHROPIC_API_KEY</code> on the worker.
         </p>
+      ) : !claudeCodeAvailable ? (
+        <p className="model-hint">Together AI models run with the Native runtime.</p>
       ) : null}
     </div>
   )

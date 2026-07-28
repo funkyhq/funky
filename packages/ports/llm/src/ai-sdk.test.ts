@@ -12,7 +12,7 @@ describe.skipIf(!hasKey)("AiSdkLlm (real anthropic round-trip)", () => {
   const model: ModelConfig = { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 1024 };
 
   it("returns an exec ToolCall when the prompt requires a shell command", async () => {
-    const llm = new AiSdkLlm();
+    const llm = new AiSdkLlm({ anthropicApiKey: process.env.ANTHROPIC_API_KEY! });
     const messages: ChatMessage[] = [
       {
         role: "system",
@@ -35,7 +35,7 @@ describe.skipIf(!hasKey)("AiSdkLlm (real anthropic round-trip)", () => {
   // its tool_result, keyed by our idemKey (`sessionId:seq:index`). Anthropic rejects a
   // tool_use.id containing colons, so this round-trip only succeeds once the id is sanitized.
   it("accepts a replayed tool_use/tool_result history (idemKey has colons)", async () => {
-    const llm = new AiSdkLlm();
+    const llm = new AiSdkLlm({ anthropicApiKey: process.env.ANTHROPIC_API_KEY! });
     const messages: ChatMessage[] = [
       { role: "system", content: "You control a Linux sandbox. Use the exec tool for shell commands." },
       { role: "user", content: "run: echo hi" },

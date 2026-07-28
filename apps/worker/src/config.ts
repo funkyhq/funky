@@ -40,9 +40,13 @@ const EnvSchema = z
     // e2b: an isolated remote sandbox per session. (The in-process subprocess driver still
     // exists for the offline test suites, but is not a production sandbox option.)
     FUNKY_SANDBOX: z.enum(["docker", "e2b"]).default("docker"),
-    // Required when FUNKY_LLM=ai-sdk, and for agents with runtime=claude-code (the
+    // Used by the direct Anthropic provider and by agents with runtime=claude-code (the
     // harness driver is only constructed when this key is present).
     ANTHROPIC_API_KEY: optionalSecret,
+    // Direct AI SDK provider credentials. At least one supported provider key is required
+    // when the real driver is enabled; each agent still selects its own provider/model.
+    OPENAI_API_KEY: optionalSecret,
+    TOGETHER_API_KEY: optionalSecret,
     // Harness (claude-code) knobs. CWD_ROOT must be identical across the worker
     // fleet — the harness derives the transcript store's projectKey from it.
     // SCRATCH_ROOT holds the disposable per-attempt local session copy; point it at
@@ -61,12 +65,20 @@ const EnvSchema = z
       .default(30 * 60_000),
     DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
   })
-  .refine((e) => e.FUNKY_LLM !== "ai-sdk" || e.ANTHROPIC_API_KEY !== undefined, {
-    message:
-      "ANTHROPIC_API_KEY is required when FUNKY_LLM=ai-sdk. " +
-      "Set it, or leave FUNKY_LLM=fake for local development.",
-    path: ["ANTHROPIC_API_KEY"],
-  })
+  .refine(
+    (e) =>
+      e.FUNKY_LLM !== "ai-sdk" ||
+      e.ANTHROPIC_API_KEY !== undefined ||
+      e.OPENAI_API_KEY !== undefined ||
+      e.TOGETHER_API_KEY !== undefined,
+    {
+      message:
+        "ANTHROPIC_API_KEY, OPENAI_API_KEY, or TOGETHER_API_KEY is required when " +
+        "FUNKY_LLM=ai-sdk. Set the key for your model provider, or leave FUNKY_LLM=fake " +
+        "for local development.",
+      path: ["FUNKY_LLM"],
+    },
+  )
   .refine((e) => e.FUNKY_SANDBOX !== "e2b" || e.E2B_API_KEY !== undefined, {
     message:
       "E2B_API_KEY is required when FUNKY_SANDBOX=e2b. " +
@@ -82,8 +94,10 @@ export type Config = {
   metricsModes: MetricsMode[];
   llm: "fake" | "ai-sdk";
   sandbox: "docker" | "e2b";
-  /** null = fake driver; no key needed. */
+  /** null = this provider is unavailable (and, for Anthropic, no Claude Code harness). */
   anthropicApiKey: string | null;
+  openaiApiKey: string | null;
+  togetherApiKey: string | null;
   harnessCwdRoot: string;
   harnessScratchRoot: string;
   /** null = docker driver; no key needed. */
@@ -113,6 +127,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llm: e.FUNKY_LLM,
     sandbox: e.FUNKY_SANDBOX,
     anthropicApiKey: e.ANTHROPIC_API_KEY ?? null,
+    openaiApiKey: e.OPENAI_API_KEY ?? null,
+    togetherApiKey: e.TOGETHER_API_KEY ?? null,
     harnessCwdRoot: e.FUNKY_HARNESS_CWD_ROOT,
     harnessScratchRoot: e.FUNKY_HARNESS_SCRATCH_ROOT,
     e2bApiKey: e.E2B_API_KEY ?? null,

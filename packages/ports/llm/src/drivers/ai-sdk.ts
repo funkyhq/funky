@@ -7,6 +7,7 @@
 
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createTogetherAI } from "@ai-sdk/togetherai";
 import {
   APICallError,
   type LanguageModel,
@@ -32,6 +33,12 @@ import {
 const EXEC_TOOL = "exec";
 const MAX_ATTEMPTS = 3;
 
+export type AiSdkCredentials = {
+  anthropicApiKey?: string;
+  openaiApiKey?: string;
+  togetherApiKey?: string;
+};
+
 // No `execute`: the model's exec call is returned and generation stops after one step
 // (generateText's default). The worker runs the command in the sandbox, not the SDK.
 const execTool = tool({
@@ -50,8 +57,10 @@ const execTool = tool({
 });
 
 export class AiSdkLlm implements LlmPort {
+  constructor(private readonly credentials: AiSdkCredentials) {}
+
   async complete(req: LlmRequest): Promise<LlmResult> {
-    const model = resolveModel(req.model);
+    const model = resolveModel(req.model, this.credentials);
     const { instructions, messages } = toModelMessages(req.messages);
     const providerOptions = parallelToolUseOff(req.model);
 
@@ -88,27 +97,33 @@ export class AiSdkLlm implements LlmPort {
   }
 }
 
-function resolveModel(cfg: ModelConfig): LanguageModel {
+function resolveModel(cfg: ModelConfig, credentials: AiSdkCredentials): LanguageModel {
   switch (cfg.provider) {
     case "anthropic":
-      return createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })(cfg.model);
+      return createAnthropic({ apiKey: credentials.anthropicApiKey })(cfg.model);
     case "openai":
-      return createOpenAI({ apiKey: process.env.OPENAI_API_KEY })(cfg.model);
+      return createOpenAI({ apiKey: credentials.openaiApiKey })(cfg.model);
+    case "togetherai":
+      return createTogetherAI({ apiKey: credentials.togetherApiKey })(cfg.model);
     default:
-      // v1 ships anthropic + openai; the others are wired identically when needed.
+      // The remaining ModelConfig providers are accepted at the API edge for forward
+      // compatibility; add their AI SDK adapters here as they become runtime-supported.
       throw new LlmPermanentError(`llm provider not supported in v1: ${cfg.provider}`);
   }
 }
 
 // Layer 1 of the v1 tool-call cap: tell the provider to plan sequentially so it never
 // emits a batch in the first place — no intent is dropped. Anthropic and OpenAI spell it
-// differently; both go through the AI SDK's per-provider providerOptions.
+// differently; Together uses the OpenAI-compatible wire name. All go through the AI SDK's
+// per-provider providerOptions.
 function parallelToolUseOff(cfg: ModelConfig): Record<string, Record<string, boolean>> | undefined {
   switch (cfg.provider) {
     case "anthropic":
       return { anthropic: { disableParallelToolUse: true } };
     case "openai":
       return { openai: { parallelToolCalls: false } };
+    case "togetherai":
+      return { togetherai: { parallel_tool_calls: false } };
     default:
       return undefined;
   }

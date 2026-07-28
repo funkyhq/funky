@@ -40,6 +40,22 @@ describe("POST /v1/agents (create)", () => {
     expect(fake.create).toHaveBeenCalledWith(CTX, body);
   });
 
+  it("accepts a Together AI model for the native runtime", async () => {
+    const agent = agentFixture();
+    const { app, fake } = makeApp({
+      agents: { create: vi.fn().mockResolvedValue({ agent, created: true }) },
+    });
+    const body = createBody({
+      model: { provider: "togetherai", model: "openai/gpt-oss-20b" },
+      runtime: { type: "native" },
+    });
+
+    const res = await post(app, "/v1/agents", body);
+
+    expect(res.status).toBe(201);
+    expect(fake.create).toHaveBeenCalledWith(CTX, body);
+  });
+
   it("returns 200 for an idempotent (already-exists) create", async () => {
     const agent = agentFixture();
     const { app } = makeApp({

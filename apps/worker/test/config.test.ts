@@ -29,6 +29,8 @@ describe("loadConfig — valid input", () => {
       llm: "fake",
       sandbox: "docker",
       anthropicApiKey: null,
+      openaiApiKey: null,
+      togetherApiKey: null,
       e2bApiKey: null,
       e2bSandboxTimeoutMs: 30 * 60_000,
       dockerImage: "funky-sandbox:trixie",
@@ -49,9 +51,28 @@ describe("loadConfig — valid input", () => {
   });
 
   it("treats empty-string secrets as absent (compose `${VAR:-}` sends '' for unset keys)", () => {
-    const cfg = loadConfig({ ...BASE, ANTHROPIC_API_KEY: "", E2B_API_KEY: "" });
+    const cfg = loadConfig({
+      ...BASE,
+      ANTHROPIC_API_KEY: "",
+      OPENAI_API_KEY: "",
+      TOGETHER_API_KEY: "",
+      E2B_API_KEY: "",
+    });
     expect(cfg.anthropicApiKey).toBeNull();
+    expect(cfg.openaiApiKey).toBeNull();
+    expect(cfg.togetherApiKey).toBeNull();
     expect(cfg.e2bApiKey).toBeNull();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Anthropic", "ANTHROPIC_API_KEY", "sk-ant-secret", "anthropicApiKey"],
+    ["OpenAI", "OPENAI_API_KEY", "sk-openai-secret", "openaiApiKey"],
+    ["Together AI", "TOGETHER_API_KEY", "together-secret", "togetherApiKey"],
+  ] as const)("allows the ai-sdk driver with only a %s key", (_provider, key, value, property) => {
+    const cfg = loadConfig({ ...BASE, FUNKY_LLM: "ai-sdk", [key]: value });
+    expect(cfg.llm).toBe("ai-sdk");
+    expect(cfg[property]).toBe(value);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -94,6 +115,8 @@ describe("loadConfig — valid input", () => {
       llm: "ai-sdk",
       sandbox: "e2b",
       anthropicApiKey: "sk-ant-secret",
+      openaiApiKey: null,
+      togetherApiKey: null,
       e2bApiKey: "e2b_secret",
       e2bSandboxTimeoutMs: 600_000,
       dockerImage: "funky-sandbox:trixie",
@@ -108,7 +131,7 @@ describe("loadConfig — invalid input exits the process", () => {
   it.each([
     ["missing DATABASE_URL", {}],
     ["empty DATABASE_URL", { DATABASE_URL: "" }],
-    ["ai-sdk without ANTHROPIC_API_KEY", { ...BASE, FUNKY_LLM: "ai-sdk" }],
+    ["ai-sdk without a supported provider API key", { ...BASE, FUNKY_LLM: "ai-sdk" }],
     ["e2b without E2B_API_KEY", { ...BASE, FUNKY_SANDBOX: "e2b" }],
     ["e2b with empty E2B_API_KEY", { ...BASE, FUNKY_SANDBOX: "e2b", E2B_API_KEY: "" }],
     [

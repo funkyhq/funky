@@ -54,6 +54,8 @@ services:
       # avoids "why does the worker behave differently" confusion.
       FUNKY_LLM: ${FUNKY_LLM:-fake}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # empty unless the user sets it
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -95,6 +97,8 @@ services:
       FUNKY_DOCKER_IMAGE: ${FUNKY_DOCKER_IMAGE:-funky-sandbox:trixie} # built by the sandbox-image service
       FUNKY_WORKER_CONCURRENCY: ${FUNKY_WORKER_CONCURRENCY:-10}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # empty unless the user sets it
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       E2B_API_KEY: ${E2B_API_KEY:-} # empty unless the user sets it
       FUNKY_E2B_SANDBOX_TIMEOUT_MS: ${FUNKY_E2B_SANDBOX_TIMEOUT_MS:-1800000}
       # Metric exporters: "prometheus" (default, scrape :9090/metrics), "otlp" (push via
@@ -141,6 +145,7 @@ services:
       FUNKY_API_URL: http://api:3000 # ← service name, not localhost (proxy target on the compose network)
       FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any long random string}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # presence flips the console's Claude model option on
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-} # presence flips the console's Together model options on
     depends_on:
       api:
         condition: service_healthy
