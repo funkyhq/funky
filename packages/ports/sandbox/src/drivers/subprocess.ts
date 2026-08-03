@@ -15,7 +15,7 @@ import { type FileHandle, open } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ResolvedEnv } from "@funky/db/schema";
-import { type ExecEvent, type Executor, type SandboxDriver, type SandboxHandle, SandboxUnavailableError } from "../port";
+import { type ExecEvent, type Executor, type SandboxDriver, type SandboxHandle, SandboxGoneError, SandboxUnavailableError } from "../port";
 
 const ROOT = "/tmp/funky";
 const MAX_OUTPUT_BYTES = 200_000;
@@ -52,9 +52,9 @@ class SubprocessExecutor implements Executor {
   exec(req: { cmd: string; idemKey: string; timeoutMs?: number }): AsyncIterable<ExecEvent> {
     const { workdir } = this;
     return (async function* () {
-      // No workdir → torn down / unreachable: we can't observe a result, so this is an
-      // infrastructure error (throw), never a synthesized exit code.
-      if (!(await exists(workdir))) throw new SandboxUnavailableError("sandbox is not provisioned");
+      // No workdir → torn down (or never provisioned). The local filesystem answered
+      // definitively, so this is GONE — positive evidence, never a synthesized exit code.
+      if (!(await exists(workdir))) throw new SandboxGoneError("sandbox is not provisioned");
       const funkyRoot = path.join(workdir, ".funky");
       await fs.mkdir(funkyRoot, { recursive: true });
       const dir = path.join(funkyRoot, req.idemKey);

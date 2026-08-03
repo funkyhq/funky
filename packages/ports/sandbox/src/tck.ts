@@ -9,7 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it as baseIt } from "vitest";
-import { type ExecEvent, type Executor, type SandboxDriver, SandboxUnavailableError } from "./port";
+import { type ExecEvent, type Executor, type SandboxDriver, SandboxGoneError, SandboxUnavailableError } from "./port";
 import type { ResolvedEnv } from "@funky/db/schema";
 
 const SPEC: ResolvedEnv = {
@@ -115,12 +115,14 @@ export function runSandboxTck(
       expect(r.stdout.length).toBe(200_000);
     });
 
-    it("7. teardown is idempotent; exec after teardown throws SandboxUnavailableError", async () => {
+    it("7. teardown is idempotent; exec after teardown throws SandboxGoneError", async () => {
       const { driver, handle, exec } = await sandbox();
       await driver.teardown(handle);
       await driver.teardown(handle); // twice → no throw
+      // GONE, not merely unavailable: after a teardown the driver has positive evidence
+      // the sandbox no longer exists, and the caller's policy keys on that distinction.
       await expect(collect(exec.exec({ cmd: "echo hi", idemKey: "k7" }))).rejects.toBeInstanceOf(
-        SandboxUnavailableError,
+        SandboxGoneError,
       );
     });
 

@@ -2,7 +2,7 @@
 // The worker (Phase E) imports the port; the entrypoint selects a driver by config.
 
 export type { ExecEvent, Executor, SandboxDriver, SandboxHandle } from "./port";
-export { SandboxUnavailableError } from "./port";
+export { SandboxGoneError, SandboxUnavailableError, SandboxUnreachableError } from "./port";
 // SubprocessDriver is NOT a production sandbox option (see makeSandbox / SandboxConfig): it
 // runs commands in the worker's own container with no isolation. It stays exported purely as
 // the fast, offline in-process driver the test suites — including the chaos warranty — run
@@ -10,11 +10,12 @@ export { SandboxUnavailableError } from "./port";
 export { SubprocessDriver } from "./drivers/subprocess";
 export { ComputeSdkDriver, type ComputeSdkDriverOptions, type ComputeProvider } from "./drivers/computesdk";
 export { dockerProvider, type DockerProviderOptions } from "./drivers/docker";
+export { e2bProvider, type E2bProviderOptions } from "./drivers/e2b";
 export { runSandboxTck } from "./tck";
 
-import { e2b } from "@computesdk/e2b";
 import { ComputeSdkDriver } from "./drivers/computesdk";
 import { dockerProvider } from "./drivers/docker";
+import { e2bProvider } from "./drivers/e2b";
 import type { SandboxDriver } from "./port";
 
 export type SandboxConfig =
@@ -34,9 +35,11 @@ export function makeSandbox(cfg: SandboxConfig): SandboxDriver {
         provider: dockerProvider({ image: cfg.image }),
       });
     case "e2b":
+      // e2bProvider, not @computesdk/e2b directly: it restores the gone-vs-unreachable
+      // distinction the raw provider's getById erases (see drivers/e2b.ts).
       return new ComputeSdkDriver({
         providerName: "e2b",
-        provider: e2b({ apiKey: cfg.apiKey }),
+        provider: e2bProvider({ apiKey: cfg.apiKey }),
         sandboxTimeoutMs: cfg.sandboxTimeoutMs,
       });
     default: {

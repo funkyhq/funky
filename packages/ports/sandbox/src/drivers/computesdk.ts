@@ -27,7 +27,9 @@ import {
   type Executor,
   type SandboxDriver,
   type SandboxHandle,
+  SandboxGoneError,
   SandboxUnavailableError,
+  SandboxUnreachableError,
 } from "../port";
 
 type Manager = ReturnType<CallableCompute>;
@@ -101,7 +103,7 @@ export class ComputeSdkDriver implements SandboxDriver {
   async reboot(handle: SandboxHandle): Promise<SandboxHandle> {
     const h = parseHandle(handle, this.providerName);
     const sb = await this.manager.sandbox.getById(h.sandboxId).catch(() => null);
-    if (!sb) throw new SandboxUnavailableError(`sandbox ${h.sandboxId} is gone (cannot reboot)`);
+    if (!sb) throw new SandboxGoneError(`sandbox ${h.sandboxId} is gone (cannot reboot)`);
     return handle;
   }
 
@@ -128,18 +130,20 @@ class ComputeSdkExecutor implements Executor {
     private readonly workdir: string,
   ) {}
 
-  // getById returns null for a dead sandbox AND for transport failures — both mean the
-  // same thing here: we cannot observe anything, so SandboxUnavailableError.
+  // The provider contract this driver relies on (docker.ts enforces it for containers,
+  // index.ts's transparent e2b wrapper for E2B): getById returns null ONLY when the
+  // provider positively reported the sandbox does not exist, and REJECTS on transport
+  // failures. So null ⇒ gone, rejection ⇒ unreachable.
   private sandbox(): Promise<SandboxInterface> {
     this.sb ??= this.manager.sandbox.getById(this.sandboxId).then(
       (sb) => {
         if (sb) return sb;
         this.sb = null;
-        throw new SandboxUnavailableError(`sandbox ${this.sandboxId} is gone`);
+        throw new SandboxGoneError(`sandbox ${this.sandboxId} is gone`);
       },
       (err) => {
         this.sb = null;
-        throw new SandboxUnavailableError(
+        throw new SandboxUnreachableError(
           `sandbox ${this.sandboxId} is unreachable: ${err instanceof Error ? err.message : String(err)}`,
         );
       },
@@ -165,9 +169,11 @@ class ComputeSdkExecutor implements Executor {
     return (async function* () {
       const sb = await self.sandbox();
       const dir = keyDir(self.workdir, idemKey);
-      // Nothing recorded under this idemKey → no result to observe. `test -d` failing
-      // for transport reasons lands in the same class: unobservable.
+      // Exit 127 is the provider's caught-transport-error marker (see readFile); a real
+      // `test -d` on a missing dir exits 1 — the sandbox answered, nothing is recorded
+      // under this idemKey, and neither subclass fits that: base unavailability.
       const r = await sb.runCommand(`test -d ${shq(dir)}`);
+      if (r.exitCode === 127) throw unavailable(self.sandboxId, r);
       if (r.exitCode !== 0) throw new SandboxUnavailableError(`no running command for idemKey: ${idemKey}`);
       yield* tail(sb, self.sandboxId, dir);
     })();
@@ -284,8 +290,11 @@ function keyDir(workdir: string, idemKey: string): string {
   return posix.join(workdir, ".funky", idemKey);
 }
 
-function unavailable(sandboxId: string, r: { exitCode: number; stderr: string }): SandboxUnavailableError {
-  return new SandboxUnavailableError(
+// A failed wrapper cannot say WHY the sandbox was unobservable (the provider folds its
+// caught transport errors into exit 127), so this is unreachable, never gone: a retry
+// reconnects through getById, which CAN tell — and never terminal on ambiguous evidence.
+function unavailable(sandboxId: string, r: { exitCode: number; stderr: string }): SandboxUnreachableError {
+  return new SandboxUnreachableError(
     `sandbox ${sandboxId} unreachable (wrapper exit ${r.exitCode}): ${r.stderr.trim()}`,
   );
 }
