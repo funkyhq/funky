@@ -126,13 +126,15 @@ export function runSandboxTck(
       );
     });
 
-    it("8. reboot preserves the filesystem", async () => {
+    it("8. a fresh connect() from the same handle sees the same filesystem", async () => {
+      // The handle is the only durable token: any worker holding it must reach the SAME
+      // sandbox (drivers resume a paused one transparently). This is what replaced the
+      // old reboot operation — reconnect, never repair.
       const { driver, handle } = await sandbox();
       const bytes = new TextEncoder().encode("persist me");
       await driver.connect(handle).writeFile("state.txt", bytes);
 
-      const rebooted = await driver.reboot(handle);
-      const read = await driver.connect(rebooted).readFile("state.txt");
+      const read = await driver.connect(handle).readFile("state.txt");
       expect(new TextDecoder().decode(read)).toBe("persist me");
     });
 

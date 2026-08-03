@@ -164,9 +164,6 @@ export function alwaysFailSandbox(): SandboxDriver {
     async provision(_spec: ResolvedEnv, _sessionId: string): Promise<SandboxHandle> {
       return { driver: "subprocess", workdir: "/tmp/funky/chaos-unavailable" };
     },
-    async reboot(h: SandboxHandle) {
-      return h;
-    },
     async teardown() {},
     connect() {
       return executor;
@@ -183,7 +180,6 @@ export function alwaysFailSandbox(): SandboxDriver {
 export function spawnThenHangSandbox(real: SandboxDriver, onSpawned: () => void): SandboxDriver {
   return {
     provision: (spec, sid) => real.provision(spec, sid),
-    reboot: (h) => real.reboot(h),
     teardown: (h) => real.teardown(h),
     connect(handle) {
       const inner = real.connect(handle);

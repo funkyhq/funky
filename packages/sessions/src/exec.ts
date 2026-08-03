@@ -1,17 +1,15 @@
-// packages/sessions/src/exec.ts — exec collection + the single-reboot policy.
+// packages/sessions/src/exec.ts — exec collection + the single-retry policy.
 //
-// Extracted from turn.ts so the native loop and the harness loop (harness-turn.ts)
+// Extracted from turn.ts so the native loop and the harness loop (harness-strategy.ts)
 // share ONE implementation of "run a tool call in the sandbox": collect the stream,
-// treat a missing exit event as unobservable (never a zero exit), and on an
-// unobservable sandbox reboot ONCE and retry by the same idemKey — the idemKey
-// protocol re-attaches to a still-running command or re-runs it safely, so nothing
-// runs twice.
+// treat a missing exit event as unobservable (never a zero exit), and on a TRANSIENT
+// unavailability reconnect ONCE and retry by the same idemKey — the idemKey protocol
+// re-attaches to a still-running command or re-runs it safely, so nothing runs twice.
+// A GONE sandbox is not retried: no reconnect can reach it, and only the caller's
+// policy (turn.ts) may decide what its loss means.
 
-import { and, eq } from "drizzle-orm";
-import type { Db } from "@funky/db";
-import { sessions } from "@funky/db/schema";
 import type { Executor, SandboxDriver, SandboxHandle } from "@funky/sandbox";
-import { SandboxUnavailableError } from "@funky/sandbox";
+import { SandboxGoneError, SandboxUnavailableError } from "@funky/sandbox";
 import type { ToolCall } from "./events";
 
 export type ExecResult = { output: string; exitCode: number; truncated: boolean };
@@ -46,39 +44,26 @@ export async function runExec(
   return { output, exitCode, truncated };
 }
 
-/** Exec with a single reboot on an unobservable sandbox. The same idemKey re-attaches
- *  to a still-running command or re-runs it safely, so nothing runs twice. A second
- *  failure propagates to the caller's error policy. The rebooted handle is persisted
- *  so later workers reconnect to the same sandbox. */
-export function makeExecWithReboot(opts: {
-  db: Db;
+/** Exec with a single reconnect-and-retry on a transient unavailability. connect() is
+ *  cheap and re-resolves the sandbox fresh (resuming a paused one), and the same idemKey
+ *  re-attaches to a still-running command or re-runs it safely, so nothing runs twice.
+ *  A GONE sandbox propagates immediately — retrying cannot fix a permanent loss — and a
+ *  second transient failure propagates to the caller's error policy (the queue's backoff
+ *  owns further retries). */
+export function makeExec(opts: {
   sandbox: SandboxDriver;
-  ns: string;
-  sessionId: string;
   handle: SandboxHandle | null;
 }): (call: ToolCall, idemKey: string) => Promise<ExecResult> {
-  let handle = opts.handle;
   return async (call, idemKey) => {
+    const { sandbox, handle } = opts;
     if (!handle) throw new SandboxUnavailableError("session has no sandbox handle");
     try {
-      return await runExec(opts.sandbox.connect(handle), call, idemKey);
+      return await runExec(sandbox.connect(handle), call, idemKey);
     } catch (err) {
-      if (!(err instanceof SandboxUnavailableError)) throw err;
-      handle = await opts.sandbox.reboot(handle); // persistent FS survives the reboot
-      await persistHandle(opts.db, opts.ns, opts.sessionId, handle);
-      return await runExec(opts.sandbox.connect(handle), call, idemKey);
+      if (!(err instanceof SandboxUnavailableError) || err instanceof SandboxGoneError) {
+        throw err;
+      }
+      return await runExec(sandbox.connect(handle), call, idemKey);
     }
   };
-}
-
-export async function persistHandle(
-  db: Db,
-  ns: string,
-  sessionId: string,
-  handle: SandboxHandle,
-): Promise<void> {
-  await db
-    .update(sessions)
-    .set({ sandboxHandle: handle, updatedAt: new Date() })
-    .where(and(eq(sessions.namespace, ns), eq(sessions.id, sessionId)));
 }

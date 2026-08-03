@@ -66,9 +66,9 @@ export class ComputeSdkDriver implements SandboxDriver {
     }
 
     // lifecycle makes the timeout a pause (disk persisted, resumed on connect) instead of a
-    // kill; that's what keeps reboot honest. E2B's default is onTimeout:'kill', so getting
+    // kill; that's what keeps reconnect honest. E2B's default is onTimeout:'kill', so getting
     // this wrong DESTROYS the filesystem at sandboxTimeoutMs and every session older than it
-    // dies with "sandbox is gone (cannot reboot)". autoResume wakes a paused sandbox on
+    // dies as GONE. autoResume wakes a paused sandbox on
     // inbound traffic, so connect() resumes it transparently; it also implies the default
     // full-memory snapshot, which is what lets a detached runner survive the pause and keeps
     // the idemKey attach protocol working across one.
@@ -94,17 +94,6 @@ export class ComputeSdkDriver implements SandboxDriver {
       throw new Error(`sandbox workdir setup failed: ${(r.stderr || r.stdout).trim()}`);
     }
     return { driver: this.providerName, sandboxId: sb.sandboxId, workdir: m[1] };
-  }
-
-  // Reconnect: a paused sandbox auto-resumes with its filesystem intact, so the handle
-  // stays valid as-is. A sandbox that is fatally gone (killed, expired) cannot be rebuilt
-  // without losing the filesystem this method promises to keep — that is unavailability
-  // (the turn loop's error policy takes it from here), never a silent fresh provision.
-  async reboot(handle: SandboxHandle): Promise<SandboxHandle> {
-    const h = parseHandle(handle, this.providerName);
-    const sb = await this.manager.sandbox.getById(h.sandboxId).catch(() => null);
-    if (!sb) throw new SandboxGoneError(`sandbox ${h.sandboxId} is gone (cannot reboot)`);
-    return handle;
   }
 
   // ComputeSDK's destroy swallows provider errors (already-dead sandboxes included), so

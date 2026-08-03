@@ -429,9 +429,6 @@ it("★ crash-resumes: worker B finishes the turn worker A abandoned, running th
     async provision() {
       return { driver: "subprocess", workdir: "/tmp/funky/unused" };
     },
-    async reboot(h) {
-      return h;
-    },
     async teardown() {},
     connect() {
       return {

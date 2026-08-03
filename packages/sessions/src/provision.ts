@@ -2,9 +2,9 @@
 //
 // Provision jobs (kind: "provision") ride the same queue and run on the same worker as
 // turns. The snapshot of the env config into `resolved_env` happens HERE and is never
-// re-read from the (mutable) env config: a sandbox reboot three days later must rebuild
-// the SAME environment the session started with, not whatever the config says today. The
-// snapshot makes reboots deterministic.
+// re-read from the (mutable) env config: a sandbox replacement three days later must
+// rebuild the SAME environment the session started with, not whatever the config says
+// today. The snapshot makes replacements deterministic.
 
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@funky/db";

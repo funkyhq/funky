@@ -19,7 +19,7 @@ import {
 import { agentConfigs } from "./configs";
 import { envConfigs, type NetworkPolicy } from "./envs"; // ⚠ adjust if the env iteration named this file differently
 
-/** Snapshot captured at sandbox provision; reboots rebuild from THIS, never from the
+/** Snapshot captured at sandbox provision; replacements rebuild from THIS, never from the
  *  (mutable) env config. template_id is driver-specific (e.g. E2B template). */
 export type ResolvedEnv = {
   template_id?: string;
