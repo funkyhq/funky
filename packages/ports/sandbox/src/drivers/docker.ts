@@ -103,11 +103,15 @@ export function dockerProvider(opts: DockerProviderOptions): ComputeProvider {
       },
       // `docker start` is idempotent on a running container AND resumes a stopped one with
       // its filesystem intact — so a container that was paused (or survived a daemon
-      // restart) "auto-resumes" here, exactly the semantics ComputeSdkDriver.reboot expects.
-      // A missing container → non-zero → null (the driver reads that as unavailable).
+      // restart) "auto-resumes" here. The driver's provider contract: null ONLY on positive
+      // evidence the container no longer exists ("No such container" — the daemon answered),
+      // and a THROW for everything else (daemon unreachable, docker binary absent), which
+      // ComputeSdkDriver reads as unreachable-but-retryable.
       getById: async (id: string): Promise<SandboxInterface | null> => {
         const r = await run(docker, ["start", id]);
-        return r.code === 0 ? makeSandbox(id) : null;
+        if (r.code === 0) return makeSandbox(id);
+        if (/No such container/i.test(r.stderr)) return null;
+        throw new Error(`docker start ${id} failed: ${r.stderr.trim() || `exit ${r.code}`}`);
       },
       // rm -f removes a running or stopped container; run() never rejects and rm -f on a
       // missing container is a no-op error we swallow, so teardown stays idempotent.

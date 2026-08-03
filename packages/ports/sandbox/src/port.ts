@@ -41,8 +41,27 @@ export interface SandboxDriver {
  *
  *  The rule is mechanical: exit code exists ⇒ yield it; no exit code ⇒ throw this. Never
  *  synthesize a fake exit code for an infrastructure failure — that lies to the model,
- *  telling it a command failed when it may have succeeded. Phase D handles this throw by
- *  retrying the exec by idemKey (→ attach) and rebooting if the sandbox is fatally gone. */
+ *  telling it a command failed when it may have succeeded.
+ *
+ *  Two subclasses split unavailability by what a retry can do about it. Throw the base
+ *  class only when neither applies — evidence is genuinely ambiguous. The caller's policy
+ *  keys on the subclass, so a driver must never claim `gone` without positive evidence
+ *  (the provider answered and said the sandbox does not exist): misclassifying a network
+ *  blip as `gone` turns a retryable hiccup into a terminal failure. */
 export class SandboxUnavailableError extends Error {
-  readonly kind = "sandbox_unavailable" as const;
+  readonly kind: "sandbox_unavailable" | "sandbox_unreachable" | "sandbox_gone" =
+    "sandbox_unavailable";
+}
+
+/** The sandbox most likely still exists but THIS attempt could not reach it (transport
+ *  failure, provider API error). Retrying against the same handle can succeed — the
+ *  idemKey protocol makes that retry safe. */
+export class SandboxUnreachableError extends SandboxUnavailableError {
+  override readonly kind = "sandbox_unreachable";
+}
+
+/** The provider positively reported the sandbox does not exist (destroyed, expired past
+ *  recovery). Its filesystem is lost; no retry against this handle can ever succeed. */
+export class SandboxGoneError extends SandboxUnavailableError {
+  override readonly kind = "sandbox_gone";
 }

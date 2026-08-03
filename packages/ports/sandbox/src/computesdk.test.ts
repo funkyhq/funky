@@ -19,10 +19,11 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { e2b } from "@computesdk/e2b";
 import type { CommandResult, CreateSandboxOptions, SandboxInterface } from "computesdk";
 import { describe, expect, it } from "vitest";
 import { type ComputeProvider, ComputeSdkDriver } from "./drivers/computesdk";
+import { e2bProvider } from "./drivers/e2b";
+import { SandboxGoneError, SandboxUnreachableError } from "./port";
 import { runSandboxTck } from "./tck";
 
 const sh = promisify(execFile);
@@ -40,7 +41,9 @@ if (apiKey) {
     () =>
       new ComputeSdkDriver({
         providerName: "e2b",
-        provider: e2b({ apiKey }),
+        // The production wrapper (drivers/e2b.ts), not @computesdk/e2b directly — TCK
+        // case 7 (destroyed ⇒ GONE) only passes with its disambiguating getById.
+        provider: e2bProvider({ apiKey }),
         sandboxTimeoutMs: 5 * 60_000, // TCK sandboxes are short-lived
       }),
     { timeoutMs: 120_000 },
@@ -78,6 +81,73 @@ describe("ComputeSDK sandbox lifecycle", () => {
     } finally {
       await driver.teardown(handle);
     }
+  });
+});
+
+// The gone-vs-unreachable split rests on the provider contract: getById returns null
+// ONLY on positive does-not-exist evidence and rejects on transport failures. These pin
+// how the driver maps each side of that contract (TCK case 7 covers the real drivers).
+describe("ComputeSDK error taxonomy", () => {
+  const collect = async (it: AsyncIterable<unknown>) => {
+    for await (const _ of it) {
+      // drain
+    }
+  };
+
+  function driverWith(sandbox: Partial<ComputeProvider["sandbox"]>): ComputeSdkDriver {
+    return new ComputeSdkDriver({
+      providerName: "fake-local",
+      provider: {
+        name: "fake-local",
+        sandbox: {
+          create: async () => {
+            throw new Error("create is not under test");
+          },
+          getById: async () => null,
+          destroy: async () => {},
+          ...sandbox,
+        },
+      },
+    });
+  }
+
+  const handle = { driver: "fake-local", sandboxId: "sb-1", workdir: "/home/user/funky" };
+
+  it("getById → null maps to SandboxGoneError", async () => {
+    const driver = driverWith({ getById: async () => null });
+    await expect(
+      collect(driver.connect(handle).exec({ cmd: "echo hi", idemKey: "k1" })),
+    ).rejects.toBeInstanceOf(SandboxGoneError);
+  });
+
+  it("getById → rejection maps to SandboxUnreachableError", async () => {
+    const driver = driverWith({
+      getById: async () => {
+        throw new Error("ECONNRESET");
+      },
+    });
+    await expect(
+      collect(driver.connect(handle).exec({ cmd: "echo hi", idemKey: "k1" })),
+    ).rejects.toBeInstanceOf(SandboxUnreachableError);
+  });
+
+  it("a wrapper transport failure (exit 127) maps to SandboxUnreachableError, never gone", async () => {
+    // The sandbox connected fine, then runCommand hit the provider's caught-transport-error
+    // path. The wrapper cannot say WHY, so the driver must not claim gone.
+    const sb = {
+      sandboxId: "sb-1",
+      provider: "fake-local",
+      runCommand: async (): Promise<CommandResult> => ({
+        stdout: "",
+        stderr: "socket hang up",
+        exitCode: 127,
+        durationMs: 0,
+      }),
+    } as unknown as SandboxInterface;
+    const driver = driverWith({ getById: async () => sb });
+    await expect(
+      collect(driver.connect(handle).exec({ cmd: "echo hi", idemKey: "k1" })),
+    ).rejects.toBeInstanceOf(SandboxUnreachableError);
   });
 });
 
