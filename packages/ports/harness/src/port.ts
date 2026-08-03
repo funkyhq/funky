@@ -20,7 +20,7 @@ export type { HarnessState };
  *  errors — same rule as the sandbox port. */
 export type ExecResult = { output: string; exitCode: number; truncated: boolean };
 
-/** Runs one tool call under an idemKey with the caller's full retry/reboot policy.
+/** Runs one tool call under an idemKey with the caller's full retry policy.
  *  Calling with an idemKey that already ran MUST NOT run the command twice — the
  *  caller wires this to the sandbox port's exec/attach protocol. */
 export type HarnessExecFn = (call: ToolCall, idemKey: string) => Promise<ExecResult>;

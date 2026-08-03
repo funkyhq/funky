@@ -2,7 +2,7 @@
 //
 // runTurn is deliberately thin: it gates on session status, loads the PINNED agent
 // version, reads the log ONCE, builds the plumbing every runtime shares (the
-// conditional-append helper, terminalFail, exec-with-reboot), and hands a TurnShell to
+// conditional-append helper, terminalFail, exec-with-retry), and hands a TurnShell to
 // the TurnStrategy selected by the pinned runtime. The strategies own everything that
 // genuinely differs:
 //
@@ -23,7 +23,7 @@ import type { LlmPort } from "@funky/llm";
 import type { SandboxDriver, SandboxHandle } from "@funky/sandbox";
 import { SandboxUnavailableError } from "@funky/sandbox";
 import { type EventPayload, type EventType, makeEvent } from "./events";
-import { makeExecWithReboot } from "./exec";
+import { makeExec } from "./exec";
 import { harnessStrategy } from "./harness-strategy";
 import { nativeStrategy } from "./native-strategy";
 import type { Job } from "./queue";
@@ -77,7 +77,7 @@ export async function runTurn(job: Job, deps: TurnDeps): Promise<TurnOutcome> {
   // 3. The log IS the state. Read once; the shell's append keeps it current in memory.
   const events = await deps.store.readEvents(ns, sessionId);
 
-  // 4. Shared plumbing: conditional append, terminal-failure recorder, exec+reboot.
+  // 4. Shared plumbing: conditional append, terminal-failure recorder, exec+retry.
   const append = async <T extends EventType>(
     type: T,
     payload: EventPayload<T>,
@@ -99,11 +99,8 @@ export async function runTurn(job: Job, deps: TurnDeps): Promise<TurnOutcome> {
     return "failed";
   };
 
-  const exec = makeExecWithReboot({
-    db: deps.db,
+  const exec = makeExec({
     sandbox: deps.sandbox,
-    ns,
-    sessionId,
     handle: (session.sandboxHandle ?? null) as SandboxHandle | null,
   });
 

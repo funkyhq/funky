@@ -6,9 +6,9 @@
 // converge naturally — there is no subscriber registry, no in-memory coordination. Let
 // the filesystem be the bus.
 //
-// v1 simplifications (intentional, not gaps — see the handoff's non-goals): reboot is a
-// no-op (the FS is just a directory), and stderr is folded into stdout via `2>&1` (the
-// `stderr` ExecEvent variant exists for future drivers; subprocess emits stdout + exit).
+// v1 simplification (intentional, not a gap — see the handoff's non-goals): stderr is
+// folded into stdout via `2>&1` (the `stderr` ExecEvent variant exists for future
+// drivers; subprocess emits stdout + exit).
 
 import { spawn } from "node:child_process";
 import { type FileHandle, open } from "node:fs/promises";
@@ -29,11 +29,6 @@ export class SubprocessDriver implements SandboxDriver {
     const workdir = path.join(ROOT, sessionId);
     await fs.mkdir(workdir, { recursive: true });
     return { driver: "subprocess", workdir };
-  }
-
-  // Reboot is a no-op: the persistent FS is just `workdir`, so it survives trivially.
-  async reboot(handle: SandboxHandle): Promise<SandboxHandle> {
-    return handle;
   }
 
   // rm -rf, force ignores ENOENT → calling teardown twice never throws.

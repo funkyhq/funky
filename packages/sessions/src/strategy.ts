@@ -42,8 +42,9 @@ export type TurnShell = {
   /** Record a terminal turn_failed. Returns "conflict" if even that append loses the
    *  race (another worker owns the turn); "retry_later" if it could not be recorded. */
   terminalFail: (errorClass: ErrorClass, message: string) => Promise<TurnOutcome>;
-  /** Run one tool call under an idemKey with the single-reboot policy (exec.ts), bound
-   *  to this session's sandbox handle. The same idemKey re-attaches, never re-runs. */
+  /** Run one tool call under an idemKey with the single reconnect-and-retry policy
+   *  (exec.ts), bound to this session's sandbox handle. The same idemKey re-attaches,
+   *  never re-runs. */
   exec: (call: ToolCall, idemKey: string) => Promise<ExecResult>;
 };
 

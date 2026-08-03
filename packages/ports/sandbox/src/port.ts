@@ -29,9 +29,12 @@ export interface Executor {
 
 export interface SandboxDriver {
   provision(spec: ResolvedEnv, sessionId: string): Promise<SandboxHandle>;
-  reboot(handle: SandboxHandle): Promise<SandboxHandle>; // persistent FS survives
-  teardown(handle: SandboxHandle): Promise<void>; //         idempotent
-  connect(handle: SandboxHandle): Executor; //               sync; cheap; any worker from the handle
+  teardown(handle: SandboxHandle): Promise<void>; // idempotent
+  connect(handle: SandboxHandle): Executor; //       sync; cheap; any worker from the handle
+  // There is deliberately no reboot/repair operation: connect() must transparently reach
+  // a live-or-paused sandbox (drivers resume on inbound traffic), and a sandbox that is
+  // GONE cannot be repaired without losing the filesystem — that is SandboxGoneError,
+  // the caller's policy problem, never a driver-internal fresh provision.
 }
 
 /** Thrown when the Executor cannot OBSERVE a command's result — sandbox unreachable,

@@ -283,8 +283,8 @@ describe("runTurn — error policy", () => {
 
   it("last-attempt escalation: sandbox unobservable on the final attempt → turn_failed(SANDBOX_FATAL)", async () => {
     await seedAgentVersion();
-    // A handle pointing at a workdir that does not exist → exec throws SandboxUnavailable.
-    // reboot is a subprocess no-op, so the retry throws again and the error escalates.
+    // A handle pointing at a workdir that does not exist → exec throws SandboxUnavailable,
+    // and on the last delivery the error must escalate to a terminal event.
     await seedSession({
       provision: false,
       handle: { driver: "subprocess", workdir: "/tmp/funky/does-not-exist-" + randomUUID() },
@@ -564,9 +564,6 @@ describe("runProvision", () => {
       async provision(): Promise<SandboxHandle> {
         throw new SandboxUnavailableError("cannot reach the sandbox host");
       },
-      async reboot(h) {
-        return h;
-      },
       async teardown() {},
       connect() {
         throw new Error("unreachable");
@@ -598,9 +595,6 @@ describe("runProvision", () => {
     const brokenSandbox: SandboxDriver = {
       async provision(): Promise<SandboxHandle> {
         throw new SandboxUnavailableError("transient host hiccup");
-      },
-      async reboot(h) {
-        return h;
       },
       async teardown() {},
       connect() {
