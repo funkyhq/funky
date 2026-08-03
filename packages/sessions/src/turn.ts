@@ -18,7 +18,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@funky/db";
 import { type RuntimeConfig, agentConfigVersions, sessions } from "@funky/db/schema";
-import type { HarnessPort } from "@funky/harness/port";
+import type { HarnessRegistry } from "@funky/harness/port";
 import type { LlmPort } from "@funky/llm";
 import type { SandboxDriver, SandboxHandle } from "@funky/sandbox";
 import { SandboxUnavailableError } from "@funky/sandbox";
@@ -42,10 +42,11 @@ export type TurnDeps = {
   llm: LlmPort;
   sandbox: SandboxDriver;
   db: Db; // for reading session + agent version rows
-  /** Optional: agent versions with runtime {type:"claude-code"} dispatch to this
-   *  port (harness-strategy.ts). A harness session on a worker without a driver fails
-   *  the turn with a terminal HARNESS error. */
-  harness?: HarnessPort;
+  /** Optional: agent versions with a harness runtime (e.g. {type:"claude-code"})
+   *  dispatch to the registry entry named by their runtime type (harness-strategy.ts).
+   *  A harness session on a worker whose registry lacks its driver fails the turn
+   *  with a terminal HARNESS error. */
+  harnesses?: HarnessRegistry;
 };
 
 export type TurnOutcome =
@@ -132,19 +133,17 @@ export async function runTurn(job: Job, deps: TurnDeps): Promise<TurnOutcome> {
   }
 }
 
-/** Pinned runtime → strategy. null / {type:"native"} → the native loop; {type:"claude-code"}
- *  → the harness loop. Replaces the former inline dispatch branch. */
+/** Pinned runtime → strategy. null / {type:"native"} → the native loop; every other
+ *  runtime → the harness loop (one strategy for all vendors; only the DRIVER differs,
+ *  and harness-strategy resolves it from the registry — an unknown or unserved runtime
+ *  fails the turn with a terminal HARNESS error there, never a crash here). */
 function selectStrategy(runtime: RuntimeConfig | null): TurnStrategy {
   switch (runtime?.type) {
-    case "claude-code":
-      return harnessStrategy;
     case "native":
     case undefined: // null runtime column → native (the historical default)
       return nativeStrategy;
-    default: {
-      const never: never = runtime;
-      throw new Error(`unknown runtime: ${JSON.stringify(never)}`);
-    }
+    default:
+      return harnessStrategy;
   }
 }
 

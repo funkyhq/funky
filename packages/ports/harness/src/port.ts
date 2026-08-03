@@ -11,10 +11,15 @@
 // conditional-append conflict semantics, the write fence, and the commit — so the
 // crash-safety story lives in exactly one place. See DESIGN.md.
 
-import type { HarnessState, ModelConfig } from "@funky/db/schema";
+import type { HarnessDriver, HarnessState, ModelConfig } from "@funky/db/schema";
 import type { ContentBlock, ToolCall } from "@funky/sessions/events";
 
-export type { HarnessState };
+export type { HarnessDriver, HarnessState };
+
+/** The worker's driver registry: one port per harness runtime it can serve. A harness
+ *  session on a worker whose registry lacks its driver fails the turn with a terminal
+ *  HARNESS error (harness-strategy.ts). */
+export type HarnessRegistry = Partial<Record<HarnessDriver, HarnessPort>>;
 
 /** What one exec produced. Non-zero exit / timeout(124) / OOM(137) are RESULTS, not
  *  errors — same rule as the sandbox port. */

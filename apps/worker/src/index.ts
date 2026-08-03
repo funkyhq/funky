@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, Pool } from "pg";
 import { createDb } from "@funky/db";
-import { type HarnessPort, makeHarness } from "@funky/harness";
+import { type HarnessRegistry, makeHarness } from "@funky/harness";
 import { FakeLlm, type LlmConfig, makeLlm } from "@funky/llm";
 import { makeSandbox, type SandboxConfig } from "@funky/sandbox";
 import { EventStore, JobQueue } from "@funky/sessions";
@@ -30,17 +30,22 @@ const metrics = createMetrics();
 const listenClient = new Client({ connectionString: cfg.databaseUrl });
 await listenClient.connect();
 
-// The claude-code harness needs an Anthropic key regardless of FUNKY_LLM; without
-// one, harness sessions fail their turns with a terminal HARNESS error instead.
-const harness: HarnessPort | undefined = cfg.anthropicApiKey
-  ? makeHarness({
-      driver: "claude-code",
-      db,
-      apiKey: cfg.anthropicApiKey,
-      cwdRoot: cfg.harnessCwdRoot,
-      scratchRoot: cfg.harnessScratchRoot,
-    })
-  : undefined;
+// One registry entry per harness this worker can serve. The claude-code harness needs
+// an Anthropic key regardless of FUNKY_LLM; without one, claude-code sessions fail
+// their turns with a terminal HARNESS error instead.
+const harnesses: HarnessRegistry = {
+  ...(cfg.anthropicApiKey
+    ? {
+        "claude-code": makeHarness({
+          driver: "claude-code",
+          db,
+          apiKey: cfg.anthropicApiKey,
+          cwdRoot: cfg.harnessCwdRoot,
+          scratchRoot: cfg.harnessScratchRoot,
+        }),
+      }
+    : {}),
+};
 
 // OTel bridge over the shared metrics object; exporters per FUNKY_METRICS. The standard
 // OTEL_* env vars (endpoint, headers, interval, resource attributes) are read here and
@@ -57,7 +62,7 @@ const worker = startWorker({
   store,
   llm: makeLlm(llmConfig(cfg)), // fake by default — no API key needed
   sandbox: makeSandbox(sandboxConfig(cfg)), // docker by default — isolated, no account needed
-  ...(harness ? { harness } : {}),
+  harnesses,
   db,
   listenClient,
   concurrency: cfg.concurrency,
