@@ -102,6 +102,7 @@ describe("POST /v1/sessions", () => {
     expect(session).toMatchObject({
       type: "session",
       status: "provisioning",
+      activity: "idle", // derived: no turn job yet — the provision job is not activity
       agent: { id: agentId, version: 1 },
       environment_id: envId,
       title: null,
@@ -315,6 +316,73 @@ describe("GET /v1/sessions/:id/events", () => {
 });
 
 // ============================================================ namespace isolation
+
+// ==================================================================== activity
+
+// `activity` is derived at read time from sessions.status + the active turn job (see
+// deriveActivity's unit table in @funky/sessions). These drive the real read path over
+// HTTP and steer the queue rows directly, standing in for a worker's claims and nacks.
+describe("session activity (derived)", () => {
+  async function createSession(): Promise<string> {
+    const [agentId, envId] = await Promise.all([seedAgent(), seedEnv()]);
+    const res = await postJson("/v1/sessions", { agent: agentId, environment_id: envId });
+    return (await res.json()).id;
+  }
+
+  async function activityOf(id: string): Promise<string> {
+    const res = await app.request(`/v1/sessions/${id}`);
+    expect(res.status).toBe(200);
+    return (await res.json()).activity;
+  }
+
+  it("a fresh session is idle; a queued message flips it to running", async () => {
+    const id = await createSession();
+    expect(await activityOf(id)).toBe("idle");
+
+    const res = await postJson(`/v1/sessions/${id}/messages`, { content: "go" });
+    expect(res.status).toBe(202);
+    expect(await activityOf(id)).toBe("running"); // queued, attempts 0 — the dispatch sliver
+  });
+
+  it("a nacked delivery waiting out its backoff reads as rescheduling", async () => {
+    const id = await createSession();
+    await postJson(`/v1/sessions/${id}/messages`, { content: "go" });
+    await pg.pool.query(
+      "update turn_jobs set attempts = 1 where session_id = $1 and kind = 'turn'",
+      [id],
+    );
+    expect(await activityOf(id)).toBe("rescheduling");
+  });
+
+  it("a claimed job is running on a live lease, rescheduling once the lease expires", async () => {
+    const id = await createSession();
+    await postJson(`/v1/sessions/${id}/messages`, { content: "go" });
+    await pg.pool.query(
+      `update turn_jobs set state = 'running', attempts = 1,
+              lease_expires_at = now() + interval '60 seconds'
+       where session_id = $1 and kind = 'turn'`,
+      [id],
+    );
+    expect(await activityOf(id)).toBe("running");
+
+    await pg.pool.query(
+      "update turn_jobs set lease_expires_at = now() - interval '1 second' where session_id = $1 and kind = 'turn'",
+      [id],
+    );
+    expect(await activityOf(id)).toBe("rescheduling"); // dead worker; the queue will reclaim
+  });
+
+  it("an archived session is terminated, in get AND in list", async () => {
+    const id = await createSession();
+    const res = await app.request(`/v1/sessions/${id}/archive`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await activityOf(id)).toBe("terminated");
+
+    const page = await (await app.request("/v1/sessions?include_archived=true")).json();
+    const row = page.data.find((s: { id: string }) => s.id === id);
+    expect(row.activity).toBe("terminated");
+  });
+});
 
 describe("namespace isolation", () => {
   it("a cross-namespace read is a 404, identical to a nonexistent session", async () => {

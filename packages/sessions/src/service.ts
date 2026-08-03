@@ -28,7 +28,7 @@ import {
   type SessionEvent,
   textContent,
 } from "./events";
-import type { JobQueue } from "./queue";
+import type { ActiveTurnJob, JobQueue } from "./queue";
 import { ErrConflict, type EventStore } from "./store";
 
 // ---------------------------------------------------------------- API shapes
@@ -39,6 +39,8 @@ export type Session = {
   type: "session";
   id: string;
   status: SessionStatus;
+  /** Derived at read time from the event log + job queue — never stored. */
+  activity: SessionActivity;
   agent: { id: string; version: number };
   environment_id: string;
   title: string | null;
@@ -47,6 +49,16 @@ export type Session = {
   updated_at: string;
   archived_at: string | null;
 };
+
+/** What the agent is doing right now, as a pure function of durable state:
+ *    idle         — waiting for input; nothing queued or running.
+ *    running      — a turn is queued for dispatch or actively executing on a worker.
+ *    rescheduling — a delivery failed transiently (or its worker died); the queue is
+ *                   backing off before retrying automatically.
+ *    terminated   — the session has ended (status failed/archived) and accepts nothing.
+ *  DERIVED, never stored: a worker-maintained copy would go stale the moment a worker
+ *  died mid-turn, and the log + queue already hold the truth (see worker.ts's header). */
+export type SessionActivity = "idle" | "running" | "rescheduling" | "terminated";
 
 /** An event as the API and SSE stream expose it (§3 of the handoff). */
 export type ApiSessionEvent = {
@@ -96,7 +108,7 @@ export class SessionsService {
         if (input.id) {
           const existing = await this.findRaw(tx, ctx, input.id);
           if (existing) {
-            return this.resolveIdempotentCreate(existing, input, agentConfigId, agentVersion, envConfigId);
+            return await this.resolveIdempotentCreate(ctx, existing, input, agentConfigId, agentVersion, envConfigId);
           }
         }
         await tx.insert(sessions).values({
@@ -117,27 +129,30 @@ export class SessionsService {
           kind: "provision",
         });
         const created = await this.findRaw(tx, ctx, id);
-        return { session: toSession(created!), created: true };
+        // A fresh session has no turn job by construction (only the provision job,
+        // which activity ignores) — no queue read needed: it is idle.
+        return { session: toSession(created!, deriveActivity(created!, undefined)), created: true };
       });
     } catch (err) {
       // Two same-id creates raced: loser hits the PK. Re-resolve via idempotency.
       if (isUniqueViolation(err) && input.id) {
         const existing = await this.findRaw(this.db, ctx, input.id);
         if (existing) {
-          return this.resolveIdempotentCreate(existing, input, agentConfigId, agentVersion, envConfigId);
+          return await this.resolveIdempotentCreate(ctx, existing, input, agentConfigId, agentVersion, envConfigId);
         }
       }
       throw err;
     }
   }
 
-  private resolveIdempotentCreate(
+  private async resolveIdempotentCreate(
+    ctx: AuthContext,
     existing: SessionRow,
     input: CreateSessionInput,
     agentConfigId: string,
     agentVersion: number,
     envConfigId: string,
-  ): { session: Session; created: boolean } {
+  ): Promise<{ session: Session; created: boolean }> {
     const same =
       existing.agentConfigId === agentConfigId &&
       existing.agentVersion === agentVersion &&
@@ -147,14 +162,14 @@ export class SessionsService {
     if (!same) {
       throw new ConflictError("a session with this id exists with a different configuration");
     }
-    return { session: toSession(existing), created: false };
+    return { session: toSession(existing, await this.activityOf(ctx, existing)), created: false };
   }
 
   // ------------------------------------------------------------------- get
   async get(ctx: AuthContext, id: string): Promise<Session> {
     const row = await this.findRaw(this.db, ctx, id);
     if (!row) throw new NotFoundError("session not found");
-    return toSession(row);
+    return toSession(row, await this.activityOf(ctx, row));
   }
 
   // ------------------------------------------------------------------ list
@@ -174,8 +189,13 @@ export class SessionsService {
       .limit(opts.limit + 1);
 
     const page = rows.slice(0, opts.limit);
+    // ONE queue read for the whole page, not one per row.
+    const jobs = await this.queue.activeTurnJobStates(
+      ctx.namespace,
+      page.map((r) => r.id),
+    );
     return {
-      data: page.map(toSession),
+      data: page.map((r) => toSession(r, deriveActivity(r, jobs.get(r.id)))),
       has_more: rows.length > opts.limit,
       last_id: page.at(-1)?.id,
     };
@@ -284,6 +304,11 @@ export class SessionsService {
     if (!row) throw new NotFoundError("session not found");
   }
 
+  private async activityOf(ctx: AuthContext, row: SessionRow): Promise<SessionActivity> {
+    const jobs = await this.queue.activeTurnJobStates(ctx.namespace, [row.id]);
+    return deriveActivity(row, jobs.get(row.id));
+  }
+
   private async resolveAgent(
     ctx: AuthContext,
     ref: AgentRef,
@@ -331,11 +356,30 @@ export class SessionsService {
 
 // ------------------------------------------------------------ pure helpers
 
-function toSession(row: SessionRow): Session {
+/** Session status + its active turn job (if any) → activity. Exported for tests; the
+ *  full state table lives on SessionActivity's doc comment. */
+export function deriveActivity(
+  row: Pick<SessionRow, "status">,
+  job: ActiveTurnJob | undefined,
+): SessionActivity {
+  if (row.status === "failed" || row.status === "archived") return "terminated";
+  if (!job) return "idle";
+  if (job.state === "running") {
+    // A live lease is a worker actively driving the turn. An expired one is a dead
+    // worker whose job the queue will hand out again — retrying, effectively.
+    return job.leaseExpired ? "rescheduling" : "running";
+  }
+  // queued: attempts=0 is the just-enqueued dispatch sliver (a worker is about to pick
+  // it up); attempts>0 means a delivery came back and the queue is backing off first.
+  return job.attempts > 0 ? "rescheduling" : "running";
+}
+
+function toSession(row: SessionRow, activity: SessionActivity): Session {
   return {
     type: "session",
     id: row.id,
     status: row.status,
+    activity,
     agent: { id: row.agentConfigId, version: row.agentVersion },
     environment_id: row.envConfigId,
     title: row.title,

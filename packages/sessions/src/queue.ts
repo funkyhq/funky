@@ -31,6 +31,14 @@ export type Job = {
   maxAttempts: number;
 };
 
+/** What the activity derivation (service.ts) needs to know about a session's active
+ *  turn job. Read-only queue introspection; never used to drive work. */
+export type ActiveTurnJob = {
+  state: "queued" | "running";
+  attempts: number;
+  leaseExpired: boolean;
+};
+
 export class JobQueue {
   constructor(private readonly db: Db) {}
 
@@ -116,6 +124,45 @@ export class JobQueue {
              lease_expires_at = null
       where  id = ${jobId}
     `);
+  }
+
+  /** The activity read (service.ts): each session's single active turn job (queued or
+   *  running — sendMessage's 409 guard keeps it to at most one), if any. leaseExpired
+   *  is computed against the DATABASE clock — the same clock pull() reclaims by — so
+   *  the API never disagrees with the queue about worker liveness. */
+  async activeTurnJobStates(
+    ns: string,
+    sessionIds: string[],
+    tx?: Tx,
+  ): Promise<Map<string, ActiveTurnJob>> {
+    if (sessionIds.length === 0) return new Map();
+    const q: Pick<Db, "select"> = tx ?? this.db;
+    const rows = await q
+      .select({
+        sessionId: turnJobs.sessionId,
+        state: turnJobs.state,
+        attempts: turnJobs.attempts,
+        leaseExpired: sql<boolean>`coalesce(${turnJobs.leaseExpiresAt} < now(), false)`,
+      })
+      .from(turnJobs)
+      .where(
+        and(
+          eq(turnJobs.namespace, ns),
+          inArray(turnJobs.sessionId, sessionIds),
+          eq(turnJobs.kind, "turn"),
+          inArray(turnJobs.state, ["queued", "running"]),
+        ),
+      );
+    const out = new Map<string, ActiveTurnJob>();
+    for (const r of rows) {
+      if (r.state !== "queued" && r.state !== "running") continue; // narrowed by the query
+      out.set(r.sessionId, {
+        state: r.state,
+        attempts: Number(r.attempts),
+        leaseExpired: r.leaseExpired,
+      });
+    }
+    return out;
   }
 
   /** The API's one-in-flight-turn-per-session guard (→ 409). Counts only turn jobs

@@ -7,16 +7,17 @@
 export * from "./events";
 export { EventStore, ErrConflict, type AppendHook } from "./store";
 export { JobQueue, onWake, LEASE_MS, HEARTBEAT_MS, POLL_INTERVAL_MS } from "./queue";
-export type { Job } from "./queue";
+export type { ActiveTurnJob, Job } from "./queue";
 export { nextAction, type Action } from "./reducer";
 export { buildContext, runTurn, type TurnDeps, type TurnOutcome } from "./turn";
 export { runProvision } from "./provision";
 // Phase F: the sessions resource (SessionsService) + the API/SSE event mapper.
-export { SessionsService, toApiEvent } from "./service";
+export { SessionsService, deriveActivity, toApiEvent } from "./service";
 export type {
   AgentRef,
   ApiSessionEvent,
   CreateSessionInput,
   Session,
+  SessionActivity,
   SessionPage,
 } from "./service";
