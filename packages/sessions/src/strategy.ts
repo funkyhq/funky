@@ -53,8 +53,9 @@ export interface TurnStrategy {
    *  shell's shared error map. */
   run(shell: TurnShell): Promise<TurnOutcome>;
   /** Classify a strategy-specific error into an outcome. Return null to DEFER to the
-   *  shell's shared mapping (ErrConflict → conflict, SandboxUnavailable → SANDBOX_FATAL
-   *  / retry, else INTERNAL / retry). Runs inside the shell's catch, so terminalFail
-   *  and lastAttempt are reached through `shell`. */
+   *  shell's shared mapping (ErrConflict → conflict, SandboxGone → immediate
+   *  SANDBOX_FATAL, other SandboxUnavailable → SANDBOX_FATAL / retry, else INTERNAL /
+   *  retry). Runs inside the shell's catch, so terminalFail and lastAttempt are
+   *  reached through `shell`. */
   mapError?(err: unknown, shell: TurnShell): TurnOutcome | Promise<TurnOutcome> | null;
 }
