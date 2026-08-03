@@ -21,7 +21,7 @@ import { type RuntimeConfig, agentConfigVersions, sessions } from "@funky/db/sch
 import type { HarnessPort } from "@funky/harness/port";
 import type { LlmPort } from "@funky/llm";
 import type { SandboxDriver, SandboxHandle } from "@funky/sandbox";
-import { SandboxUnavailableError } from "@funky/sandbox";
+import { SandboxGoneError, SandboxUnavailableError } from "@funky/sandbox";
 import { type EventPayload, type EventType, makeEvent } from "./events";
 import { makeExec } from "./exec";
 import { harnessStrategy } from "./harness-strategy";
@@ -150,16 +150,19 @@ function selectStrategy(runtime: RuntimeConfig | null): TurnStrategy {
  *  anything it defers on lands here. */
 function mapError(err: unknown, shell: TurnShell): TurnOutcome | Promise<TurnOutcome> {
   if (err instanceof ErrConflict) return "conflict"; // someone else owns this turn
-  // TODO(sessions): SANDBOX_FATAL ends the TURN and should not end the SESSION. Losing the
-  // sandbox mid-exec is unrecoverable for *this* turn — the in-flight command's fate is
-  // unknowable, so it can be neither replayed nor safely re-run — but a later turn starts
-  // with nothing in flight, so it could re-provision and continue (no idemKey in flight ⇒
-  // no side effect to duplicate). Two things block that today: terminalFail leaves
-  // sessions.status alone, so the session keeps accepting messages and burns maxAttempts on
-  // each; and this branch cannot tell "destroyed" from "unreachable N times" (computesdk.ts
-  // maps both to one error), so it must not be made session-terminal before that distinction
-  // exists. Design: turn-start loss → re-provision + a sandbox_replaced event; mid-exec loss
-  // → fail the turn only.
+  // GONE is permanent: the provider positively reported the sandbox does not exist, so
+  // every further delivery would fail identically — record the terminal turn_failed NOW
+  // instead of burning the remaining attempts against a corpse. This ends the TURN, not
+  // the SESSION: whether a later turn may re-provision and continue (a sandbox_replaced
+  // event — nothing is in flight at turn start, so there is no side effect to duplicate)
+  // is a deliberately separate decision; until then the session keeps its handle and each
+  // new message fails fast the same way.
+  if (err instanceof SandboxGoneError) {
+    return shell.terminalFail("SANDBOX_FATAL", err.message);
+  }
+  // Merely unreachable (or ambiguous): transient by classification, so the queue's
+  // backoff owns the retry. The last attempt still records a terminal event — a sandbox
+  // that stays unreachable forever must never hang the session silently.
   if (err instanceof SandboxUnavailableError) {
     return shell.lastAttempt ? shell.terminalFail("SANDBOX_FATAL", err.message) : "retry_later";
   }

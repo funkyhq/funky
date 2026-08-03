@@ -23,10 +23,12 @@ import {
   LlmPermanentError,
 } from "@funky/llm";
 import {
+  type Executor,
   type SandboxDriver,
   type SandboxHandle,
   SubprocessDriver,
   SandboxUnavailableError,
+  SandboxUnreachableError,
 } from "@funky/sandbox";
 import {
   type EventPayload,
@@ -281,10 +283,11 @@ describe("runTurn — error policy", () => {
     expect((await log()).map((e) => e.type)).toEqual(["user_message"]);
   });
 
-  it("last-attempt escalation: sandbox unobservable on the final attempt → turn_failed(SANDBOX_FATAL)", async () => {
+  it("a GONE sandbox → turn_failed(SANDBOX_FATAL) on the FIRST attempt, no retries", async () => {
     await seedAgentVersion();
-    // A handle pointing at a workdir that does not exist → exec throws SandboxUnavailable,
-    // and on the last delivery the error must escalate to a terminal event.
+    // A handle pointing at a workdir that does not exist → the subprocess driver reports
+    // GONE (positive evidence). Every further delivery would fail identically, so the
+    // terminal event lands immediately instead of burning the remaining attempts.
     await seedSession({
       provision: false,
       handle: { driver: "subprocess", workdir: "/tmp/funky/does-not-exist-" + randomUUID() },
@@ -292,8 +295,8 @@ describe("runTurn — error policy", () => {
     await seedUserMessage();
 
     const llm = scriptLlm([{ content: "", toolCall: exec("echo hi") }]);
-    const outcome = await runTurn(job({ attempts: 5, maxAttempts: 5 }), deps(llm));
-    expect(outcome).toBe("failed"); // never a silent hang: the session gets a terminal event
+    const outcome = await runTurn(job({ attempts: 1, maxAttempts: 5 }), deps(llm));
+    expect(outcome).toBe("failed"); // fail fast: attempts 1 of 5, terminal anyway
 
     const events = await log();
     const last = events.at(-1) as SessionEvent<"turn_failed">;
@@ -303,16 +306,13 @@ describe("runTurn — error policy", () => {
     expect(events.some((e) => e.type === "assistant_message")).toBe(true);
   });
 
-  it("non-final sandbox failure → 'retry_later' (no terminal event, the queue backs off)", async () => {
+  it("non-final UNREACHABLE sandbox → 'retry_later' (no terminal event, the queue backs off)", async () => {
     await seedAgentVersion();
-    await seedSession({
-      provision: false,
-      handle: { driver: "subprocess", workdir: "/tmp/funky/does-not-exist-" + randomUUID() },
-    });
+    await seedSession();
     await seedUserMessage();
 
     const llm = scriptLlm([{ content: "", toolCall: exec("echo hi") }]);
-    const outcome = await runTurn(job({ attempts: 1, maxAttempts: 5 }), deps(llm));
+    const outcome = await runTurn(job({ attempts: 1, maxAttempts: 5 }), deps(llm, unreachableSandbox()));
     expect(outcome).toBe("retry_later");
 
     const events = await log();
@@ -320,7 +320,49 @@ describe("runTurn — error policy", () => {
     expect(events.some((e) => e.type === "turn_failed")).toBe(false);
     expect(events.some((e) => e.type === "assistant_message")).toBe(true);
   });
+
+  it("UNREACHABLE on the final attempt → turn_failed(SANDBOX_FATAL), never a silent hang", async () => {
+    await seedAgentVersion();
+    await seedSession();
+    await seedUserMessage();
+
+    const llm = scriptLlm([{ content: "", toolCall: exec("echo hi") }]);
+    const outcome = await runTurn(job({ attempts: 5, maxAttempts: 5 }), deps(llm, unreachableSandbox()));
+    expect(outcome).toBe("failed");
+
+    const last = (await log()).at(-1) as SessionEvent<"turn_failed">;
+    expect(last.type).toBe("turn_failed");
+    expect(last.payload.error_class).toBe("SANDBOX_FATAL");
+  });
 });
+
+/** A sandbox whose every exec is a transport failure — transient by classification, so
+ *  the turn loop must lean on the queue's backoff rather than fail the session. */
+function unreachableSandbox(): SandboxDriver {
+  const executor: Executor = {
+    exec: () =>
+      (async function* () {
+        throw new SandboxUnreachableError("host unreachable");
+      })(),
+    attach: () =>
+      (async function* () {
+        throw new SandboxUnreachableError("host unreachable");
+      })(),
+    async readFile(): Promise<Uint8Array> {
+      throw new SandboxUnreachableError("host unreachable");
+    },
+    async writeFile() {
+      throw new SandboxUnreachableError("host unreachable");
+    },
+  };
+  return {
+    async provision() {
+      throw new Error("provision is not under test");
+    },
+    async teardown() {},
+    connect: () => executor,
+  };
+}
 
 // ================================================================= conflict
 
