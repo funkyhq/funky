@@ -195,7 +195,12 @@ function CreateSessionModal({
           value={agentId}
           options={agents.map((a) => ({
             value: a.id,
-            label: a.runtime?.type === 'claude-code' ? `${a.name} · Claude Code` : a.name,
+            label:
+              a.runtime?.type === 'claude-code'
+                ? `${a.name} · Claude Code`
+                : a.runtime?.type === 'pi'
+                  ? `${a.name} · Pi`
+                  : a.name,
           }))}
           onChange={setAgentId}
         />

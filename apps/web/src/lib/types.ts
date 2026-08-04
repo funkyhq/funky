@@ -18,9 +18,11 @@ export type ModelConfig = {
   temperature?: number
 }
 
-// How an agent runs its turns: 'native' = Funky's built-in loop; 'claude-code' = inside
-// the Claude Agent SDK (the harness). claude-code requires an anthropic model.
-export type RuntimeConfig = { type: 'native' } | { type: 'claude-code' }
+// How an agent runs its turns: 'native' = Funky's built-in loop; anything else names a
+// vendor harness. claude-code requires an anthropic model; pi supports anthropic,
+// openai, and togetherai models.
+export type RuntimeKind = 'native' | 'claude-code' | 'pi'
+export type RuntimeConfig = { type: RuntimeKind }
 
 export type Agent = {
   type: 'agent'

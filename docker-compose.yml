@@ -85,9 +85,10 @@ services:
     # workloads prefer FUNKY_SANDBOX=e2b (remote) or run the containers under gVisor/Kata.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    # RAM-backed scratch for the claude-code harness: each in-flight harness turn keeps
-    # its DISPOSABLE local session copy here (the durable transcript is in Postgres).
-    # tmpfs means a dead worker leaves nothing behind — statelessness by construction.
+    # RAM-backed scratch for the harnesses (claude-code, pi): each in-flight harness
+    # turn keeps its DISPOSABLE local session copy here (the durable transcript is in
+    # Postgres). tmpfs means a dead worker leaves nothing behind — statelessness by
+    # construction.
     tmpfs:
       - /dev/shm/funky-harness
     environment:
@@ -109,8 +110,9 @@ services:
       OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
       OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
-      # Harness (agents with runtime=claude-code). CWD_ROOT must be identical across
-      # every worker replica — the transcript store's key derives from it.
+      # Harnesses (agents with runtime=claude-code or runtime=pi). CWD_ROOT is
+      # claude-code-only and must be identical across every worker replica — the
+      # transcript store's key derives from it.
       FUNKY_HARNESS_SCRATCH_ROOT: /dev/shm/funky-harness
       FUNKY_HARNESS_CWD_ROOT: /tmp/funky-harness-cwd
     depends_on:
