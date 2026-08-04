@@ -90,11 +90,12 @@ describe("makeSandboxOps — pi tool primitives over the exec bridge", () => {
     ).rejects.toThrow(/too large/);
   });
 
-  it("writeFile: content crosses as a base64 heredoc, decoded inside the sandbox", async () => {
+  it("writeFile: content crosses as base64 on a SINGLE line (the exec wrapper breaks heredocs)", async () => {
     const { runExec, calls } = fakeRunExec();
     await makeSandboxOps(runExec).write.writeFile("/workspace/out.txt", "line1\nline2\n");
     const b64 = Buffer.from("line1\nline2\n").toString("base64");
-    expect(calls[0]!.cmd).toBe(`base64 -d > 'out.txt' <<'FUNKY_B64'\n${b64}\nFUNKY_B64`);
+    expect(calls[0]!.cmd).toBe(`printf '%s' '${b64}' | base64 -d > 'out.txt'`);
+    expect(calls[0]!.cmd).not.toContain("\n");
   });
 
   it("mkdir and access compile to mkdir -p / test probes", async () => {

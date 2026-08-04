@@ -140,6 +140,7 @@ describe.skipIf(!hasKey)("PiHarness LIVE smoke (real Anthropic + subprocess sand
 
     const outcome = await runTurn(job(), deps());
     if (outcome !== "completed") {
+      // Live-debug aid: the recorded failure (if any) is the fastest diagnosis.
       const evts = await store.readEvents(NS, sessionId);
       console.log("LAST EVENTS:", JSON.stringify(evts.slice(-3), null, 2));
     }

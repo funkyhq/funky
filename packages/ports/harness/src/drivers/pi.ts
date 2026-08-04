@@ -224,7 +224,14 @@ export class PiHarness implements HarnessPort {
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
     });
-    await modelRuntime.setRuntimeApiKey(piProvider, apiKey);
+    // setRuntimeApiKey registers the credential SYNCHRONOUSLY; the awaited tail is
+    // only an availability refresh, which can stall for minutes on a hung provider
+    // probe (observed live: a ~300s undici headers timeout). The driver never
+    // consumes availability — the model is resolved from the catalog and streamed
+    // directly — so cap the wait and move on; a late rejection is swallowed.
+    const setKey = modelRuntime.setRuntimeApiKey(piProvider, apiKey);
+    setKey.catch(() => {});
+    await Promise.race([setKey, new Promise((r) => setTimeout(r, 15_000))]);
     const model = modelRuntime.getModel(piProvider, req.model.model);
     if (!model) {
       throw new HarnessPermanentError(
@@ -321,8 +328,8 @@ export class PiHarness implements HarnessPort {
       // Durable before the model speaks: the initial entries land behind the fence,
       // so a fenced zombie dies HERE, before it can prompt.
       await store.flush(sdkSessionId, fileEntries());
-      await session.prompt(req.prompt);
-      errorMessage = session.state.errorMessage;
+        await session.prompt(req.prompt);
+        errorMessage = session.state.errorMessage;
     } catch (err) {
       if (fatal === undefined) fatal = classify(err);
     } finally {
@@ -375,10 +382,12 @@ export function makeSandboxOps(runExec: (cmd: string, timeoutMs?: number) => Pro
     return Buffer.from(res.output.replace(/\s+/g, ""), "base64");
   };
   const writeFileOp = async (absolutePath: string, content: string): Promise<void> => {
+    // Single line ON PURPOSE: the sandbox executors wrap the command inline
+    // (`(<cmd>) > out 2>&1; …`), which breaks a trailing heredoc terminator — the
+    // shell then waits on stdin forever. printf is a shell builtin, so the payload
+    // is not subject to execve argv limits.
     const b64 = Buffer.from(content, "utf8").toString("base64");
-    const res = await runExec(
-      `base64 -d > ${sh(sbPath(absolutePath))} <<'FUNKY_B64'\n${b64}\nFUNKY_B64`,
-    );
+    const res = await runExec(`printf '%s' '${b64}' | base64 -d > ${sh(sbPath(absolutePath))}`);
     if (res.exitCode !== 0) {
       throw new Error(res.output.trim() || `write failed (exit ${res.exitCode}): ${absolutePath}`);
     }
