@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Cpu } from 'lucide-react'
 import { agents as agentsApi } from '../lib/api'
-import type { Agent } from '../lib/types'
+import type { Agent, RuntimeKind } from '../lib/types'
 import { DEFAULT_MODEL_LABEL, modelConfigFor, modelLabel } from '../lib/models'
 import { errMsg, initials } from '../lib/format'
 import { Avatar, Badge, Button, Checkbox, Modal, Textarea, Input } from '../ui/ui'
@@ -21,13 +21,16 @@ export function Agents({
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [model, setModel] = useState(DEFAULT_MODEL_LABEL)
-  const [runtime, setRuntime] = useState<'native' | 'claude-code'>('native')
+  const [runtime, setRuntime] = useState<RuntimeKind>('native')
   const [prompt, setPrompt] = useState('')
   const [saving, setSaving] = useState(false)
 
   function chooseModel(next: string) {
     setModel(next)
-    if (modelConfigFor(next).provider !== 'anthropic') setRuntime('native')
+    // claude-code is anthropic-only; pi and native follow the model anywhere.
+    if (modelConfigFor(next).provider !== 'anthropic') {
+      setRuntime((r) => (r === 'claude-code' ? 'native' : r))
+    }
   }
 
   async function create() {
@@ -96,7 +99,11 @@ export function Agents({
                   <div className="row__sub">{modelLabel(a.model)}</div>
                 </div>
                 <div className="row__excerpt">{a.system_prompt}</div>
-                {a.runtime?.type === 'claude-code' ? <Badge tone="neutral">Claude Code</Badge> : null}
+                {a.runtime?.type === 'claude-code' ? (
+                  <Badge tone="neutral">Claude Code</Badge>
+                ) : a.runtime?.type === 'pi' ? (
+                  <Badge tone="neutral">Pi</Badge>
+                ) : null}
                 <Badge tone="green" dot>
                   Ready
                 </Badge>

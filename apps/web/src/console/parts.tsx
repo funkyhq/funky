@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { AlertTriangle, Archive, Cpu, Layers, MessageSquare, MoreVertical, X, Zap } from 'lucide-react'
 import { Button, Select, Textarea } from '../ui/ui'
 import { MODEL_OPTIONS } from '../lib/models'
-import type { Provider } from '../lib/types'
+import type { Provider, RuntimeKind } from '../lib/types'
 import type { NetworkMode } from '../lib/network'
 import { useClickOutside } from './data'
 
@@ -110,15 +110,15 @@ export function ModelField({ value, onChange }: { value: string; onChange: (v: s
   )
 }
 
-// How the agent runs its turns. Claude Code is only valid for Anthropic models; Together
-// models use Funky's provider-neutral native loop.
+// How the agent runs its turns. Claude Code is only valid for Anthropic models; pi
+// supports every provider the console offers models for.
 export function RuntimeField({
   value,
   onChange,
   modelProvider,
 }: {
-  value: 'native' | 'claude-code'
-  onChange: (v: 'native' | 'claude-code') => void
+  value: RuntimeKind
+  onChange: (v: RuntimeKind) => void
   modelProvider: Provider
 }) {
   const claudeCodeAvailable = modelProvider === 'anthropic'
@@ -134,15 +134,21 @@ export function RuntimeField({
             label: 'Claude Code — run turns inside the Claude Agent SDK',
             disabled: !claudeCodeAvailable,
           },
+          { value: 'pi', label: 'Pi — run turns inside the pi coding agent' },
         ]}
-        onChange={(v) => onChange(v as 'native' | 'claude-code')}
+        onChange={(v) => onChange(v as RuntimeKind)}
       />
       {value === 'claude-code' ? (
         <p className="model-hint">
           Runs each turn inside Claude Code; needs <code>ANTHROPIC_API_KEY</code> on the worker.
         </p>
+      ) : value === 'pi' ? (
+        <p className="model-hint">
+          Runs each turn inside the pi coding agent; needs the model provider’s API key on the
+          worker.
+        </p>
       ) : !claudeCodeAvailable ? (
-        <p className="model-hint">Together AI models run with the Native runtime.</p>
+        <p className="model-hint">Claude Code is only available for Anthropic models.</p>
       ) : null}
     </div>
   )

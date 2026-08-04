@@ -1,5 +1,5 @@
 import { modelConfigFor } from '../lib/models'
-import type { NetworkPolicy } from '../lib/types'
+import type { NetworkPolicy, RuntimeKind } from '../lib/types'
 
 // The Quick Start's right-hand code panel. Unlike the prototype's illustrative sample, this
 // mirrors the *real* requests the console makes (and the README quickstart), so a developer
@@ -8,7 +8,7 @@ export type CurlState = {
   step: number
   agentName: string
   model: string
-  runtime: 'native' | 'claude-code'
+  runtime: RuntimeKind
   systemPrompt: string
   envName: string
   envDesc: string
@@ -27,9 +27,9 @@ export function buildCurl(st: CurlState): string {
   ].join('\n')
 
   if (st.step >= 1) {
-    // claude-code runs turns inside the Claude Agent SDK (the harness); native omits the field.
+    // A harness runtime (claude-code, pi) rides the create body; native omits the field.
     const runtimeLine =
-      st.runtime === 'claude-code' ? `,\n  "runtime": { "type": "claude-code" }` : ''
+      st.runtime !== 'native' ? `,\n  "runtime": { "type": "${st.runtime}" }` : ''
     code += `\n\n# 1. an agent: who it is and what model it uses
 AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
   "name": ${j(st.agentName || 'my agent')},

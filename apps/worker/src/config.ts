@@ -40,17 +40,19 @@ const EnvSchema = z
     // e2b: an isolated remote sandbox per session. (The in-process subprocess driver still
     // exists for the offline test suites, but is not a production sandbox option.)
     FUNKY_SANDBOX: z.enum(["docker", "e2b"]).default("docker"),
-    // Used by the direct Anthropic provider and by agents with runtime=claude-code (the
-    // harness driver is only constructed when this key is present).
+    // Used by the direct Anthropic provider and by the harnesses (runtime=claude-code
+    // needs this key; runtime=pi accepts it among others). A harness driver is only
+    // constructed when a key it can use is present.
     ANTHROPIC_API_KEY: optionalSecret,
-    // Direct AI SDK provider credentials. At least one supported provider key is required
-    // when the real driver is enabled; each agent still selects its own provider/model.
+    // Direct AI SDK provider credentials, also accepted by the pi harness. At least one
+    // supported provider key is required when the real driver is enabled; each agent
+    // still selects its own provider/model.
     OPENAI_API_KEY: optionalSecret,
     TOGETHER_API_KEY: optionalSecret,
-    // Harness (claude-code) knobs. CWD_ROOT must be identical across the worker
-    // fleet — the harness derives the transcript store's projectKey from it.
-    // SCRATCH_ROOT holds the disposable per-attempt local session copy; point it at
-    // RAM-backed storage (tmpfs) in production.
+    // Harness knobs. CWD_ROOT is claude-code-only and must be identical across the
+    // worker fleet — that harness derives the transcript store's projectKey from it.
+    // SCRATCH_ROOT holds every harness's disposable per-attempt local session copy;
+    // point it at RAM-backed storage (tmpfs) in production.
     FUNKY_HARNESS_CWD_ROOT: z.string().min(1).default("/tmp/funky-harness-cwd"),
     FUNKY_HARNESS_SCRATCH_ROOT: z.string().min(1).default("/tmp/funky-harness-scratch"),
     // Required ONLY when FUNKY_SANDBOX=e2b (docker needs no account).

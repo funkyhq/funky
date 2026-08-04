@@ -3,6 +3,7 @@ import { Check } from 'lucide-react'
 import { agents as agentsApi, environments as envsApi, sessions as sessApi } from '../lib/api'
 import { DEFAULT_MODEL_LABEL, modelConfigFor } from '../lib/models'
 import { networkPolicy, networkSummary, type NetworkMode } from '../lib/network'
+import type { RuntimeKind } from '../lib/types'
 import { errMsg, initials } from '../lib/format'
 import { Avatar, Badge, Button, CodeBlock, Input, Textarea } from '../ui/ui'
 import { ModelField, NetworkFields, RuntimeField } from './parts'
@@ -16,7 +17,7 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
   const [step, setStep] = useState(1)
   const [agentName, setAgentName] = useState('Funky Assistant')
   const [model, setModel] = useState(DEFAULT_MODEL_LABEL)
-  const [runtime, setRuntime] = useState<'native' | 'claude-code'>('native')
+  const [runtime, setRuntime] = useState<RuntimeKind>('native')
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_PROMPT)
   const [envName, setEnvName] = useState('basic')
   const [envDesc, setEnvDesc] = useState('default dev box')
@@ -31,7 +32,10 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
 
   function chooseModel(nextModel: string) {
     setModel(nextModel)
-    if (modelConfigFor(nextModel).provider !== 'anthropic') setRuntime('native')
+    // claude-code is anthropic-only; pi and native follow the model anywhere.
+    if (modelConfigFor(nextModel).provider !== 'anthropic') {
+      setRuntime((r) => (r === 'claude-code' ? 'native' : r))
+    }
   }
 
   function guardStep1() {
@@ -155,7 +159,10 @@ export function QuickStart({ onLaunch }: { onLaunch: (sessionId: string) => Prom
               <div className="review">
                 <ReviewRow label="Agent" value={agentName} strong />
                 <ReviewRow label="Model" value={model} mono />
-                <ReviewRow label="Runtime" value={runtime === 'claude-code' ? 'Claude Code' : 'Native'} />
+                <ReviewRow
+                  label="Runtime"
+                  value={{ native: 'Native', 'claude-code': 'Claude Code', pi: 'Pi' }[runtime]}
+                />
                 <ReviewRow label="Environment" value={envName} mono />
                 <ReviewRow label="Network" value={networkSummary(network)} />
                 <ReviewRow label="System prompt" value={systemPrompt} />

@@ -1,13 +1,17 @@
 # The Harness Port — running managed agent SDKs on Funky's stateless runtime
 
-Status: **implemented** (v1). First driver: **Claude Code**
-(`@anthropic-ai/claude-agent-sdk`). See §11 for the map from this document to the code
-and the tests that pin each guarantee.
+Status: **implemented** (v1). Drivers: **Claude Code**
+(`@anthropic-ai/claude-agent-sdk`) and **pi** (`@earendil-works/pi-coding-agent`,
+[pi.dev](https://pi.dev)). See §11 for the map from this document to the code and the
+tests that pin each guarantee.
 
-This document explains what the harness port is, how the Claude Code driver keeps
-Funky's core promise — **stateless, crash-resumable turn execution with exactly-once
-command execution** — while the agentic loop runs inside a closed binary, and which
-alternatives were considered and rejected.
+This document explains what the harness port is, how the drivers keep Funky's core
+promise — **stateless, crash-resumable turn execution with exactly-once command
+execution** — while the agentic loop runs inside a vendor harness, and which
+alternatives were considered and rejected. §§2–9 walk the design through the first
+driver (Claude Code, a closed binary the SDK drives over a subprocess); §9b describes
+where the pi driver — an open TypeScript loop that runs in-process — lands differently
+while preserving every invariant in §10.
 
 ---
 
@@ -112,9 +116,12 @@ Division of labor (mirrors the llm/sandbox ports):
 ### Selection
 
 Agent behavior is versioned, so the switch lives on `agent_config_versions.runtime`
-(jsonb): `null` / `{"type":"native"}` → the existing loop; `{"type":"claude-code"}` →
-the harness. Sessions pin the agent version, so a session's runtime never changes
-mid-life.
+(jsonb): `null` / `{"type":"native"}` → the existing loop; any other type names a
+harness driver (`{"type":"claude-code"}`, `{"type":"pi"}`). The worker holds a
+**registry** (`HarnessRegistry`) keyed by runtime type — one strategy serves every
+harness; only the driver differs. A session whose runtime names a driver the worker
+doesn't serve fails the turn with a terminal HARNESS error. Sessions pin the agent
+version, so a session's runtime never changes mid-life.
 
 ## 4. Exactly-once command execution
 
@@ -304,8 +311,18 @@ harness_transcript_entries
 sessions               + harness_attempt text?   — current fence token
                        + harness_state   jsonb?  — committed { driver, sdk_session_id } (cache/audit; tip query is authoritative)
 
-agent_config_versions  + runtime jsonb?          — null/native | {"type":"claude-code"}
+agent_config_versions  + runtime jsonb?          — null/native | {"type":"claude-code"} | {"type":"pi"}
 ```
+
+The table is driver-neutral; per-driver row shapes:
+
+| | claude-code | pi |
+|---|---|---|
+| `project_key` | SDK-derived from the sanitized cwd | the constant `"pi"` |
+| `sdk_session_id` | new id per resume (lineage via tip) | stable for the session's life |
+| `entry_uuid` | the SDK entry's `uuid` (nullable) | the pi entry's `id` (always set; the header row uses the session id) |
+| `entry` | SDK `SessionStoreEntry`, verbatim | pi `FileEntry` (header or session entry), verbatim |
+| `subpath` | `''` main, `subagents/…` | always `''` |
 
 Event model additions (`packages/sessions/src/events.ts`):
 
@@ -348,6 +365,64 @@ not projected in v1 (additive `ContentBlock` kind later).
   default `FUNKY_WORKER_CONCURRENCY=50` is sized for the native loop; deployments
   running mostly harness sessions should size it down.
 
+## 9b. Driver specifics (pi)
+
+pi's loop is open TypeScript embedded in-process (`createAgentSession`) — no
+subprocess, no closed binary. Two structural differences from Claude Code, one
+guarantee-preserving consequence each:
+
+**Tool surface: replacement, not denial.** pi's four default tools (`read`, `bash`,
+`edit`, `write`) are re-created over the SDK's own `*Operations` remote-execution seam
+and passed as `customTools`, shadowing the built-ins by name — the model keeps pi's
+native tool surface, but every primitive (a bash command, a file read, a write, an
+edit's read-modify-write) compiles to a POSIX shell command that funnels through the
+same journaled exec bridge as claude-code's MCP tool: append the decision (seq →
+idemKey) → `Executor.exec` → append the result. File content crosses the exec channel
+base64-encoded (the channel is a combined text stream; base64 keeps bytes intact — a
+truncated read refuses to return corrupt bytes rather than decode a partial stream).
+Nothing the model does can reach the worker host; §4's case analysis applies verbatim
+because the bridge is the same.
+
+**Transcript: driver-owned mirror, not an SDK adapter.** pi's `SessionManager` owns a
+local JSONL session file (header line + tree-structured entries) and has no pluggable
+store, so the driver owns the mirror instead of adapting one: the file lives on
+per-attempt scratch; every `FileEntry` — the header included, so the file is
+byte-reconstructible — is flushed to `harness_transcript_entries` behind the same
+guarded INSERT as §5.1 (fence check fused into the write, dedupe on the pi entry id).
+Resume materializes the file from Postgres and `SessionManager.open()`s it; pi keeps
+its session id across resumes, so the §5.2 tip query works unchanged. Because flushes
+are driver-driven and awaited — before the model is prompted, on every appended entry,
+and once more before the turn returns — a fence loss surfaces synchronously (no
+`mirror_error` indirection) and a committed turn never sits on a holed transcript
+(§10.4).
+
+Driver-level details:
+
+- **cwd is a fiction.** pi resolves tool paths against its cwd, but commands run in
+  the sandbox's own workdir. The driver pins pi's cwd to the constant `/workspace`;
+  the operations layer translates paths under it back to relative form, which the
+  sandbox resolves against its real workdir. Absolute paths outside the fiction pass
+  through untouched. Deterministic across the fleet by construction — pi needs no
+  `FUNKY_HARNESS_CWD_ROOT`.
+- **Isolation.** Per-attempt `agentDir` on scratch; `DefaultResourceLoader` with
+  extensions/skills/prompt-templates/themes/context-files disabled and the pinned
+  agent version's prompt as the base system prompt (pi appends its tool docs); an
+  isolated `ModelRuntime` whose only credential is the key injected for this turn
+  (`setRuntimeApiKey` — no host auth.json, no env fallback, no network refresh).
+- **Providers.** anthropic, openai, and togetherai (mapped to pi-ai's `together`) —
+  the providers a worker can hold keys for. Anything else, a missing key, or a model
+  id absent from pi-ai's catalog is a `HarnessPermanentError`. The API edge enforces
+  the same set on `runtime: {"type":"pi"}`.
+- **maxTurns.** pi's loop has no cap, so the driver counts assistant turns and aborts
+  a turn that would START past `tool_policy.max_iterations` — a run that finishes
+  exactly on budget is a success; the abort maps to `turn_failed(BUDGET)` with the
+  transcript tip committed, like claude-code's `error_max_turns`.
+- **Failures.** After the run, `AgentState.errorMessage` (pi's own retry budget
+  already exhausted) classifies as auth-looking → permanent, else transient — same
+  taxonomy, same worker outcomes (§6).
+- Concurrency note: pi runs in-process (no subprocess per turn), so it is lighter
+  than claude-code under the same `FUNKY_WORKER_CONCURRENCY`.
+
 ## 10. Invariants (the contract, in one place)
 
 1. Every exec decision is in the log **before** the sandbox sees it; its idemKey is
@@ -374,13 +449,18 @@ Where each piece of this document lives, and the test that pins it:
 | Fence acquisition + recovery + commit (§4.3, §5) | `harnessStrategy` in `packages/sessions/src/harness-strategy.ts` | `packages/sessions/src/harness-turn.test.ts` — the two ★ crash-resume tests are the exactly-once proof |
 | Shared turn shell + strategy seam (§3) | `runTurn` / `selectStrategy` in `packages/sessions/src/turn.ts`; `TurnShell` / `TurnStrategy` in `packages/sessions/src/strategy.ts`; `nativeStrategy` in `native-strategy.ts` | driven through `runTurn` by `turn.test.ts` + `harness-turn.test.ts` |
 | Shared exec/reboot policy (§4.1) | `packages/sessions/src/exec.ts` (extracted from `turn.ts`, used by both strategies) | native `turn.test.ts` + chaos suite (unchanged) |
+| pi driver: in-process session, sandbox ops, maxTurns, projection (§9b) | `PiHarness` + `makeSandboxOps` in `src/drivers/pi.ts` | `src/pi.test.ts` (fake `createSessionFn` seam; real SessionManager/ModelRuntime) |
+| pi fenced transcript mirror + materialization (§9b) | `PiTranscriptStore` / `loadPiTranscript` in `src/drivers/pi-store.ts` | `src/pi-store.test.ts` ("★ the write fence") |
+| Driver registry keyed by runtime (§3) | `HarnessRegistry` in `src/port.ts`; lookup in `packages/sessions/src/harness-strategy.ts` | harness-turn test "the registry keys by runtime type" |
 | Schema (§8) | `packages/db/schema/harness.ts`, `sessions.ts`, `configs.ts`; migration `20260718201401_harness_port` | `packages/db/src/schema.test.ts` |
 | Event model additions (§8) | `harness_attempt_started` + `HARNESS` error class in `packages/sessions/src/events.ts` | `events.test.ts` round-trip |
 | API edge (`runtime` on agents) (§3, §9) | `apps/api/src/routes/agents.ts`, `packages/configs/{types,service}.ts` | `apps/api/test/agents.test.ts` |
 | Worker wiring + env knobs (§9) | `apps/worker/src/{index,config,worker}.ts`; compose tmpfs in `docker-compose.yml` | `apps/worker/test/config.test.ts` |
 
-Not covered offline: a live end-to-end run against the real Claude Code subprocess
-(needs `ANTHROPIC_API_KEY`). The driver's SDK-facing behavior is exercised through the
-`queryFn` test seam; the real subprocess's message cadence and resume-id behavior
-should be smoke-tested once per SDK upgrade (`resume` id changes are tolerated by
-design — the tip query accepts whatever id entries land under).
+Not covered offline: a live end-to-end run against a real model (needs a provider API
+key). Each driver's SDK-facing behavior is exercised through its test seam
+(claude-code: `queryFn`; pi: `createSessionFn` — though pi's SessionManager,
+ModelRuntime, and resource plumbing are real even in tests). The real message cadence
+and resume behavior should be smoke-tested once per SDK upgrade (claude-code `resume`
+id changes are tolerated by design — the tip query accepts whatever id entries land
+under; pi keeps one id, so its tip is trivially stable).

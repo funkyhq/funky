@@ -111,11 +111,17 @@ Now every session provisions an isolated [E2B](https://e2b.dev) sandbox, through
 [ComputeSDK](https://computesdk.com) so further providers can slot in behind the same
 driver.
 
-### Running an agent on the Claude Code harness
+### Running an agent on a harness (Claude Code or Pi)
 
-Agents can run their turns inside [Claude Code](https://code.claude.com/docs/en/agent-sdk)
-(the Agent SDK) instead of Funky's native loop — same sessions, same sandboxes, same
-durable event log. This is a self-contained walkthrough; no need to run the Quickstart first.
+Agents can run their turns inside a vendor coding agent instead of Funky's native loop —
+same sessions, same sandboxes, same durable event log. Two harnesses are supported:
+
+- **Claude Code** ([the Agent SDK](https://code.claude.com/docs/en/agent-sdk)) — requires
+  an Anthropic model and `ANTHROPIC_API_KEY` on the worker.
+- **Pi** ([pi.dev](https://pi.dev), the pi coding agent) — runs on Anthropic, OpenAI, or
+  Together AI models; the worker needs the matching provider key.
+
+This is a self-contained walkthrough; no need to run the Quickstart first.
 
 **1. Add your key to `.env`** (independent of `FUNKY_LLM`) and bring up the stack:
 
@@ -147,6 +153,9 @@ AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
   "runtime": { "type": "claude-code" }
 }' | jq -r .id)
 
+# — or the same agent on the Pi harness ("runtime": {"type": "pi"}), which also
+#   accepts openai and togetherai models
+
 # an environment, then a session on it
 EID=$(curl -s -X POST localhost:3000/v1/environments -H "$H" -H "$J" \
   -d '{"name":"basic","network":{"type":"unrestricted"}}' | jq -r .id)
@@ -161,13 +170,14 @@ curl -s -X POST localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
 
 You'll see a `harness_attempt_started` event, then the agent run commands in its sandbox
 (`assistant_message` → `tool_result`) and answer — the same event stream as a native turn.
-
-> The **Console** at http://localhost:5173 can *view* a harness session, but can't yet
-> *create* one — use the `curl` above to create the agent with `runtime`.
+(The **Console** at http://localhost:5173 can create harness agents too — pick the runtime
+in the agent form.)
 
 The harness's commands execute in the session's Funky sandbox (exactly-once, crash-safe),
-and the Claude Code transcript is stored in Funky's Postgres — so a session survives worker
-crashes and can be resumed by any worker, keeping turns fully stateless. Design and
+and the vendor transcript is stored in Funky's Postgres — so a session survives worker
+crashes and can be resumed by any worker, keeping turns fully stateless. Claude Code gets
+a single `exec` tool bridged into the sandbox; Pi keeps its native four-tool surface
+(`read`, `bash`, `edit`, `write`), each backed by the same sandbox bridge. Design and
 guarantees: [`packages/ports/harness/DESIGN.md`](packages/ports/harness/DESIGN.md).
 
 ### Worker metrics (Prometheus scrape or OpenTelemetry push)
