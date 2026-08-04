@@ -17,7 +17,8 @@ export type Agent = {
   system_prompt: string;
   model: ModelConfig;
   tool_policy: Record<string, unknown>;
-  /** null = the native loop; {"type":"claude-code"} = the Claude Code harness. */
+  /** null = the native loop; otherwise the vendor harness that drives turns
+   *  ({"type":"claude-code"} or {"type":"pi"}). */
   runtime: RuntimeConfig | null;
   created_at: string;
   updated_at: string;

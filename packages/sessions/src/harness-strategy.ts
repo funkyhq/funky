@@ -48,6 +48,7 @@ import { type TurnDeps, readMaxIterations } from "./turn";
  *  this worker can serve the driver. */
 const DRIVER_HINTS: Partial<Record<HarnessDriver, string>> = {
   "claude-code": " (is ANTHROPIC_API_KEY set?)",
+  pi: " (is ANTHROPIC_API_KEY, OPENAI_API_KEY, or TOGETHER_API_KEY set?)",
 };
 
 export const harnessStrategy: TurnStrategy = {

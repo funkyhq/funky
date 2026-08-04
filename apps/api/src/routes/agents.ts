@@ -28,11 +28,25 @@ const modelSchema = z
   })
   .strict();
 
-// How turns execute: omitted/null = the native loop; claude-code = the harness
-// (requires an anthropic model — enforced below, not at turn time).
+// How turns execute: omitted/null = the native loop; anything else names a vendor
+// harness. Each harness supports a subset of providers — enforced below (not at
+// turn time): claude-code requires anthropic; pi supports the providers a worker
+// can hold keys for.
 const runtimeSchema = z
-  .object({ type: z.enum(["native", "claude-code"]) })
+  .object({ type: z.enum(["native", "claude-code", "pi"]) })
   .strict();
+
+const PI_PROVIDERS = new Set(["anthropic", "openai", "togetherai"]);
+const runtimeSupportsModel = (
+  runtime: { type: string } | null | undefined,
+  provider: string,
+): boolean => {
+  if (runtime?.type === "claude-code") return provider === "anthropic";
+  if (runtime?.type === "pi") return PI_PROVIDERS.has(provider);
+  return true;
+};
+const RUNTIME_MODEL_MSG =
+  "runtime claude-code requires an anthropic model; runtime pi requires an anthropic, openai, or togetherai model";
 
 const createFields = z
   .object({
@@ -48,8 +62,8 @@ const createFields = z
   .strict();
 
 const createSchema = createFields.refine(
-  (o) => o.runtime?.type !== "claude-code" || o.model.provider === "anthropic",
-  "runtime claude-code requires an anthropic model",
+  (o) => runtimeSupportsModel(o.runtime, o.model.provider),
+  RUNTIME_MODEL_MSG,
 );
 
 // The runtime↔model cross-check only fires when BOTH travel in the patch; a patch
@@ -61,11 +75,8 @@ const updateSchema = createFields
   .strict()
   .refine((o) => Object.keys(o).length > 0, "at least one field is required")
   .refine(
-    (o) =>
-      o.runtime?.type !== "claude-code" ||
-      o.model === undefined ||
-      o.model.provider === "anthropic",
-    "runtime claude-code requires an anthropic model",
+    (o) => o.model === undefined || runtimeSupportsModel(o.runtime, o.model.provider),
+    RUNTIME_MODEL_MSG,
   );
 
 const versionsQuerySchema = z.object({
