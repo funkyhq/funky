@@ -6,3 +6,9 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
+
+# pi-ai pins @opentelemetry/api@1.9.0 while the otel stack here uses 1.9.1; without
+# this pin pnpm splits drizzle-orm into two peer-keyed instances and @funky/db's Db
+# type stops unifying across packages.
+overrides:
+  "@opentelemetry/api": 1.9.1

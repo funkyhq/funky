@@ -91,7 +91,7 @@ afterEach(async () => {
 
 // ------------------------------------------------------------------------- helpers
 
-async function seedAgentVersion(opts: { maxIterations?: number } = {}) {
+async function seedAgentVersion(opts: { maxIterations?: number; runtime?: string } = {}) {
   const toolPolicy =
     opts.maxIterations !== undefined ? { max_iterations: opts.maxIterations } : {};
   await pool.query(
@@ -103,7 +103,7 @@ async function seedAgentVersion(opts: { maxIterations?: number } = {}) {
       "you are a harness agent",
       JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" }),
       JSON.stringify(toolPolicy),
-      JSON.stringify({ type: "claude-code" }),
+      JSON.stringify({ type: opts.runtime ?? "claude-code" }),
     ],
   );
 }
@@ -470,6 +470,48 @@ describe("runHarnessTurn — error policy", () => {
     expect(await runTurn(job(), deps(/* no harness */))).toBe("failed");
     const lastEvent = (await log()).at(-1) as SessionEvent<"turn_failed">;
     expect(lastEvent.payload.error_class).toBe("HARNESS");
+  });
+
+  it("the registry keys by runtime type: a pi session uses the pi driver and commits driver:'pi'", async () => {
+    await seedAgentVersion({ runtime: "pi" });
+    await seedSession();
+    await seedUserMessage();
+
+    const piHarness = fakeHarness([async () => success("pi-1")]);
+    const outcome = await runTurn(job(), {
+      store,
+      llm: untouchableLlm,
+      sandbox,
+      db,
+      // A claude-code-only worker must NOT serve this session; a pi entry must.
+      harnesses: { "claude-code": fakeHarness([]), pi: piHarness },
+    });
+    expect(outcome).toBe("completed");
+    expect(piHarness.requests).toHaveLength(1);
+    expect((await sessionRow()).harness_state).toEqual({
+      driver: "pi",
+      sdk_session_id: "pi-1",
+    });
+  });
+
+  it("a runtime this worker has no driver for → terminal turn_failed(HARNESS) naming it", async () => {
+    await seedAgentVersion({ runtime: "pi" });
+    await seedSession();
+    await seedUserMessage();
+
+    // Worker only serves claude-code.
+    expect(
+      await runTurn(job(), {
+        store,
+        llm: untouchableLlm,
+        sandbox,
+        db,
+        harnesses: { "claude-code": fakeHarness([]) },
+      }),
+    ).toBe("failed");
+    const lastEvent = (await log()).at(-1) as SessionEvent<"turn_failed">;
+    expect(lastEvent.payload.error_class).toBe("HARNESS");
+    expect(lastEvent.payload.message).toContain("pi");
   });
 
   it("a transient harness failure retries, then terminates as INTERNAL on the last attempt", async () => {
