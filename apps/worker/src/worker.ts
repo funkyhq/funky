@@ -12,7 +12,7 @@
 
 import type { Client } from "pg";
 import type { Db } from "@funky/db";
-import type { HarnessPort } from "@funky/harness/port";
+import type { HarnessRegistry } from "@funky/harness/port";
 import type { LlmPort } from "@funky/llm";
 import type { SandboxDriver } from "@funky/sandbox";
 import {
@@ -32,8 +32,9 @@ export type WorkerDeps = {
   store: EventStore;
   llm: LlmPort;
   sandbox: SandboxDriver;
-  /** Optional — required only for agents whose runtime is a vendor harness. */
-  harness?: HarnessPort;
+  /** Optional — required only for agents whose runtime is a vendor harness; keyed by
+   *  the runtime type the entry serves. */
+  harnesses?: HarnessRegistry;
   db: Db;
   listenClient: Client; // DEDICATED client for LISTEN (never from the pool)
   concurrency: number; // FUNKY_WORKER_CONCURRENCY
@@ -83,7 +84,7 @@ export function startWorker(deps: WorkerDeps): WorkerHandle {
     llm: deps.llm,
     sandbox: deps.sandbox,
     db: deps.db,
-    ...(deps.harness ? { harness: deps.harness } : {}),
+    ...(deps.harnesses ? { harnesses: deps.harnesses } : {}),
   };
 
   let inFlight = 0;

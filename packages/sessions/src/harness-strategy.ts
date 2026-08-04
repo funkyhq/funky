@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { harnessTranscriptEntries, sessions } from "@funky/db/schema";
 import {
+  type HarnessDriver,
   HarnessFencedError,
   HarnessPermanentError,
   type HarnessProjectedEvent,
@@ -43,6 +44,12 @@ import { ErrConflict } from "./store";
 import type { TurnShell, TurnStrategy } from "./strategy";
 import { type TurnDeps, readMaxIterations } from "./turn";
 
+/** Operator hint for the "no driver on this worker" failure — what to configure so
+ *  this worker can serve the driver. */
+const DRIVER_HINTS: Partial<Record<HarnessDriver, string>> = {
+  "claude-code": " (is ANTHROPIC_API_KEY set?)",
+};
+
 export const harnessStrategy: TurnStrategy = {
   async run(shell: TurnShell) {
     const { ns, sessionId, session, version, events, append, terminalFail, exec, deps } = shell;
@@ -54,10 +61,15 @@ export const harnessStrategy: TurnStrategy = {
     const lastUser = findLastIndex(events, (e) => e.type === "user_message");
     if (lastUser < 0) return "completed"; // nothing to answer
 
-    if (!deps.harness) {
+    // The pinned runtime names the driver; the worker's registry may or may not serve
+    // it. Either gap is an honest terminal failure, not a crash or a silent retry.
+    const driver = version.runtime?.type !== "native" ? version.runtime?.type : undefined;
+    const harness = driver ? deps.harnesses?.[driver] : undefined;
+    if (!driver || !harness) {
+      const hint = driver ? (DRIVER_HINTS[driver] ?? "") : "";
       return terminalFail(
         "HARNESS",
-        "agent runtime is claude-code but this worker has no harness driver (is ANTHROPIC_API_KEY set?)",
+        `agent runtime is ${driver ?? "unknown"} but this worker has no ${driver ?? "matching"} harness driver${hint}`,
       );
     }
 
@@ -147,7 +159,7 @@ export const harnessStrategy: TurnStrategy = {
       return next;
     };
 
-    const result: HarnessTurnResult = await deps.harness.runTurn({
+    const result: HarnessTurnResult = await harness.runTurn({
       namespace: ns,
       sessionId,
       attempt,
@@ -175,7 +187,7 @@ export const harnessStrategy: TurnStrategy = {
       await tx
         .update(sessions)
         .set({
-          harnessState: { driver: "claude-code", sdk_session_id: result.sdkSessionId },
+          harnessState: { driver, sdk_session_id: result.sdkSessionId },
           updatedAt: new Date(),
         })
         .where(and(eq(sessions.namespace, ns), eq(sessions.id, sessionId)));

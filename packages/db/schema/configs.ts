@@ -31,6 +31,10 @@ import {
  *  session — a session's runtime never changes mid-life. */
 export type RuntimeConfig = { type: "native" } | { type: "claude-code" };
 
+/** The harness driver names — every runtime except the native loop. Keyed on by the
+ *  worker's driver registry and recorded in sessions.harness_state.driver. */
+export type HarnessDriver = Exclude<RuntimeConfig["type"], "native">;
+
 export type ModelConfig = {
   provider:
     | "anthropic"

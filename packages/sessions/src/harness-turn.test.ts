@@ -147,7 +147,13 @@ const untouchableLlm: LlmPort = {
 };
 
 function deps(harness?: HarnessPort) {
-  return { store, llm: untouchableLlm, sandbox, db, ...(harness ? { harness } : {}) };
+  return {
+    store,
+    llm: untouchableLlm,
+    sandbox,
+    db,
+    ...(harness ? { harnesses: { "claude-code": harness } } : {}),
+  };
 }
 
 async function log() {
