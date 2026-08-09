@@ -96,7 +96,13 @@ export class SessionsService {
         if (input.id) {
           const existing = await this.findRaw(tx, ctx, input.id);
           if (existing) {
-            return this.resolveIdempotentCreate(existing, input, agentConfigId, agentVersion, envConfigId);
+            return this.resolveIdempotentCreate(
+              existing,
+              input,
+              agentConfigId,
+              agentVersion,
+              envConfigId,
+            );
           }
         }
         await tx.insert(sessions).values({
@@ -124,7 +130,13 @@ export class SessionsService {
       if (isUniqueViolation(err) && input.id) {
         const existing = await this.findRaw(this.db, ctx, input.id);
         if (existing) {
-          return this.resolveIdempotentCreate(existing, input, agentConfigId, agentVersion, envConfigId);
+          return this.resolveIdempotentCreate(
+            existing,
+            input,
+            agentConfigId,
+            agentVersion,
+            envConfigId,
+          );
         }
       }
       throw err;

@@ -10,8 +10,7 @@ type Env = { Variables: { auth: AuthContext; requestId: string } };
 // ------------------------------------------------------------ zod schemas
 
 // bare or wildcard-prefixed domain, no scheme, no path
-const hostnameRegex =
-  /^(\*\.)?[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)*$/i;
+const hostnameRegex = /^(\*\.)?[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)*$/i;
 
 const allowedHostsSchema = z
   .array(z.string().max(255).regex(hostnameRegex, "must be a bare or wildcard-prefixed hostname"))

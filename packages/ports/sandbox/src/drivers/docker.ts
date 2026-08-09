@@ -65,7 +65,13 @@ export function dockerProvider(opts: DockerProviderOptions): ComputeProvider {
       sandboxId: id,
       provider: "docker",
       runCommand,
-      getInfo: async () => ({ id, provider: "docker", status: "running" as const, createdAt: new Date(), timeout: 0 }),
+      getInfo: async () => ({
+        id,
+        provider: "docker",
+        status: "running" as const,
+        createdAt: new Date(),
+        timeout: 0,
+      }),
       getUrl: unused("getUrl"),
       destroy: async () => {
         await run(docker, ["rm", "-f", id]);
@@ -97,7 +103,9 @@ export function dockerProvider(opts: DockerProviderOptions): ComputeProvider {
         const r = await run(docker, args);
         const id = r.stdout.trim();
         if (r.code !== 0 || !id) {
-          throw new Error(`docker run failed: ${(r.stderr || r.stdout).trim() || `exit ${r.code}`}`);
+          throw new Error(
+            `docker run failed: ${(r.stderr || r.stdout).trim() || `exit ${r.code}`}`,
+          );
         }
         return makeSandbox(id);
       },
@@ -126,7 +134,10 @@ export function dockerProvider(opts: DockerProviderOptions): ComputeProvider {
 // rejecting. A spawn failure (docker binary absent) surfaces as code 127, so it flows
 // through the same "unobservable ⇒ 127" path as a dead daemon. maxBuffer is generous: a
 // single poll can carry up to ~200KB of base64-wrapped output.
-function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+function run(
+  bin: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     execFile(bin, args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       // On a non-zero exit, err.code is the numeric exit code. On a spawn failure (docker

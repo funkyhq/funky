@@ -18,13 +18,10 @@ const EnvSchema = z
       "FUNKY_AUTH_TOKEN is required. Set it in the environment, " +
       "or set FUNKY_AUTH=disabled for local development (NOT for anything reachable).",
   })
-  .refine(
-    (e) => e.FUNKY_AUTH !== "disabled" || e.FUNKY_NAMESPACE_SOURCE !== "header",
-    {
-      path: ["FUNKY_NAMESPACE_SOURCE"],
-      message: "FUNKY_NAMESPACE_SOURCE=header requires FUNKY_AUTH=enabled",
-    },
-  );
+  .refine((e) => e.FUNKY_AUTH !== "disabled" || e.FUNKY_NAMESPACE_SOURCE !== "header", {
+    path: ["FUNKY_NAMESPACE_SOURCE"],
+    message: "FUNKY_NAMESPACE_SOURCE=header requires FUNKY_AUTH=enabled",
+  });
 
 export type Config = {
   databaseUrl: string;
@@ -47,9 +44,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const e = parsed.data;
   if (e.FUNKY_AUTH === "disabled") {
-    console.warn(
-      "⚠️  FUNKY_AUTH=disabled — the API accepts unauthenticated requests. Dev only.",
-    );
+    console.warn("⚠️  FUNKY_AUTH=disabled — the API accepts unauthenticated requests. Dev only.");
   }
   return {
     databaseUrl: e.DATABASE_URL,

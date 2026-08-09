@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
-import { sessions as sessApi } from '../lib/api'
-import type { Agent, Environment, Session } from '../lib/types'
-import { errMsg, initials, relativeTime, shortId } from '../lib/format'
-import { Avatar, Badge, Button, Checkbox, Modal, Select, Textarea } from '../ui/ui'
-import { ArchiveItem, EmptyState, Kebab, PageHeader, SelectionBar } from './parts'
-import { useSelection } from './data'
+import { useEffect, useState } from "react";
+import { MessageSquare } from "lucide-react";
+import { sessions as sessApi } from "../lib/api";
+import type { Agent, Environment, Session } from "../lib/types";
+import { errMsg, initials, relativeTime, shortId } from "../lib/format";
+import { Avatar, Badge, Button, Checkbox, Modal, Select, Textarea } from "../ui/ui";
+import { ArchiveItem, EmptyState, Kebab, PageHeader, SelectionBar } from "./parts";
+import { useSelection } from "./data";
 
 export function Sessions({
   sessions,
@@ -15,26 +15,26 @@ export function Sessions({
   onOpen,
   notify,
 }: {
-  sessions: Session[]
-  agents: Agent[]
-  environments: Environment[]
-  reload: () => Promise<void>
-  onOpen: (id: string) => void
-  notify: (msg: string) => void
+  sessions: Session[];
+  agents: Agent[];
+  environments: Environment[];
+  reload: () => Promise<void>;
+  onOpen: (id: string) => void;
+  notify: (msg: string) => void;
 }) {
-  const sel = useSelection()
-  const [open, setOpen] = useState(false)
+  const sel = useSelection();
+  const [open, setOpen] = useState(false);
 
-  const agentName = (id: string) => agents.find((a) => a.id === id)?.name ?? `agent ${shortId(id)}`
-  const envName = (id: string) => environments.find((e) => e.id === id)?.name ?? shortId(id)
+  const agentName = (id: string) => agents.find((a) => a.id === id)?.name ?? `agent ${shortId(id)}`;
+  const envName = (id: string) => environments.find((e) => e.id === id)?.name ?? shortId(id);
 
   async function archive(ids: string[]) {
     try {
-      await Promise.all(ids.map((id) => sessApi.archive(id)))
-      sel.clear()
-      await reload()
+      await Promise.all(ids.map((id) => sessApi.archive(id)));
+      sel.clear();
+      await reload();
     } catch (e) {
-      notify(errMsg(e))
+      notify(errMsg(e));
     }
   }
 
@@ -62,7 +62,12 @@ export function Sessions({
             {sessions.map((s) => (
               <div className="row" key={s.id} data-selected={sel.ids.has(s.id) || undefined}>
                 <Checkbox checked={sel.ids.has(s.id)} onChange={() => sel.toggle(s.id)} />
-                <div className="row__body" data-clickable onClick={() => onOpen(s.id)} style={{ cursor: 'pointer' }}>
+                <div
+                  className="row__body"
+                  data-clickable
+                  onClick={() => onOpen(s.id)}
+                  style={{ cursor: "pointer" }}
+                >
                   <Avatar initials={initials(agentName(s.agent.id))} />
                   <div style={{ minWidth: 0, width: 230 }}>
                     <div className="row__name row__name--mono">{s.title ?? shortId(s.id)}</div>
@@ -74,11 +79,22 @@ export function Sessions({
                   </div>
                   <div className="row__col">
                     <div className="row__col-label">Created</div>
-                    <div className="row__col-val row__col-val--body">{relativeTime(s.created_at)}</div>
+                    <div className="row__col-val row__col-val--body">
+                      {relativeTime(s.created_at)}
+                    </div>
                   </div>
                   <StatusBadge session={s} />
                 </div>
-                <Kebab>{(close) => <ArchiveItem onClick={() => { close(); void archive([s.id]) }} />}</Kebab>
+                <Kebab>
+                  {(close) => (
+                    <ArchiveItem
+                      onClick={() => {
+                        close();
+                        void archive([s.id]);
+                      }}
+                    />
+                  )}
+                </Kebab>
               </div>
             ))}
           </div>
@@ -97,20 +113,34 @@ export function Sessions({
         agents={agents}
         environments={environments}
         onCreated={async (id) => {
-          setOpen(false)
-          await reload()
-          onOpen(id)
+          setOpen(false);
+          await reload();
+          onOpen(id);
         }}
         notify={notify}
       />
     </div>
-  )
+  );
 }
 
 function StatusBadge({ session }: { session: Session }) {
-  if (session.status === 'failed') return <Badge tone="red" dot>failed</Badge>
-  if (session.status === 'provisioning') return <Badge tone="neutral" dot>provisioning</Badge>
-  return <Badge tone="green" dot>ready</Badge>
+  if (session.status === "failed")
+    return (
+      <Badge tone="red" dot>
+        failed
+      </Badge>
+    );
+  if (session.status === "provisioning")
+    return (
+      <Badge tone="neutral" dot>
+        provisioning
+      </Badge>
+    );
+  return (
+    <Badge tone="green" dot>
+      ready
+    </Badge>
+  );
 }
 
 function CreateSessionModal({
@@ -121,48 +151,49 @@ function CreateSessionModal({
   onCreated,
   notify,
 }: {
-  open: boolean
-  onClose: () => void
-  agents: Agent[]
-  environments: Environment[]
-  onCreated: (id: string) => Promise<void>
-  notify: (msg: string) => void
+  open: boolean;
+  onClose: () => void;
+  agents: Agent[];
+  environments: Environment[];
+  onCreated: (id: string) => Promise<void>;
+  notify: (msg: string) => void;
 }) {
-  const [agentId, setAgentId] = useState('')
-  const [envId, setEnvId] = useState('')
-  const [msg, setMsg] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [agentId, setAgentId] = useState("");
+  const [envId, setEnvId] = useState("");
+  const [msg, setMsg] = useState("");
+  const [saving, setSaving] = useState(false);
 
   // Default the selects once data is available / the modal opens.
   useEffect(() => {
     if (open) {
-      setAgentId((v) => v || agents[0]?.id || '')
-      setEnvId((v) => v || environments[0]?.id || '')
+      setAgentId((v) => v || agents[0]?.id || "");
+      setEnvId((v) => v || environments[0]?.id || "");
     }
-  }, [open, agents, environments])
+  }, [open, agents, environments]);
 
-  const ready = agents.length > 0 && environments.length > 0
+  const ready = agents.length > 0 && environments.length > 0;
 
   async function create() {
     if (!agentId || !envId) {
-      notify('Pick an agent and an environment.')
-      return
+      notify("Pick an agent and an environment.");
+      return;
     }
-    setSaving(true)
+    setSaving(true);
     try {
-      const session = await sessApi.create({ agent: agentId, environment_id: envId })
-      const text = msg.trim()
+      const session = await sessApi.create({ agent: agentId, environment_id: envId });
+      const text = msg.trim();
       if (text) {
-        const ready = await sessApi.waitReady(session.id)
-        if (ready.status === 'failed') throw new Error('The session failed to provision its sandbox.')
-        await sessApi.sendMessage(session.id, text)
+        const ready = await sessApi.waitReady(session.id);
+        if (ready.status === "failed")
+          throw new Error("The session failed to provision its sandbox.");
+        await sessApi.sendMessage(session.id, text);
       }
-      setMsg('')
-      await onCreated(session.id)
+      setMsg("");
+      await onCreated(session.id);
     } catch (e) {
-      notify(errMsg(e))
+      notify(errMsg(e));
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
@@ -177,17 +208,20 @@ function CreateSessionModal({
           <Button variant="secondary" fullWidth onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="accent" fullWidth disabled={saving || !ready} onClick={() => void create()}>
-            {saving ? 'Creating…' : 'Create session'}
+          <Button
+            variant="accent"
+            fullWidth
+            disabled={saving || !ready}
+            onClick={() => void create()}
+          >
+            {saving ? "Creating…" : "Create session"}
           </Button>
         </>
       }
     >
       <p className="modal__intro">Pick the agent and environment for this session.</p>
       {!ready ? (
-        <p className="qs-error">
-          You need at least one agent and one environment first.
-        </p>
+        <p className="qs-error">You need at least one agent and one environment first.</p>
       ) : null}
       <div className="modal__form">
         <Select
@@ -195,7 +229,7 @@ function CreateSessionModal({
           value={agentId}
           options={agents.map((a) => ({
             value: a.id,
-            label: a.runtime?.type === 'claude-code' ? `${a.name} · Claude Code` : a.name,
+            label: a.runtime?.type === "claude-code" ? `${a.name} · Claude Code` : a.name,
           }))}
           onChange={setAgentId}
         />
@@ -214,5 +248,5 @@ function CreateSessionModal({
         />
       </div>
     </Modal>
-  )
+  );
 }

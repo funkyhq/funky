@@ -387,16 +387,16 @@
 /* The brand's hard offset shadow, but tightened on these small circles (a smaller vertical
    offset than the buttons' --shadow-hard-sm) so it reads as a clean lifted edge, per the
    design, rather than a dropped double-circle. */
-.step__dot[data-state='done'],
-.step__dot[data-state='current'] {
+.step__dot[data-state="done"],
+.step__dot[data-state="current"] {
   border-color: var(--blue-900);
   box-shadow: 3px 2px 0 var(--blue-900);
 }
-.step__dot[data-state='done'] {
+.step__dot[data-state="done"] {
   background: var(--yellow-400);
   color: var(--blue-900);
 }
-.step__dot[data-state='current'] {
+.step__dot[data-state="current"] {
   background: var(--blue-500);
   color: #fff;
 }
@@ -528,7 +528,7 @@
   gap: 12px;
   margin-bottom: 20px;
 }
-.msg[data-role='user'] {
+.msg[data-role="user"] {
   flex-direction: row-reverse;
 }
 .msg__avatar {

@@ -31,9 +31,7 @@ const modelSchema = z
 // How turns execute: omitted/null = the native loop; anything else names a vendor
 // harness. Each harness supports a subset of providers — enforced here (not at
 // turn time): claude-code requires anthropic.
-const runtimeSchema = z
-  .object({ type: z.enum(["native", "claude-code"]) })
-  .strict();
+const runtimeSchema = z.object({ type: z.enum(["native", "claude-code"]) }).strict();
 
 const runtimeSupportsModel = (
   runtime: { type: string } | null | undefined,

@@ -28,7 +28,12 @@ const samples: { [T in EventType]: EventPayload<T> } = {
     tool_calls: [{ kind: "exec", cmd: "ls -la" }],
     usage: { input_tokens: 12, output_tokens: 34 },
   },
-  tool_result: { idem_key: idemKeyFor(base.sessionId, 2), output: "total 0", exit_code: 0, truncated: false },
+  tool_result: {
+    idem_key: idemKeyFor(base.sessionId, 2),
+    output: "total 0",
+    exit_code: 0,
+    truncated: false,
+  },
   turn_completed: {},
   turn_failed: { error_class: "INTERNAL", message: "boom" },
   session_provisioned: {},
@@ -84,9 +89,9 @@ describe("makeEvent → parseEvent round-trip", () => {
 
 describe("parseEvent guards", () => {
   it("throws on an unknown event type", () => {
-    expect(() =>
-      parseEvent({ ...base, type: "not_a_real_type", payload: {}, createdAt }),
-    ).toThrow(/unknown event type in log: not_a_real_type/);
+    expect(() => parseEvent({ ...base, type: "not_a_real_type", payload: {}, createdAt })).toThrow(
+      /unknown event type in log: not_a_real_type/,
+    );
   });
 
   it("throws on a payload that violates its schema", () => {
@@ -140,9 +145,11 @@ describe("textContent / plainText", () => {
   });
 
   it("concatenates multiple text blocks in order", () => {
-    expect(plainText([
-      { type: "text", text: "a" },
-      { type: "text", text: "b" },
-    ])).toBe("ab");
+    expect(
+      plainText([
+        { type: "text", text: "a" },
+        { type: "text", text: "b" },
+      ]),
+    ).toBe("ab");
   });
 });

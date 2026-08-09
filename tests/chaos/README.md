@@ -11,12 +11,12 @@ network.
 
 ## The four invariants under test
 
-| # | invariant | enforced by |
-|---|-----------|-------------|
-| **I1** | the final event log is identical whether or not workers crashed | the log is the only state; the reducer is a pure fold over it |
-| **I2** | no event is ever written twice | PK `(session_id, seq)` → SQLSTATE 23505 → `ErrConflict` |
-| **I3** | no command is ever *executed* twice | idemKey derived from log position + the sandbox's `mkdir`-dedupe |
-| **I4** | every turn ends in a terminal event — a session never hangs | the last-attempt escalation in the turn's error policy |
+| #      | invariant                                                       | enforced by                                                      |
+| ------ | --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **I1** | the final event log is identical whether or not workers crashed | the log is the only state; the reducer is a pure fold over it    |
+| **I2** | no event is ever written twice                                  | PK `(session_id, seq)` → SQLSTATE 23505 → `ErrConflict`          |
+| **I3** | no command is ever _executed_ twice                             | idemKey derived from log position + the sandbox's `mkdir`-dedupe |
+| **I4** | every turn ends in a terminal event — a session never hangs     | the last-attempt escalation in the turn's error policy           |
 
 The single most important assertion is I3: every scripted tool call appends one line to a
 per-run **marker** file. After any scenario, the marker must have exactly one line per call —
@@ -24,16 +24,16 @@ two lines means the command ran twice and the core promise is a lie.
 
 ## The scenarios
 
-| file | scenario |
-|------|----------|
-| `reference.test.ts` | the no-chaos baseline that pins `REFERENCE_LOG` |
-| `h1.kill-boundaries.test.ts` | ★ kill worker A at **every** append boundary; B finishes → the log always matches |
-| `h2.double-delivery.test.ts` | one job handed to two workers → one winner, one clean `ErrConflict` loser |
-| `h3.slow-vs-lease.test.ts` | a slow-but-alive worker vs. a fresh reclaimer racing the same session |
-| `h4.reattach.test.ts` | ★ B **re-attaches** to A's still-running command — the marker proves it wasn't re-run |
-| `h5.terminal-event.test.ts` | a permanently broken sandbox → `turn_failed(SANDBOX_FATAL)`, never a hang |
-| `h6.provision-crash.test.ts` | crash mid-provision → a second worker provisions; one event, one workdir |
-| `h7.soak.test.ts` | 50 sessions × 3 workers × seeded random kills → all complete, zero double-execution |
+| file                         | scenario                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `reference.test.ts`          | the no-chaos baseline that pins `REFERENCE_LOG`                                       |
+| `h1.kill-boundaries.test.ts` | ★ kill worker A at **every** append boundary; B finishes → the log always matches     |
+| `h2.double-delivery.test.ts` | one job handed to two workers → one winner, one clean `ErrConflict` loser             |
+| `h3.slow-vs-lease.test.ts`   | a slow-but-alive worker vs. a fresh reclaimer racing the same session                 |
+| `h4.reattach.test.ts`        | ★ B **re-attaches** to A's still-running command — the marker proves it wasn't re-run |
+| `h5.terminal-event.test.ts`  | a permanently broken sandbox → `turn_failed(SANDBOX_FATAL)`, never a hang             |
+| `h6.provision-crash.test.ts` | crash mid-provision → a second worker provisions; one event, one workdir              |
+| `h7.soak.test.ts`            | 50 sessions × 3 workers × seeded random kills → all complete, zero double-execution   |
 
 ## The one production seam
 

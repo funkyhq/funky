@@ -75,13 +75,33 @@ describe("POST /v1/agents (create)", () => {
     ["missing model", createBody({ model: undefined })],
     ["bad model provider", createBody({ model: { provider: "acme", model: "x" } })],
     ["empty model name", createBody({ model: { provider: "anthropic", model: "" } })],
-    ["temperature out of range", createBody({ model: { provider: "anthropic", model: "m", temperature: 5 } })],
+    [
+      "temperature out of range",
+      createBody({ model: { provider: "anthropic", model: "m", temperature: 5 } }),
+    ],
     ["unknown top-level field (strict)", createBody({ nope: true })],
     ["non-uuid id", createBody({ id: "not-a-uuid" })],
-    ["too many metadata pairs", createBody({ metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, "v"])) })],
+    [
+      "too many metadata pairs",
+      createBody({
+        metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, "v"])),
+      }),
+    ],
     ["unknown runtime type", createBody({ runtime: { type: "langchain" } })],
-    ["runtime claude-code with a non-anthropic model", createBody({ runtime: { type: "claude-code" }, model: { provider: "openai", model: "gpt-x" } })],
-    ["the retired pi runtime", createBody({ runtime: { type: "pi" }, model: { provider: "anthropic", model: "claude-sonnet-5" } })],
+    [
+      "runtime claude-code with a non-anthropic model",
+      createBody({
+        runtime: { type: "claude-code" },
+        model: { provider: "openai", model: "gpt-x" },
+      }),
+    ],
+    [
+      "the retired pi runtime",
+      createBody({
+        runtime: { type: "pi" },
+        model: { provider: "anthropic", model: "claude-sonnet-5" },
+      }),
+    ],
   ])("rejects %s with 400 and does not call the service", async (_label, body) => {
     const { app, fake } = makeApp();
 
@@ -287,7 +307,9 @@ describe("GET /v1/agents/:id/versions/:version (retrieve version)", () => {
 
   it("returns 404 when the version does not exist", async () => {
     const { app } = makeApp({
-      agents: { getVersion: vi.fn().mockRejectedValue(new NotFoundError("agent version not found")) },
+      agents: {
+        getVersion: vi.fn().mockRejectedValue(new NotFoundError("agent version not found")),
+      },
     });
     const res = await get(app, `/v1/agents/${AGENT_ID}/versions/9`);
     expect(res.status).toBe(404);

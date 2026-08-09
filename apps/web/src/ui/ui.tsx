@@ -1,40 +1,40 @@
 // The Funky design-system primitives, reconstructed from the handoff spec (tokens + the
 // prototype's inline styles). Every screen composes these; none reaches for raw brand hex.
-import type { ReactNode } from 'react'
-import { useEffect } from 'react'
-import { X } from 'lucide-react'
-import './ui.css'
+import type { ReactNode } from "react";
+import { useEffect } from "react";
+import { X } from "lucide-react";
+import "./ui.css";
 
-type ButtonVariant = 'accent' | 'primary' | 'secondary'
-type ButtonSize = 'sm' | 'md' | 'lg'
+type ButtonVariant = "accent" | "primary" | "secondary";
+type ButtonSize = "sm" | "md" | "lg";
 
 export function Button({
-  variant = 'primary',
-  size = 'md',
+  variant = "primary",
+  size = "md",
   fullWidth,
-  type = 'button',
+  type = "button",
   disabled,
   onClick,
   children,
 }: {
-  variant?: ButtonVariant
-  size?: ButtonSize
-  fullWidth?: boolean
-  type?: 'button' | 'submit'
-  disabled?: boolean
-  onClick?: () => void
-  children: ReactNode
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  fullWidth?: boolean;
+  type?: "button" | "submit";
+  disabled?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
 }) {
   return (
     <button
       type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`btn btn--${variant} btn--${size}${fullWidth ? ' btn--full' : ''}`}
+      className={`btn btn--${variant} btn--${size}${fullWidth ? " btn--full" : ""}`}
     >
       {children}
     </button>
-  )
+  );
 }
 
 export function Field({ label, children }: { label?: string; children: ReactNode }) {
@@ -43,7 +43,7 @@ export function Field({ label, children }: { label?: string; children: ReactNode
       {label ? <span className="field__label">{label}</span> : null}
       {children}
     </label>
-  )
+  );
 }
 
 export function Input({
@@ -52,10 +52,10 @@ export function Input({
   value,
   onChange,
 }: {
-  label?: string
-  placeholder?: string
-  value: string
-  onChange: (v: string) => void
+  label?: string;
+  placeholder?: string;
+  value: string;
+  onChange: (v: string) => void;
 }) {
   return (
     <Field label={label}>
@@ -66,7 +66,7 @@ export function Input({
         onChange={(e) => onChange(e.target.value)}
       />
     </Field>
-  )
+  );
 }
 
 export function Select({
@@ -75,10 +75,10 @@ export function Select({
   options,
   onChange,
 }: {
-  label?: string
-  value: string
-  options: { value: string; label: string; disabled?: boolean }[]
-  onChange: (v: string) => void
+  label?: string;
+  value: string;
+  options: { value: string; label: string; disabled?: boolean }[];
+  onChange: (v: string) => void;
 }) {
   return (
     <Field label={label}>
@@ -90,7 +90,7 @@ export function Select({
         ))}
       </select>
     </Field>
-  )
+  );
 }
 
 export function Textarea({
@@ -101,12 +101,12 @@ export function Textarea({
   onChange,
   onKeyDown,
 }: {
-  label?: string
-  rows?: number
-  placeholder?: string
-  value: string
-  onChange: (v: string) => void
-  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  label?: string;
+  rows?: number;
+  placeholder?: string;
+  value: string;
+  onChange: (v: string) => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
   return (
     <Field label={label}>
@@ -119,32 +119,32 @@ export function Textarea({
         onKeyDown={onKeyDown}
       />
     </Field>
-  )
+  );
 }
 
 export function Badge({
-  tone = 'neutral',
+  tone = "neutral",
   dot,
   children,
 }: {
-  tone?: 'green' | 'neutral' | 'red'
-  dot?: boolean
-  children: ReactNode
+  tone?: "green" | "neutral" | "red";
+  dot?: boolean;
+  children: ReactNode;
 }) {
   return (
     <span className={`badge badge--${tone}`}>
       {dot ? <span className="badge__dot" /> : null}
       {children}
     </span>
-  )
+  );
 }
 
 export function Checkbox({
   checked,
   onChange,
 }: {
-  checked: boolean
-  onChange: (v: boolean) => void
+  checked: boolean;
+  onChange: (v: boolean) => void;
 }) {
   return (
     <span className="checkbox" data-checked={checked || undefined}>
@@ -153,11 +153,11 @@ export function Checkbox({
         <polyline points="20 6 9 17 4 12" />
       </svg>
     </span>
-  )
+  );
 }
 
 export function Spinner({ size = 16 }: { size?: number }) {
-  return <span className="spinner" style={{ width: size, height: size }} aria-label="loading" />
+  return <span className="spinner" style={{ width: size, height: size }} aria-label="loading" />;
 }
 
 export function CodeBlock({ code, filename }: { code: string; filename: string }) {
@@ -165,9 +165,9 @@ export function CodeBlock({ code, filename }: { code: string; filename: string }
     <div className="codeblock">
       <div className="codeblock__bar">
         <span className="codeblock__lights">
-          <i style={{ background: '#ff5f57' }} />
-          <i style={{ background: '#febc2e' }} />
-          <i style={{ background: '#28c840' }} />
+          <i style={{ background: "#ff5f57" }} />
+          <i style={{ background: "#febc2e" }} />
+          <i style={{ background: "#28c840" }} />
         </span>
         <span className="codeblock__file">{filename}</span>
       </div>
@@ -175,7 +175,7 @@ export function CodeBlock({ code, filename }: { code: string; filename: string }
         <code>{code}</code>
       </pre>
     </div>
-  )
+  );
 }
 
 export function Avatar({
@@ -183,15 +183,15 @@ export function Avatar({
   icon,
   size = 40,
 }: {
-  initials?: string
-  icon?: ReactNode
-  size?: number
+  initials?: string;
+  icon?: ReactNode;
+  size?: number;
 }) {
   return (
     <span className="avatar" style={{ width: size, height: size, fontSize: size <= 34 ? 12 : 13 }}>
       {icon ?? initials}
     </span>
-  )
+  );
 }
 
 export function Modal({
@@ -202,21 +202,21 @@ export function Modal({
   children,
   footer,
 }: {
-  open: boolean
-  onClose: () => void
-  width?: number
-  title: string
-  children: ReactNode
-  footer?: ReactNode
+  open: boolean;
+  onClose: () => void;
+  width?: number;
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
 }) {
   useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
-  if (!open) return null
+  if (!open) return null;
   return (
     <div className="scrim scrim--modal" onClick={onClose}>
       <div className="modal" style={{ width }} onClick={(e) => e.stopPropagation()}>
@@ -230,5 +230,5 @@ export function Modal({
         {footer ? <div className="modal__foot">{footer}</div> : null}
       </div>
     </div>
-  )
+  );
 }

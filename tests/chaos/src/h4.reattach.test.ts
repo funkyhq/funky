@@ -62,7 +62,11 @@ it("B attaches to A's still-running command: it finishes the turn, running the c
 
   // B — real sandbox — replays the log and exec's the same idemKey → attaches.
   await world.startWorker();
-  await waitFor(async () => (await world.eventTypes()).at(-1) === "turn_completed", 30_000, "B completes");
+  await waitFor(
+    async () => (await world.eventTypes()).at(-1) === "turn_completed",
+    30_000,
+    "B completes",
+  );
   const totalMs = Date.now() - t0;
 
   const events = await world.readEvents();

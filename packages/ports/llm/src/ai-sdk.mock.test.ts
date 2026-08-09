@@ -118,7 +118,12 @@ describe("AiSdkLlm parallel-tool-call cap", () => {
       messages: [
         { role: "user", content: "run something" },
         { role: "assistant", content: "", toolCall: { kind: "exec", cmd: "echo hi" } },
-        { role: "tool", idemKey: "019f5e05-a667-732b-99f6-04fa6a4c38ea:3:0", output: "hi\n", exitCode: 0 },
+        {
+          role: "tool",
+          idemKey: "019f5e05-a667-732b-99f6-04fa6a4c38ea:3:0",
+          output: "hi\n",
+          exitCode: 0,
+        },
       ],
     });
 

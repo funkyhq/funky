@@ -4,10 +4,7 @@ import type { Context } from "hono";
 import { ConflictError, NotFoundError } from "@funky/configs";
 
 export type ErrorType =
-  | "invalid_request_error"
-  | "authentication_error"
-  | "not_found_error"
-  | "api_error";
+  "invalid_request_error" | "authentication_error" | "not_found_error" | "api_error";
 
 export function errorResponse(
   c: Context,

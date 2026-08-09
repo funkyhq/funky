@@ -15,7 +15,14 @@ import { type FileHandle, open } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ResolvedEnv } from "@funky/db/schema";
-import { type ExecEvent, type Executor, type SandboxDriver, type SandboxHandle, SandboxGoneError, SandboxUnavailableError } from "../port";
+import {
+  type ExecEvent,
+  type Executor,
+  type SandboxDriver,
+  type SandboxHandle,
+  SandboxGoneError,
+  SandboxUnavailableError,
+} from "../port";
 
 const ROOT = "/tmp/funky";
 const MAX_OUTPUT_BYTES = 200_000;
@@ -78,7 +85,8 @@ class SubprocessExecutor implements Executor {
     const dir = path.join(this.workdir, ".funky", idemKey);
     return (async function* () {
       // Nothing recorded under this idemKey → no result to observe: infrastructure error.
-      if (!(await exists(dir))) throw new SandboxUnavailableError(`no running command for idemKey: ${idemKey}`);
+      if (!(await exists(dir)))
+        throw new SandboxUnavailableError(`no running command for idemKey: ${idemKey}`);
       yield* tail(dir);
     })();
   }

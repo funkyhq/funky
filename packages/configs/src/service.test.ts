@@ -355,9 +355,9 @@ describe("update", () => {
     await expect(service.update(ctx, agent.id, { name: "nope" })).rejects.toBeInstanceOf(
       ConflictError,
     );
-    await expect(
-      service.update(ctx, agent.id, { system_prompt: "nope" }),
-    ).rejects.toBeInstanceOf(ConflictError);
+    await expect(service.update(ctx, agent.id, { system_prompt: "nope" })).rejects.toBeInstanceOf(
+      ConflictError,
+    );
   });
 });
 
@@ -428,9 +428,9 @@ describe("listVersions", () => {
     await expect(service.listVersions(ctxA, uuidv7(), { limit: 10 })).rejects.toBeInstanceOf(
       NotFoundError,
     );
-    await expect(
-      service.listVersions(freshCtx(), agent.id, { limit: 10 }),
-    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(service.listVersions(freshCtx(), agent.id, { limit: 10 })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
   });
 });
 
@@ -444,8 +444,6 @@ describe("getVersion", () => {
   it("throws NotFoundError across namespaces", async () => {
     const ctxA = freshCtx();
     const { agent } = await service.create(ctxA, baseInput());
-    await expect(service.getVersion(freshCtx(), agent.id, 1)).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
+    await expect(service.getVersion(freshCtx(), agent.id, 1)).rejects.toBeInstanceOf(NotFoundError);
   });
 });

@@ -73,7 +73,10 @@ describe("FakeLlm", () => {
 
     const r1 = await llm.complete(req("unknown"));
     expect(r1.content).toBe("");
-    expect(r1.toolCall).toEqual({ kind: "exec", cmd: 'echo "hello from the funky sandbox"; uname -a' });
+    expect(r1.toolCall).toEqual({
+      kind: "exec",
+      cmd: 'echo "hello from the funky sandbox"; uname -a',
+    });
 
     const r2 = await llm.complete(req("unknown"));
     expect(r2.content).toMatch(/ran a command in the sandbox/);

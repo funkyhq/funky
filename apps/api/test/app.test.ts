@@ -180,20 +180,17 @@ describe("auth middleware", () => {
   it.each([
     ["missing", undefined],
     ["incorrect", "Bearer wrong-token"],
-  ])(
-    "checks a %s bearer token before validating the namespace",
-    async (_label, authorization) => {
-      const { app, fake } = makeApp({ authToken: token, namespaceSource: "header" });
-      const headers: Record<string, string> = { "X-Funky-Namespace": "invalid/value" };
-      if (authorization !== undefined) headers.authorization = authorization;
+  ])("checks a %s bearer token before validating the namespace", async (_label, authorization) => {
+    const { app, fake } = makeApp({ authToken: token, namespaceSource: "header" });
+    const headers: Record<string, string> = { "X-Funky-Namespace": "invalid/value" };
+    if (authorization !== undefined) headers.authorization = authorization;
 
-      const res = await get(app, `/v1/agents/${AGENT_ID}`, headers);
+    const res = await get(app, `/v1/agents/${AGENT_ID}`, headers);
 
-      expect(res.status).toBe(401);
-      expect((await res.json()).error.type).toBe("authentication_error");
-      expect(fake.get).not.toHaveBeenCalled();
-    },
-  );
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.type).toBe("authentication_error");
+    expect(fake.get).not.toHaveBeenCalled();
+  });
 
   it("ignores namespace headers in static mode", async () => {
     const { app, fake } = makeApp({

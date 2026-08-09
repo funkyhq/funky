@@ -12,28 +12,21 @@
 // per-session durable storage, if ever needed, belongs on the session as a volume
 // resource, not as a knob on the template.
 
-import {
-  index, jsonb, pgTable, text, timestamp, uuid,
-} from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
-export type NetworkPolicy =
-  | { type: "unrestricted" }
-  | { type: "limited"; allowed_hosts: string[] };
+export type NetworkPolicy = { type: "unrestricted" } | { type: "limited"; allowed_hosts: string[] };
 
 export const envConfigs = pgTable(
   "env_configs",
   {
-    id: uuid("id").primaryKey(),              // client-supplied → idempotent create
+    id: uuid("id").primaryKey(), // client-supplied → idempotent create
     namespace: text("namespace").notNull(),
-    name: text("name").notNull(),             // display label, non-unique
+    name: text("name").notNull(), // display label, non-unique
     description: text("description"),
     metadata: jsonb("metadata").$type<Record<string, string>>().notNull().default({}),
 
     // ---- the recipe ----
-    network: jsonb("network")
-      .$type<NetworkPolicy>()
-      .notNull()
-      .default({ type: "unrestricted" }),
+    network: jsonb("network").$type<NetworkPolicy>().notNull().default({ type: "unrestricted" }),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

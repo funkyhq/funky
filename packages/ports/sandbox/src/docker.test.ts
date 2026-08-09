@@ -23,7 +23,11 @@ const TEST_IMAGE = process.env.FUNKY_DOCKER_TEST_IMAGE ?? "debian:trixie-slim";
 if (dockerAvailable) {
   runSandboxTck(
     "docker",
-    () => new ComputeSdkDriver({ providerName: "docker", provider: dockerProvider({ image: TEST_IMAGE }) }),
+    () =>
+      new ComputeSdkDriver({
+        providerName: "docker",
+        provider: dockerProvider({ image: TEST_IMAGE }),
+      }),
     { timeoutMs: 60_000 }, // provision pulls the image on first run; every poll forks `docker exec`
   );
 } else {
@@ -35,9 +39,15 @@ if (dockerAvailable) {
 // Needs no daemon: provision rejects a limited policy before it ever touches Docker.
 describe("docker network policies", () => {
   it("fails closed for limited network policies", async () => {
-    const driver = new ComputeSdkDriver({ providerName: "docker", provider: dockerProvider({ image: TEST_IMAGE }) });
+    const driver = new ComputeSdkDriver({
+      providerName: "docker",
+      provider: dockerProvider({ image: TEST_IMAGE }),
+    });
     await expect(
-      driver.provision({ network: { type: "limited", allowed_hosts: ["api.example.com"] } }, randomUUID()),
+      driver.provision(
+        { network: { type: "limited", allowed_hosts: ["api.example.com"] } },
+        randomUUID(),
+      ),
     ).rejects.toThrow("docker does not support limited network policies");
   });
 });
