@@ -18,7 +18,7 @@ export type Agent = {
   model: ModelConfig;
   tool_policy: Record<string, unknown>;
   /** null = the native loop; otherwise the vendor harness that drives turns
-   *  ({"type":"claude-code"} or {"type":"pi"}). */
+   *  ({"type":"claude-code"}). */
   runtime: RuntimeConfig | null;
   created_at: string;
   updated_at: string;

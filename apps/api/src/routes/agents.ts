@@ -29,24 +29,20 @@ const modelSchema = z
   .strict();
 
 // How turns execute: omitted/null = the native loop; anything else names a vendor
-// harness. Each harness supports a subset of providers — enforced below (not at
-// turn time): claude-code requires anthropic; pi supports the providers a worker
-// can hold keys for.
+// harness. Each harness supports a subset of providers — enforced here (not at
+// turn time): claude-code requires anthropic.
 const runtimeSchema = z
-  .object({ type: z.enum(["native", "claude-code", "pi"]) })
+  .object({ type: z.enum(["native", "claude-code"]) })
   .strict();
 
-const PI_PROVIDERS = new Set(["anthropic", "openai", "togetherai"]);
 const runtimeSupportsModel = (
   runtime: { type: string } | null | undefined,
   provider: string,
 ): boolean => {
   if (runtime?.type === "claude-code") return provider === "anthropic";
-  if (runtime?.type === "pi") return PI_PROVIDERS.has(provider);
   return true;
 };
-const RUNTIME_MODEL_MSG =
-  "runtime claude-code requires an anthropic model; runtime pi requires an anthropic, openai, or togetherai model";
+const RUNTIME_MODEL_MSG = "runtime claude-code requires an anthropic model";
 
 const createFields = z
   .object({

@@ -472,29 +472,9 @@ describe("runHarnessTurn — error policy", () => {
     expect(lastEvent.payload.error_class).toBe("HARNESS");
   });
 
-  it("the registry keys by runtime type: a pi session uses the pi driver and commits driver:'pi'", async () => {
-    await seedAgentVersion({ runtime: "pi" });
-    await seedSession();
-    await seedUserMessage();
-
-    const piHarness = fakeHarness([async () => success("pi-1")]);
-    const outcome = await runTurn(job(), {
-      store,
-      llm: untouchableLlm,
-      sandbox,
-      db,
-      // A claude-code-only worker must NOT serve this session; a pi entry must.
-      harnesses: { "claude-code": fakeHarness([]), pi: piHarness },
-    });
-    expect(outcome).toBe("completed");
-    expect(piHarness.requests).toHaveLength(1);
-    expect((await sessionRow()).harness_state).toEqual({
-      driver: "pi",
-      sdk_session_id: "pi-1",
-    });
-  });
-
   it("a runtime this worker has no driver for → terminal turn_failed(HARNESS) naming it", async () => {
+    // "pi" is a RETIRED runtime: sessions pinned to it before its removal still carry
+    // it in agent_config_versions.runtime, and must fail honestly rather than crash.
     await seedAgentVersion({ runtime: "pi" });
     await seedSession();
     await seedUserMessage();

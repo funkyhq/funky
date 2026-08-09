@@ -32,13 +32,7 @@ await listenClient.connect();
 
 // One registry entry per harness this worker can serve, keyed by provider API keys
 // (independent of FUNKY_LLM); a harness session on a worker missing its driver fails
-// the turn with a terminal HARNESS error instead. claude-code needs an Anthropic
-// key; pi runs on any provider it holds a key for.
-const piKeys = {
-  ...(cfg.anthropicApiKey ? { anthropic: cfg.anthropicApiKey } : {}),
-  ...(cfg.openaiApiKey ? { openai: cfg.openaiApiKey } : {}),
-  ...(cfg.togetherApiKey ? { togetherai: cfg.togetherApiKey } : {}),
-};
+// the turn with a terminal HARNESS error instead. claude-code needs an Anthropic key.
 const harnesses: HarnessRegistry = {
   ...(cfg.anthropicApiKey
     ? {
@@ -47,16 +41,6 @@ const harnesses: HarnessRegistry = {
           db,
           apiKey: cfg.anthropicApiKey,
           cwdRoot: cfg.harnessCwdRoot,
-          scratchRoot: cfg.harnessScratchRoot,
-        }),
-      }
-    : {}),
-  ...(Object.keys(piKeys).length > 0
-    ? {
-        pi: makeHarness({
-          driver: "pi",
-          db,
-          apiKeys: piKeys,
           scratchRoot: cfg.harnessScratchRoot,
         }),
       }
