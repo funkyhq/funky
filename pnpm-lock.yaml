@@ -171,6 +171,12 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
+  packages/agent:
+    dependencies:
+      '@funky/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/configs:
     dependencies:
       '@funky/db':
@@ -189,6 +195,12 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  packages/core:
+    dependencies:
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
 
   packages/db:
     dependencies:
