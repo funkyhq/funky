@@ -40,23 +40,6 @@ describe("POST /v1/agents (create)", () => {
     expect(fake.create).toHaveBeenCalledWith(CTX, body);
   });
 
-  it.each([
-    ["anthropic", "claude-sonnet-5"],
-    ["openai", "gpt-5"],
-    ["togetherai", "openai/gpt-oss-20b"],
-  ])("accepts runtime pi with a %s model and passes it through", async (provider, model) => {
-    const agent = agentFixture();
-    const { app, fake } = makeApp({
-      agents: { create: vi.fn().mockResolvedValue({ agent, created: true }) },
-    });
-
-    const body = createBody({ runtime: { type: "pi" }, model: { provider, model } });
-    const res = await post(app, "/v1/agents", body);
-
-    expect(res.status).toBe(201);
-    expect(fake.create).toHaveBeenCalledWith(CTX, body);
-  });
-
   it("accepts a Together AI model for the native runtime", async () => {
     const agent = agentFixture();
     const { app, fake } = makeApp({
@@ -98,7 +81,7 @@ describe("POST /v1/agents (create)", () => {
     ["too many metadata pairs", createBody({ metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, "v"])) })],
     ["unknown runtime type", createBody({ runtime: { type: "langchain" } })],
     ["runtime claude-code with a non-anthropic model", createBody({ runtime: { type: "claude-code" }, model: { provider: "openai", model: "gpt-x" } })],
-    ["runtime pi with an unsupported provider", createBody({ runtime: { type: "pi" }, model: { provider: "google", model: "gemini-x" } })],
+    ["the retired pi runtime", createBody({ runtime: { type: "pi" }, model: { provider: "anthropic", model: "claude-sonnet-5" } })],
   ])("rejects %s with 400 and does not call the service", async (_label, body) => {
     const { app, fake } = makeApp();
 

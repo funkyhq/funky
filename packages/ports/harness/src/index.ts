@@ -11,29 +11,27 @@ export {
   latestSdkSessionId,
   type DrizzleSessionStoreOptions,
 } from "./drivers/claude-code-store";
-export { PiHarness, type PiHarnessOptions, type PiProviderKeys } from "./drivers/pi";
-export { PiTranscriptStore, type PiTranscriptStoreOptions } from "./drivers/pi-store";
 
 import type { Db } from "@funky/db";
 import type { HarnessPort } from "./port";
 import { ClaudeCodeHarness } from "./drivers/claude-code";
-import { PiHarness, type PiProviderKeys } from "./drivers/pi";
 
-/** Driver selection at the entrypoint, mirroring makeLlm/makeSandbox. */
+/** Driver selection at the entrypoint, mirroring makeLlm/makeSandbox. Deliberately a
+ *  union of one: the `never` guard below stays a compile error when a driver is added
+ *  here but not handled. */
 export type HarnessConfig = { db: Db; scratchRoot?: string } & (
   | { driver: "claude-code"; apiKey: string; cwdRoot?: string }
-  | { driver: "pi"; apiKeys: PiProviderKeys }
 );
 
 export function makeHarness(cfg: HarnessConfig): HarnessPort {
   switch (cfg.driver) {
     case "claude-code":
       return new ClaudeCodeHarness(cfg);
-    case "pi":
-      return new PiHarness(cfg);
     default: {
-      const never: never = cfg;
-      throw new Error(`unknown harness driver: ${JSON.stringify(never)}`);
+      // Narrows on the discriminant, not `cfg`: a one-member union doesn't narrow to
+      // never, and stringifying `cfg` would put the API key in the message.
+      const never: never = cfg.driver;
+      throw new Error(`unknown harness driver: ${String(never)}`);
     }
   }
 }

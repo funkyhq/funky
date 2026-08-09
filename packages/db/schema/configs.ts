@@ -27,10 +27,11 @@ import {
 /** Mirrors what the AI SDK needs to construct a model. Validated with zod at the API edge. */
 /** How the agent's turns execute. null/omitted = "native": Funky's own loop
  *  (reducer + LLM port). Anything else names a vendor harness that drives the turn
- *  (packages/ports/harness): "claude-code" = the Claude Code SDK, "pi" = the pi
- *  coding agent. Behavior, so it lives on VERSIONS and is pinned per session — a
- *  session's runtime never changes mid-life. */
-export type RuntimeConfig = { type: "native" } | { type: "claude-code" } | { type: "pi" };
+ *  (packages/ports/harness): "claude-code" = the Claude Code SDK. Behavior, so it
+ *  lives on VERSIONS and is pinned per session — a session's runtime never changes
+ *  mid-life. Retired runtimes are NOT removed from stored rows: a session still
+ *  pinned to one fails its next turn with a terminal HARNESS error naming it. */
+export type RuntimeConfig = { type: "native" } | { type: "claude-code" };
 
 /** The harness driver names — every runtime except the native loop. Keyed on by the
  *  worker's driver registry and recorded in sessions.harness_state.driver. */
