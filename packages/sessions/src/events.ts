@@ -57,9 +57,7 @@ export const eventPayloadSchemas = {
     // v1 CAP: at most one call per message. The log format supports N — lifting the
     // cap for parallel tool use is a runtime change, not a schema migration.
     tool_calls: z.array(toolCallSchema).max(1).default([]),
-    usage: z
-      .object({ input_tokens: z.number().int(), output_tokens: z.number().int() })
-      .optional(),
+    usage: z.object({ input_tokens: z.number().int(), output_tokens: z.number().int() }).optional(),
   }),
 
   tool_result: z.object({

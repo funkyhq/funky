@@ -185,11 +185,7 @@ export class AgentsService {
       .update(agentConfigs)
       .set({ archivedAt: new Date(), updatedAt: new Date() })
       .where(
-        and(
-          eq(agentConfigs.id, id),
-          eq(agentConfigs.namespace, ctx.namespace),
-          isNullArchived(),
-        ),
+        and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, ctx.namespace), isNullArchived()),
       );
     void res;
     return this.get(ctx, id); // throws NotFound if it never existed in this ns

@@ -1,62 +1,62 @@
-import { useState } from 'react'
-import { Box, Layers } from 'lucide-react'
-import { environments as envsApi } from '../lib/api'
-import type { Environment } from '../lib/types'
-import { networkPolicy, networkSummary, type NetworkMode } from '../lib/network'
-import { errMsg, slug } from '../lib/format'
-import { Avatar, Badge, Button, Checkbox, Input, Modal, Textarea } from '../ui/ui'
-import { ArchiveItem, EmptyState, Kebab, NetworkFields, PageHeader, SelectionBar } from './parts'
-import { useSelection } from './data'
+import { useState } from "react";
+import { Box, Layers } from "lucide-react";
+import { environments as envsApi } from "../lib/api";
+import type { Environment } from "../lib/types";
+import { networkPolicy, networkSummary, type NetworkMode } from "../lib/network";
+import { errMsg, slug } from "../lib/format";
+import { Avatar, Badge, Button, Checkbox, Input, Modal, Textarea } from "../ui/ui";
+import { ArchiveItem, EmptyState, Kebab, NetworkFields, PageHeader, SelectionBar } from "./parts";
+import { useSelection } from "./data";
 
 export function Environments({
   environments,
   reload,
   notify,
 }: {
-  environments: Environment[]
-  reload: () => Promise<void>
-  notify: (msg: string) => void
+  environments: Environment[];
+  reload: () => Promise<void>;
+  notify: (msg: string) => void;
 }) {
-  const sel = useSelection()
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [desc, setDesc] = useState('')
-  const [networkMode, setNetworkMode] = useState<NetworkMode>('unrestricted')
-  const [allowedHosts, setAllowedHosts] = useState('')
-  const [saving, setSaving] = useState(false)
+  const sel = useSelection();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [networkMode, setNetworkMode] = useState<NetworkMode>("unrestricted");
+  const [allowedHosts, setAllowedHosts] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function create() {
     if (!name.trim()) {
-      notify('Name is required.')
-      return
+      notify("Name is required.");
+      return;
     }
-    setSaving(true)
+    setSaving(true);
     try {
       await envsApi.create({
         name: name.trim(),
         description: desc.trim() || null,
         network: networkPolicy(networkMode, allowedHosts),
-      })
-      setOpen(false)
-      setName('')
-      setDesc('')
-      setNetworkMode('unrestricted')
-      setAllowedHosts('')
-      await reload()
+      });
+      setOpen(false);
+      setName("");
+      setDesc("");
+      setNetworkMode("unrestricted");
+      setAllowedHosts("");
+      await reload();
     } catch (e) {
-      notify(errMsg(e))
+      notify(errMsg(e));
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function archive(ids: string[]) {
     try {
-      await Promise.all(ids.map((id) => envsApi.archive(id)))
-      sel.clear()
-      await reload()
+      await Promise.all(ids.map((id) => envsApi.archive(id)));
+      sel.clear();
+      await reload();
     } catch (e) {
-      notify(errMsg(e))
+      notify(errMsg(e));
     }
   }
 
@@ -91,13 +91,22 @@ export function Environments({
                   </div>
                   <div className="row__sub">{slug(e.name)}</div>
                 </div>
-                <div className="row__excerpt">{e.description ?? ''}</div>
+                <div className="row__excerpt">{e.description ?? ""}</div>
                 <Badge tone="neutral">{networkSummary(e.network)}</Badge>
                 <Badge tone="green" dot>
                   Active
                 </Badge>
               </div>
-              <Kebab>{(close) => <ArchiveItem onClick={() => { close(); void archive([e.id]) }} />}</Kebab>
+              <Kebab>
+                {(close) => (
+                  <ArchiveItem
+                    onClick={() => {
+                      close();
+                      void archive([e.id]);
+                    }}
+                  />
+                )}
+              </Kebab>
             </div>
           ))}
         </div>
@@ -113,7 +122,7 @@ export function Environments({
               Cancel
             </Button>
             <Button variant="primary" fullWidth disabled={saving} onClick={() => void create()}>
-              {saving ? 'Creating…' : 'Create environment'}
+              {saving ? "Creating…" : "Create environment"}
             </Button>
           </>
         }
@@ -142,5 +151,5 @@ export function Environments({
         onArchive={() => void archive([...sel.ids])}
       />
     </div>
-  )
+  );
 }

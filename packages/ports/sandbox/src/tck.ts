@@ -9,7 +9,13 @@
 
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it as baseIt } from "vitest";
-import { type ExecEvent, type Executor, type SandboxDriver, SandboxGoneError, SandboxUnavailableError } from "./port";
+import {
+  type ExecEvent,
+  type Executor,
+  type SandboxDriver,
+  SandboxGoneError,
+  SandboxUnavailableError,
+} from "./port";
 import type { ResolvedEnv } from "@funky/db/schema";
 
 const SPEC: ResolvedEnv = {
@@ -36,7 +42,10 @@ export function runSandboxTck(
   opts?: { timeoutMs?: number }, // remote drivers provision + poll over the network
 ): void {
   const timeout = opts?.timeoutMs;
-  const it = timeout === undefined ? baseIt : (n: string, fn: () => Promise<void>) => baseIt(n, { timeout }, fn);
+  const it =
+    timeout === undefined
+      ? baseIt
+      : (n: string, fn: () => Promise<void>) => baseIt(n, { timeout }, fn);
   describe(`sandbox TCK: ${name}`, () => {
     // Every case provisions its own sandbox (unique sessionId) and registers teardown.
     const cleanups: Array<() => Promise<void>> = [];
@@ -44,7 +53,11 @@ export function runSandboxTck(
       for (const c of cleanups.splice(0)) await c().catch(() => {});
     }, timeout);
 
-    async function sandbox(): Promise<{ driver: SandboxDriver; handle: Awaited<ReturnType<SandboxDriver["provision"]>>; exec: Executor }> {
+    async function sandbox(): Promise<{
+      driver: SandboxDriver;
+      handle: Awaited<ReturnType<SandboxDriver["provision"]>>;
+      exec: Executor;
+    }> {
       const driver = makeDriver();
       const handle = await driver.provision(SPEC, randomUUID());
       cleanups.push(() => driver.teardown(handle));
@@ -105,12 +118,16 @@ export function runSandboxTck(
     it("5. attach to an unknown idemKey throws SandboxUnavailableError", async () => {
       const { exec } = await sandbox();
       // No result to observe → infrastructure error, never a synthesized exit code.
-      await expect(collect(exec.attach("never-ran"))).rejects.toBeInstanceOf(SandboxUnavailableError);
+      await expect(collect(exec.attach("never-ran"))).rejects.toBeInstanceOf(
+        SandboxUnavailableError,
+      );
     });
 
     it("6. output over 200KB is truncated", async () => {
       const { exec } = await sandbox();
-      const r = await collect(exec.exec({ cmd: `head -c 300000 /dev/zero | tr '\\0' 'x'`, idemKey: "k6" }));
+      const r = await collect(
+        exec.exec({ cmd: `head -c 300000 /dev/zero | tr '\\0' 'x'`, idemKey: "k6" }),
+      );
       expect(r.exit.truncated).toBe(true);
       expect(r.stdout.length).toBe(200_000);
     });

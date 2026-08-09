@@ -39,10 +39,10 @@
   --red-700: #c42a20;
 
   /* ---- typography ---- */
-  --font-display: 'Pixelify Sans', system-ui, sans-serif;
-  --font-heading: 'Poppins', system-ui, sans-serif;
-  --font-body: 'Nunito', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-display: "Pixelify Sans", system-ui, sans-serif;
+  --font-heading: "Poppins", system-ui, sans-serif;
+  --font-body: "Nunito", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* ---- radii ---- */
   --radius-pixel: 4px;

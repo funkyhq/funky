@@ -104,7 +104,9 @@ export const turnJobs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("turn_jobs_queued").on(t.runAt).where(sql`${t.state} = 'queued'`),
+    index("turn_jobs_queued")
+      .on(t.runAt)
+      .where(sql`${t.state} = 'queued'`),
     index("turn_jobs_active_session")
       .on(t.sessionId)
       .where(sql`${t.state} IN ('queued', 'running')`),

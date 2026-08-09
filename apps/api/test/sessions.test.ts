@@ -75,13 +75,21 @@ describe("POST /v1/sessions (create)", () => {
     ["missing agent", createSessionBody({ agent: undefined })],
     ["non-uuid agent", createSessionBody({ agent: "not-a-uuid" })],
     ["agent version < 1", createSessionBody({ agent: { id: AGENT_ID, version: 0 } })],
-    ["agent object with extra field", createSessionBody({ agent: { id: AGENT_ID, version: 1, x: 1 } })],
+    [
+      "agent object with extra field",
+      createSessionBody({ agent: { id: AGENT_ID, version: 1, x: 1 } }),
+    ],
     ["missing environment_id", createSessionBody({ environment_id: undefined })],
     ["non-uuid environment_id", createSessionBody({ environment_id: "nope" })],
     ["title too long", createSessionBody({ title: "x".repeat(257) })],
     ["non-uuid id", createSessionBody({ id: "not-a-uuid" })],
     ["unknown top-level field (strict)", createSessionBody({ nope: true })],
-    ["too many metadata pairs", createSessionBody({ metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, "v"])) })],
+    [
+      "too many metadata pairs",
+      createSessionBody({
+        metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, "v"])),
+      }),
+    ],
   ])("rejects %s with 400 and does not call the service", async (_label, body) => {
     const { app, fakeSessions } = makeApp();
     const res = await post(app, "/v1/sessions", body);
@@ -125,7 +133,9 @@ describe("GET /v1/sessions (list)", () => {
 describe("GET /v1/sessions/:id (retrieve)", () => {
   it("returns the session from the service", async () => {
     const session = sessionFixture();
-    const { app, fakeSessions } = makeApp({ sessions: { get: vi.fn().mockResolvedValue(session) } });
+    const { app, fakeSessions } = makeApp({
+      sessions: { get: vi.fn().mockResolvedValue(session) },
+    });
 
     const res = await get(app, `/v1/sessions/${SESSION_ID}`);
 
@@ -145,7 +155,10 @@ describe("GET /v1/sessions/:id (retrieve)", () => {
 
 describe("POST /v1/sessions/:id/archive", () => {
   it("archives and returns the session", async () => {
-    const archived = sessionFixture({ status: "archived", archived_at: "2026-01-02T00:00:00.000Z" });
+    const archived = sessionFixture({
+      status: "archived",
+      archived_at: "2026-01-02T00:00:00.000Z",
+    });
     const { app, fakeSessions } = makeApp({
       sessions: { archive: vi.fn().mockResolvedValue(archived) },
     });
@@ -239,7 +252,9 @@ describe("GET /v1/sessions/:id/events", () => {
 
   it("maps after_seq and limit to service options", async () => {
     const { app, fakeSessions } = makeApp({
-      sessions: { getEvents: vi.fn().mockResolvedValue({ data: [], has_more: false, last_seq: 9 }) },
+      sessions: {
+        getEvents: vi.fn().mockResolvedValue({ data: [], has_more: false, last_seq: 9 }),
+      },
     });
 
     await get(app, `/v1/sessions/${SESSION_ID}/events?after_seq=3&limit=50`);

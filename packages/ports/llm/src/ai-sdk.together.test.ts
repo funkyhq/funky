@@ -48,9 +48,7 @@ describe("AiSdkLlm (Together AI HTTP contract)", () => {
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toMatch(/\/v1\/chat\/completions$/);
-    expect(new Headers(init?.headers).get("authorization")).toBe(
-      "Bearer together-test-key",
-    );
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer together-test-key");
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     expect(body.model).toBe(model.model);
     expect(body.parallel_tool_calls).toBe(false);

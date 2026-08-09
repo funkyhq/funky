@@ -160,7 +160,10 @@ function pickSingleToolCall(
 // An assistant tool call and its paired tool result must share a toolCallId; we reuse the
 // tool message's idemKey as that id (the log already pairs result → call by idemKey), so the
 // reconstruction round-trips cleanly.
-function toModelMessages(messages: ChatMessage[]): { instructions?: string; messages: ModelMessage[] } {
+function toModelMessages(messages: ChatMessage[]): {
+  instructions?: string;
+  messages: ModelMessage[];
+} {
   const systemParts: string[] = [];
   const out: ModelMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -178,7 +181,12 @@ function toModelMessages(messages: ChatMessage[]): { instructions?: string; mess
           const id = next && next.role === "tool" ? toolUseId(next.idemKey) : `call-${i}`;
           const parts: Array<TextPart | ToolCallPart> = [];
           if (m.content) parts.push({ type: "text", text: m.content });
-          parts.push({ type: "tool-call", toolCallId: id, toolName: EXEC_TOOL, input: execInput(m.toolCall) });
+          parts.push({
+            type: "tool-call",
+            toolCallId: id,
+            toolName: EXEC_TOOL,
+            input: execInput(m.toolCall),
+          });
           out.push({ role: "assistant", content: parts });
         } else {
           out.push({ role: "assistant", content: m.content });
@@ -230,7 +238,9 @@ function classify(err: unknown): LlmTransientError | LlmPermanentError {
     return new LlmPermanentError(err.message);
   }
   const msg = err instanceof Error ? err.message : String(err);
-  if (/timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed|network/i.test(msg)) {
+  if (
+    /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed|network/i.test(msg)
+  ) {
     return new LlmTransientError(msg);
   }
   return new LlmPermanentError(msg);

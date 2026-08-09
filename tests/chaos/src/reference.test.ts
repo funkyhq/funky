@@ -6,7 +6,15 @@
 // its output reached the tool_result (the plumbing every other file depends on).
 
 import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
-import { buildWorld, normalize, REFERENCE_LOG, resetDb, stopPg, type World, waitFor } from "./harness";
+import {
+  buildWorld,
+  normalize,
+  REFERENCE_LOG,
+  resetDb,
+  stopPg,
+  type World,
+  waitFor,
+} from "./harness";
 
 let world: World;
 beforeEach(resetDb);
@@ -19,7 +27,11 @@ it("happy path: no chaos → the canonical event log, command runs once", async 
   await world.enqueueTurnJob();
 
   await world.startWorker();
-  await waitFor(async () => (await world.eventTypes()).at(-1) === "turn_completed", 30_000, "completed");
+  await waitFor(
+    async () => (await world.eventTypes()).at(-1) === "turn_completed",
+    30_000,
+    "completed",
+  );
 
   const events = await world.readEvents();
   expect(normalize(events)).toEqual(REFERENCE_LOG);

@@ -2,19 +2,8 @@
 // The whole app is exercised network-free via buildApp(deps) + app.request(),
 // exactly as app.ts advertises. No database, no HTTP server.
 import { vi, type Mock } from "vitest";
-import type {
-  Agent,
-  AgentsService,
-  AgentVersion,
-  AuthContext,
-  EnvsService,
-} from "@funky/configs";
-import type {
-  ApiSessionEvent,
-  EventStore,
-  Session,
-  SessionsService,
-} from "@funky/sessions";
+import type { Agent, AgentsService, AgentVersion, AuthContext, EnvsService } from "@funky/configs";
+import type { ApiSessionEvent, EventStore, Session, SessionsService } from "@funky/sessions";
 import { buildApp } from "../src/app";
 import type { NamespaceSource } from "../src/config";
 import type { EventBus } from "../src/sse";
@@ -144,12 +133,7 @@ export function get(app: App, path: string, headers: Record<string, string> = {}
   return app.request(path, { headers });
 }
 
-export function post(
-  app: App,
-  path: string,
-  body?: unknown,
-  headers: Record<string, string> = {},
-) {
+export function post(app: App, path: string, body?: unknown, headers: Record<string, string> = {}) {
   return app.request(path, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
@@ -202,8 +186,7 @@ export function createBody(over: Record<string, unknown> = {}): Record<string, u
 }
 
 /** uuid v7 shape — used to assert the request-id header/envelope value. */
-export const UUID_V7 =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ------------------------------------------------------------- session fixtures
 

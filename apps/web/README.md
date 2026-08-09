@@ -19,12 +19,12 @@ backend, injecting the bearer token — so the token never ships to the browser 
 no CORS to configure (the API is left untouched). Config is read from the **monorepo root
 `.env`** (the same file `docker compose` uses):
 
-| var | meaning | default |
-| --- | --- | --- |
-| `FUNKY_API_URL` | where the API listens | `http://localhost:3000` |
-| `FUNKY_AUTH_TOKEN` | bearer token; leave unset if the API runs `FUNKY_AUTH=disabled` | — |
-| `ANTHROPIC_API_KEY` | enables Anthropic models in the model picker | — |
-| `TOGETHER_API_KEY` | enables Together AI models in the model picker | — |
+| var                 | meaning                                                         | default                 |
+| ------------------- | --------------------------------------------------------------- | ----------------------- |
+| `FUNKY_API_URL`     | where the API listens                                           | `http://localhost:3000` |
+| `FUNKY_AUTH_TOKEN`  | bearer token; leave unset if the API runs `FUNKY_AUTH=disabled` | —                       |
+| `ANTHROPIC_API_KEY` | enables Anthropic models in the model picker                    | —                       |
+| `TOGETHER_API_KEY`  | enables Together AI models in the model picker                  | —                       |
 
 `docker compose up --build` (from the repo root) now brings the console up **with** the
 backend — it's the `web` service, running this same dev server in a container:

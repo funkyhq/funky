@@ -9,7 +9,15 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppendHook } from "@funky/sessions";
 import type { WorkerHandle } from "worker/worker";
 import { KillWorker } from "./fixtures";
-import { buildWorld, normalize, REFERENCE_LOG, resetDb, stopPg, type World, waitFor } from "./harness";
+import {
+  buildWorld,
+  normalize,
+  REFERENCE_LOG,
+  resetDb,
+  stopPg,
+  type World,
+  waitFor,
+} from "./harness";
 
 let world: World;
 beforeEach(resetDb);
@@ -63,7 +71,9 @@ describe("H1 — crash at each append boundary → the log always matches", () =
 
       // I2 — exactly one tool_result per tool_call (no duplicate execution recorded).
       const toolCalls = events.filter(
-        (e) => e.type === "assistant_message" && (e.payload as { tool_calls: unknown[] }).tool_calls.length > 0,
+        (e) =>
+          e.type === "assistant_message" &&
+          (e.payload as { tool_calls: unknown[] }).tool_calls.length > 0,
       );
       const toolResults = events.filter((e) => e.type === "tool_result");
       expect(toolResults).toHaveLength(toolCalls.length);

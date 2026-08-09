@@ -1,68 +1,76 @@
-import { useState } from 'react'
-import { Cpu } from 'lucide-react'
-import { agents as agentsApi } from '../lib/api'
-import type { Agent } from '../lib/types'
-import { DEFAULT_MODEL_LABEL, modelConfigFor, modelLabel } from '../lib/models'
-import { errMsg, initials } from '../lib/format'
-import { Avatar, Badge, Button, Checkbox, Modal, Textarea, Input } from '../ui/ui'
-import { ArchiveItem, EmptyState, Kebab, ModelField, PageHeader, RuntimeField, SelectionBar } from './parts'
-import { useSelection } from './data'
+import { useState } from "react";
+import { Cpu } from "lucide-react";
+import { agents as agentsApi } from "../lib/api";
+import type { Agent } from "../lib/types";
+import { DEFAULT_MODEL_LABEL, modelConfigFor, modelLabel } from "../lib/models";
+import { errMsg, initials } from "../lib/format";
+import { Avatar, Badge, Button, Checkbox, Modal, Textarea, Input } from "../ui/ui";
+import {
+  ArchiveItem,
+  EmptyState,
+  Kebab,
+  ModelField,
+  PageHeader,
+  RuntimeField,
+  SelectionBar,
+} from "./parts";
+import { useSelection } from "./data";
 
 export function Agents({
   agents,
   reload,
   notify,
 }: {
-  agents: Agent[]
-  reload: () => Promise<void>
-  notify: (msg: string) => void
+  agents: Agent[];
+  reload: () => Promise<void>;
+  notify: (msg: string) => void;
 }) {
-  const sel = useSelection()
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [model, setModel] = useState(DEFAULT_MODEL_LABEL)
-  const [runtime, setRuntime] = useState<'native' | 'claude-code'>('native')
-  const [prompt, setPrompt] = useState('')
-  const [saving, setSaving] = useState(false)
+  const sel = useSelection();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [model, setModel] = useState(DEFAULT_MODEL_LABEL);
+  const [runtime, setRuntime] = useState<"native" | "claude-code">("native");
+  const [prompt, setPrompt] = useState("");
+  const [saving, setSaving] = useState(false);
 
   function chooseModel(next: string) {
-    setModel(next)
-    if (modelConfigFor(next).provider !== 'anthropic') setRuntime('native')
+    setModel(next);
+    if (modelConfigFor(next).provider !== "anthropic") setRuntime("native");
   }
 
   async function create() {
     if (!name.trim() || !prompt.trim()) {
-      notify('Name and system prompt are required.')
-      return
+      notify("Name and system prompt are required.");
+      return;
     }
-    setSaving(true)
+    setSaving(true);
     try {
       await agentsApi.create({
         name: name.trim(),
         system_prompt: prompt.trim(),
         model: modelConfigFor(model),
         runtime: { type: runtime },
-      })
-      setOpen(false)
-      setName('')
-      setPrompt('')
-      setModel(DEFAULT_MODEL_LABEL)
-      setRuntime('native')
-      await reload()
+      });
+      setOpen(false);
+      setName("");
+      setPrompt("");
+      setModel(DEFAULT_MODEL_LABEL);
+      setRuntime("native");
+      await reload();
     } catch (e) {
-      notify(errMsg(e))
+      notify(errMsg(e));
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function archive(ids: string[]) {
     try {
-      await Promise.all(ids.map((id) => agentsApi.archive(id)))
-      sel.clear()
-      await reload()
+      await Promise.all(ids.map((id) => agentsApi.archive(id)));
+      sel.clear();
+      await reload();
     } catch (e) {
-      notify(errMsg(e))
+      notify(errMsg(e));
     }
   }
 
@@ -96,12 +104,23 @@ export function Agents({
                   <div className="row__sub">{modelLabel(a.model)}</div>
                 </div>
                 <div className="row__excerpt">{a.system_prompt}</div>
-                {a.runtime?.type === 'claude-code' ? <Badge tone="neutral">Claude Code</Badge> : null}
+                {a.runtime?.type === "claude-code" ? (
+                  <Badge tone="neutral">Claude Code</Badge>
+                ) : null}
                 <Badge tone="green" dot>
                   Ready
                 </Badge>
               </div>
-              <Kebab>{(close) => <ArchiveItem onClick={() => { close(); void archive([a.id]) }} />}</Kebab>
+              <Kebab>
+                {(close) => (
+                  <ArchiveItem
+                    onClick={() => {
+                      close();
+                      void archive([a.id]);
+                    }}
+                  />
+                )}
+              </Kebab>
             </div>
           ))}
         </div>
@@ -117,7 +136,7 @@ export function Agents({
               Cancel
             </Button>
             <Button variant="primary" fullWidth disabled={saving} onClick={() => void create()}>
-              {saving ? 'Creating…' : 'Create agent'}
+              {saving ? "Creating…" : "Create agent"}
             </Button>
           </>
         }
@@ -146,5 +165,5 @@ export function Agents({
         onArchive={() => void archive([...sel.ids])}
       />
     </div>
-  )
+  );
 }

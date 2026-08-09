@@ -17,11 +17,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  createSdkMcpServer,
-  query as sdkQuery,
-  tool,
-} from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query as sdkQuery, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { Db } from "@funky/db";
@@ -156,7 +152,12 @@ export class ClaudeCodeHarness implements HarnessPort {
     };
 
     let result:
-      | { subtype: string; session_id: string; usage: { input_tokens: number; output_tokens: number }; errors?: string[] }
+      | {
+          subtype: string;
+          session_id: string;
+          usage: { input_tokens: number; output_tokens: number };
+          errors?: string[];
+        }
       | undefined;
 
     try {
@@ -294,8 +295,7 @@ export function makeExecToolHandler(ctx: {
         content: [
           {
             type: "text" as const,
-            text:
-              res.exitCode === 0 ? res.output : `${res.output}\n[exit code: ${res.exitCode}]`,
+            text: res.exitCode === 0 ? res.output : `${res.output}\n[exit code: ${res.exitCode}]`,
           },
         ],
         ...(res.exitCode !== 0 ? { isError: true } : {}),

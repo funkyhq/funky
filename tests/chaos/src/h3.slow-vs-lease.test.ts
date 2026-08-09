@@ -7,7 +7,15 @@
 
 import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
 import { scriptedLlm, sleepyLlm } from "./fixtures";
-import { buildWorld, normalize, REFERENCE_LOG, resetDb, stopPg, type World, waitFor } from "./harness";
+import {
+  buildWorld,
+  normalize,
+  REFERENCE_LOG,
+  resetDb,
+  stopPg,
+  type World,
+  waitFor,
+} from "./harness";
 
 let world: World;
 beforeEach(resetDb);
@@ -34,7 +42,11 @@ it("slow A + fresh B race the same session → one consistent, completed log", a
   await world.expireLease(jobId);
   await world.startWorker({ llm: scriptedLlm({ [world.sessionId]: world.script }) });
 
-  await waitFor(async () => (await world.eventTypes()).at(-1) === "turn_completed", 30_000, "completed");
+  await waitFor(
+    async () => (await world.eventTypes()).at(-1) === "turn_completed",
+    30_000,
+    "completed",
+  );
   // Give A time to wake (1s), lose its race, and settle before we assert.
   await waitFor(async () => (await world.jobExists(jobId)) === false, 30_000, "acked");
 

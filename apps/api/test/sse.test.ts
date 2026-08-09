@@ -36,10 +36,11 @@ beforeAll(async () => {
     NS,
     "a",
   ]);
-  await pg.pool.query(
-    "insert into env_configs (id, namespace, name) values ($1, $2, $3)",
-    [envConfigId, NS, "e"],
-  );
+  await pg.pool.query("insert into env_configs (id, namespace, name) values ($1, $2, $3)", [
+    envConfigId,
+    NS,
+    "e",
+  ]);
 }, 120_000);
 
 afterAll(async () => {
