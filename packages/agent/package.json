@@ -5,7 +5,14 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
     "@funky/core": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
   }
 }
