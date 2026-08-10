@@ -13,10 +13,7 @@ import * as fs from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Client, Pool } from "pg";
 import { createDb, type Db } from "@funky/db";
 import type { ResolvedEnv } from "@funky/db/schema";
@@ -72,12 +69,18 @@ async function startPg(): Promise<Pg> {
   await pool.query(
     `insert into agent_config_versions (agent_config_id, version, namespace, system_prompt, model)
      values ($1, 1, $2, $3, $4::jsonb)`,
-    [AGENT_ID, NS, "You are a chaos test agent.", JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" })],
+    [
+      AGENT_ID,
+      NS,
+      "You are a chaos test agent.",
+      JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" }),
+    ],
   );
-  await pool.query(
-    "insert into env_configs (id, namespace, name) values ($1,$2,$3)",
-    [ENV_ID, NS, "chaos-env"],
-  );
+  await pool.query("insert into env_configs (id, namespace, name) values ($1,$2,$3)", [
+    ENV_ID,
+    NS,
+    "chaos-env",
+  ]);
 
   return { container, pool, db: createDb(pool), uri };
 }
@@ -260,7 +263,9 @@ export async function buildWorld(
         NS,
         sessionId,
         1,
-        makeEvent({ sessionId, namespace: NS, seq: 1 }, "user_message", { content: textContent(text) }),
+        makeEvent({ sessionId, namespace: NS, seq: 1 }, "user_message", {
+          content: textContent(text),
+        }),
       );
     },
 

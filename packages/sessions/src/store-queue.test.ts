@@ -12,10 +12,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type Db } from "@funky/db";
@@ -61,10 +58,11 @@ beforeAll(async () => {
     NS,
     "test-agent",
   ]);
-  await pool.query(
-    "insert into env_configs (id, namespace, name) values ($1, $2, $3)",
-    [envConfigId, NS, "test-env"],
-  );
+  await pool.query("insert into env_configs (id, namespace, name) values ($1, $2, $3)", [
+    envConfigId,
+    NS,
+    "test-env",
+  ]);
 
   db = createDb(pool);
   store = new EventStore(db);
@@ -227,9 +225,9 @@ describe("JobQueue", () => {
 
   it("claims every job exactly once across two concurrent pullers, without blocking", async () => {
     const ids = Array.from({ length: 100 }, () => randomUUID());
-    await db.insert(turnJobs).values(
-      ids.map((id) => ({ id, namespace: NS, sessionId, kind: "turn" as JobKind })),
-    );
+    await db
+      .insert(turnJobs)
+      .values(ids.map((id) => ({ id, namespace: NS, sessionId, kind: "turn" as JobKind })));
 
     const drain = async (claimed: string[]) => {
       for (;;) {
@@ -304,10 +302,9 @@ describe("JobQueue", () => {
     // drive it to the dead-letter: attempts == max_attempts → 'dead'
     await pool.query("update turn_jobs set attempts = max_attempts where id = $1", [id]);
     await queue.nack(id);
-    const dead = await pool.query<{ state: string }>(
-      "select state from turn_jobs where id = $1",
-      [id],
-    );
+    const dead = await pool.query<{ state: string }>("select state from turn_jobs where id = $1", [
+      id,
+    ]);
     expect(dead.rows[0]!.state).toBe("dead");
     expect(await queue.pull()).toBeNull(); // a dead job is never handed out again
   });

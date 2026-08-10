@@ -14,7 +14,11 @@ afterEach(async () => {
   // LIFO: telemetry shuts down (final push-mode flush) BEFORE its receiver closes —
   // flushing at a dead endpoint burns seconds in exporter retries.
   for (const c of cleanups.splice(0).reverse()) await c();
-  for (const k of ["OTEL_SERVICE_NAME", "OTEL_RESOURCE_ATTRIBUTES", "OTEL_EXPORTER_OTLP_ENDPOINT"]) {
+  for (const k of [
+    "OTEL_SERVICE_NAME",
+    "OTEL_RESOURCE_ATTRIBUTES",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+  ]) {
     delete process.env[k];
   }
 });

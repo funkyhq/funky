@@ -9,18 +9,11 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type Db } from "@funky/db";
-import type {
-  HarnessPort,
-  HarnessTurnRequest,
-  HarnessTurnResult,
-} from "@funky/harness/port";
+import type { HarnessPort, HarnessTurnRequest, HarnessTurnResult } from "@funky/harness/port";
 import type { LlmPort } from "@funky/llm";
 import { type SandboxHandle, SubprocessDriver } from "@funky/sandbox";
 import {
@@ -92,8 +85,7 @@ afterEach(async () => {
 // ------------------------------------------------------------------------- helpers
 
 async function seedAgentVersion(opts: { maxIterations?: number; runtime?: string } = {}) {
-  const toolPolicy =
-    opts.maxIterations !== undefined ? { max_iterations: opts.maxIterations } : {};
+  const toolPolicy = opts.maxIterations !== undefined ? { max_iterations: opts.maxIterations } : {};
   await pool.query(
     `insert into agent_config_versions (agent_config_id, version, namespace, system_prompt, model, tool_policy, runtime)
      values ($1, 1, $2, $3, $4, $5, $6)`,
@@ -418,15 +410,24 @@ describe("runHarnessTurn — conflicts", () => {
     await seedSession();
     await seedUserMessage();
 
-    expect(await runTurn(job(), deps(fakeHarness([async () => { throw new Error("die"); }])))).toBe(
-      "retry_later",
-    );
+    expect(
+      await runTurn(
+        job(),
+        deps(
+          fakeHarness([
+            async () => {
+              throw new Error("die");
+            },
+          ]),
+        ),
+      ),
+    ).toBe("retry_later");
     const first = (await sessionRow()).harness_attempt;
     expect(first).toBeTruthy();
 
-    expect(await runTurn(job({ attempts: 2 }), deps(fakeHarness([async () => success("cc")])))).toBe(
-      "completed",
-    );
+    expect(
+      await runTurn(job({ attempts: 2 }), deps(fakeHarness([async () => success("cc")]))),
+    ).toBe("completed");
     const second = (await sessionRow()).harness_attempt;
     expect(second).toBeTruthy();
     expect(second).not.toBe(first); // the zombie's token is dead — its store writes bounce
@@ -499,7 +500,12 @@ describe("runHarnessTurn — error policy", () => {
     await seedSession();
     await seedUserMessage();
 
-    const die = () => fakeHarness([async () => { throw new Error("subprocess lost"); }]);
+    const die = () =>
+      fakeHarness([
+        async () => {
+          throw new Error("subprocess lost");
+        },
+      ]);
     expect(await runTurn(job({ attempts: 1 }), deps(die()))).toBe("retry_later");
     expect(await runTurn(job({ attempts: 5 }), deps(die()))).toBe("failed");
     const lastEvent = (await log()).at(-1) as SessionEvent<"turn_failed">;

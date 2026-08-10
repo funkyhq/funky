@@ -15,12 +15,7 @@
 
 import type { ChatMessage } from "@funky/llm";
 import { LlmPermanentError, LlmTransientError } from "@funky/llm";
-import {
-  type EventPayload,
-  type SessionEvent,
-  plainText,
-  textContent,
-} from "./events";
+import { type EventPayload, type SessionEvent, plainText, textContent } from "./events";
 import { nextAction } from "./reducer";
 import type { TurnOutcome } from "./turn";
 import { readMaxIterations } from "./turn";
@@ -55,7 +50,12 @@ export function buildContext(events: SessionEvent[], systemPrompt: string): Chat
       }
       case "tool_result": {
         const p = e.payload as EventPayload<"tool_result">;
-        messages.push({ role: "tool", idemKey: p.idem_key, output: p.output, exitCode: p.exit_code });
+        messages.push({
+          role: "tool",
+          idemKey: p.idem_key,
+          output: p.output,
+          exitCode: p.exit_code,
+        });
         break;
       }
       // turn_completed / turn_failed / session_provisioned / harness_attempt_started

@@ -57,8 +57,7 @@ export function nextAction(events: SessionEvent[], maxIterations: number): Actio
     .slice(lastAssistant + 1)
     .some(
       (e) =>
-        e.type === "tool_result" &&
-        (e.payload as EventPayload<"tool_result">).idem_key === idemKey,
+        e.type === "tool_result" && (e.payload as EventPayload<"tool_result">).idem_key === idemKey,
     );
 
   if (!answered) {

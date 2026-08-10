@@ -61,7 +61,10 @@ export async function startTelemetry(deps: TelemetryDeps): Promise<Telemetry> {
   // through diag, one line per failed export — never an exception into the pull loop.
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 
-  const resource = await buildResource({ env, ...(deps.metadataBaseUrl ? { metadataBaseUrl: deps.metadataBaseUrl } : {}) });
+  const resource = await buildResource({
+    env,
+    ...(deps.metadataBaseUrl ? { metadataBaseUrl: deps.metadataBaseUrl } : {}),
+  });
 
   const readers: IMetricReader[] = [];
   let metricsHandler: Telemetry["metricsHandler"];
@@ -70,7 +73,10 @@ export async function startTelemetry(deps: TelemetryDeps): Promise<Telemetry> {
       case "prometheus": {
         // withoutScopeInfo: label sets are frozen — no otel_scope_name on the series.
         // (target_info stays: a new, additive family that breaks no existing query.)
-        const exporter = new PrometheusExporter({ preventServerStart: true, withoutScopeInfo: true });
+        const exporter = new PrometheusExporter({
+          preventServerStart: true,
+          withoutScopeInfo: true,
+        });
         readers.push(exporter);
         metricsHandler = (req, res) => void exporter.getMetricsRequestHandler(req, res);
         break;
@@ -88,9 +94,8 @@ export async function startTelemetry(deps: TelemetryDeps): Promise<Telemetry> {
       case "gcm": {
         // Optional convenience for Google deploys; dynamic import keeps the module —
         // and its transitive google-auth machinery — out of every other deploy's boot.
-        const { MetricExporter } = await import(
-          "@google-cloud/opentelemetry-cloud-monitoring-exporter"
-        );
+        const { MetricExporter } =
+          await import("@google-cloud/opentelemetry-cloud-monitoring-exporter");
         readers.push(
           new PeriodicExportingMetricReader({
             exporter: new MetricExporter(),
@@ -133,7 +138,9 @@ export async function buildResource(opts: {
   });
   // envDetector reads OTEL_RESOURCE_ATTRIBUTES + OTEL_SERVICE_NAME from process.env.
   // Merged last: the operator's env wins over our defaults.
-  return defaultResource().merge(explicit).merge(detectResources({ detectors: [envDetector] }));
+  return defaultResource()
+    .merge(explicit)
+    .merge(detectResources({ detectors: [envDetector] }));
 }
 
 const GCP_METADATA_BASE = "http://metadata.google.internal";
@@ -195,8 +202,7 @@ function registerInstruments(
 
   meter
     .createObservableCounter("funky_worker_append_conflicts", {
-      description:
-        "Conditional-append races lost to another worker (split-brain smoke detector).",
+      description: "Conditional-append races lost to another worker (split-brain smoke detector).",
     })
     .addCallback((r) => r.observe(metrics.appendConflicts));
 

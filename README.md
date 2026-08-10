@@ -77,9 +77,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 # TOGETHER_API_KEY=...
 ```
+
 ```bash
 docker compose up -d --build worker
 ```
+
 Now the same curl commands drive a real model, writing and running its own shell commands.
 The native runtime supports Anthropic, OpenAI, and Together AI through their direct AI SDK
 providers. For example, a Together AI agent uses:
@@ -104,9 +106,11 @@ exposes its sandbox through an `exec` tool. See Together's
 FUNKY_SANDBOX=e2b
 E2B_API_KEY=e2b_...         # from https://e2b.dev
 ```
+
 ```bash
 docker compose up -d --build worker
 ```
+
 Now every session provisions an isolated [E2B](https://e2b.dev) sandbox, through
 [ComputeSDK](https://computesdk.com) so further providers can slot in behind the same
 driver.
@@ -124,6 +128,7 @@ durable event log. This is a self-contained walkthrough; no need to run the Quic
 FUNKY_AUTH_TOKEN=<any long random string>
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
 ```bash
 docker compose up --build -d
 # already running from the Quickstart? pick up the new key with: docker compose up -d --build worker
@@ -162,8 +167,8 @@ curl -s -X POST localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
 You'll see a `harness_attempt_started` event, then the agent run commands in its sandbox
 (`assistant_message` → `tool_result`) and answer — the same event stream as a native turn.
 
-> The **Console** at http://localhost:5173 can *view* a harness session, but can't yet
-> *create* one — use the `curl` above to create the agent with `runtime`.
+> The **Console** at http://localhost:5173 can _view_ a harness session, but can't yet
+> _create_ one — use the `curl` above to create the agent with `runtime`.
 
 The harness's commands execute in the session's Funky sandbox (exactly-once, crash-safe),
 and the Claude Code transcript is stored in Funky's Postgres — so a session survives worker
@@ -204,7 +209,7 @@ docker compose down -v    # ...and also delete the database volume
 
 ## Why Funky?
 
-Most runtimes put the agent *inside* the sandbox: its reasoning loop, memory, and state all
+Most runtimes put the agent _inside_ the sandbox: its reasoning loop, memory, and state all
 live in one box. When that box goes down, the agent and its in-flight work go with it. Funky
 decouples the agent from the box it runs in.
 
@@ -215,6 +220,7 @@ nothing lost and nothing run twice. Run one agent or a multi-agent swarm on the 
 foundation.
 
 ## Architecture Diagram
+
 <img src="architecture_diagram.svg" alt="Architecture diagram" width="700">
 
 ## Contributing

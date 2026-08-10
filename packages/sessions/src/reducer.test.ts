@@ -27,8 +27,7 @@ const text = (t: string): ContentBlock[] => [{ type: "text", text: t }];
 const EXEC: ToolCall = { kind: "exec", cmd: "echo hi" };
 
 const user = (seq: number) => ev(seq, "user_message", { content: text(`u${seq}`) });
-const asstTool = (seq: number) =>
-  ev(seq, "assistant_message", { content: [], tool_calls: [EXEC] });
+const asstTool = (seq: number) => ev(seq, "assistant_message", { content: [], tool_calls: [EXEC] });
 const asstDone = (seq: number) =>
   ev(seq, "assistant_message", { content: text("done"), tool_calls: [] });
 const toolResult = (seq: number, forAssistantSeq: number) =>
@@ -62,9 +61,9 @@ describe("nextAction — the basic transitions", () => {
   });
 
   it("[user, assistant(tool), tool_result, assistant(no tools)] → finish", () => {
-    expect(
-      nextAction([user(1), asstTool(2), toolResult(3, 2), asstDone(4)], 20),
-    ).toEqual({ kind: "finish" });
+    expect(nextAction([user(1), asstTool(2), toolResult(3, 2), asstDone(4)], 20)).toEqual({
+      kind: "finish",
+    });
   });
 
   it("[..., turn_completed] → noop (stale job)", () => {
@@ -125,13 +124,7 @@ describe("★ RESUME PROPERTY", () => {
   it("every prefix of a happy-path log yields the action that produced the next event", () => {
     // The full log and, for each prefix length, the action that the reducer should emit —
     // i.e. the action a worker would take to append events[length].
-    const log: SessionEvent[] = [
-      user(1),
-      asstTool(2),
-      toolResult(3, 2),
-      asstDone(4),
-      completed(5),
-    ];
+    const log: SessionEvent[] = [user(1), asstTool(2), toolResult(3, 2), asstDone(4), completed(5)];
     const expectedAfterPrefix: Record<number, ReturnType<typeof nextAction>> = {
       1: { kind: "infer" }, //          [user]                       → produce asstTool(2)
       2: { kind: "exec_tool", call: EXEC, idemKey: `${SID}:2:0` }, // → produce toolResult(3)

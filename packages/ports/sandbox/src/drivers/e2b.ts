@@ -21,9 +21,8 @@ export type E2bProviderOptions = { apiKey: string };
 export type E2bProbe = (sandboxId: string) => Promise<unknown>;
 
 export function e2bProvider(opts: E2bProviderOptions): ComputeProvider {
-  return withProbedGetById(
-    e2b({ apiKey: opts.apiKey }),
-    (id) => E2BSandbox.connect(id, { apiKey: opts.apiKey }),
+  return withProbedGetById(e2b({ apiKey: opts.apiKey }), (id) =>
+    E2BSandbox.connect(id, { apiKey: opts.apiKey }),
   );
 }
 

@@ -24,7 +24,14 @@ const EnvSchema = z
       z
         .string()
         .default("prometheus")
-        .transform((s) => [...new Set(s.split(",").map((m) => m.trim()).filter(Boolean))])
+        .transform((s) => [
+          ...new Set(
+            s
+              .split(",")
+              .map((m) => m.trim())
+              .filter(Boolean),
+          ),
+        ])
         .pipe(
           z
             .array(

@@ -1,0 +1,9 @@
+# Generated / vendored
+node_modules
+dist
+pnpm-lock.yaml
+packages/db/migrations
+
+# Agent workspace scratch (gitignored)
+.context
+.conductor

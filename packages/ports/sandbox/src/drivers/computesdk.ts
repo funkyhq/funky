@@ -174,7 +174,8 @@ class ComputeSdkExecutor implements Executor {
       // under this idemKey, and neither subclass fits that: base unavailability.
       const r = await sb.runCommand(`test -d ${shq(dir)}`);
       if (r.exitCode === 127) throw unavailable(self.sandboxId, r);
-      if (r.exitCode !== 0) throw new SandboxUnavailableError(`no running command for idemKey: ${idemKey}`);
+      if (r.exitCode !== 0)
+        throw new SandboxUnavailableError(`no running command for idemKey: ${idemKey}`);
       yield* tail(sb, self.sandboxId, dir);
     })();
   }
@@ -257,7 +258,11 @@ function pollScript(dir: string, offset: number, cap: number): string {
   ].join("\n");
 }
 
-async function* tail(sb: SandboxInterface, sandboxId: string, dir: string): AsyncGenerator<ExecEvent> {
+async function* tail(
+  sb: SandboxInterface,
+  sandboxId: string,
+  dir: string,
+): AsyncGenerator<ExecEvent> {
   let offset = 0; // bytes of `out` already yielded; never exceeds MAX_OUTPUT_BYTES
   for (;;) {
     const r = await sb.runCommand(pollScript(dir, offset, MAX_OUTPUT_BYTES - offset));
@@ -293,15 +298,25 @@ function keyDir(workdir: string, idemKey: string): string {
 // A failed wrapper cannot say WHY the sandbox was unobservable (the provider folds its
 // caught transport errors into exit 127), so this is unreachable, never gone: a retry
 // reconnects through getById, which CAN tell — and never terminal on ambiguous evidence.
-function unavailable(sandboxId: string, r: { exitCode: number; stderr: string }): SandboxUnreachableError {
+function unavailable(
+  sandboxId: string,
+  r: { exitCode: number; stderr: string },
+): SandboxUnreachableError {
   return new SandboxUnreachableError(
     `sandbox ${sandboxId} unreachable (wrapper exit ${r.exitCode}): ${r.stderr.trim()}`,
   );
 }
 
-function parseHandle(handle: SandboxHandle, providerName: string): { sandboxId: string; workdir: string } {
+function parseHandle(
+  handle: SandboxHandle,
+  providerName: string,
+): { sandboxId: string; workdir: string } {
   const { sandboxId, workdir } = handle as { sandboxId?: unknown; workdir?: unknown };
-  if (handle.driver !== providerName || typeof sandboxId !== "string" || typeof workdir !== "string") {
+  if (
+    handle.driver !== providerName ||
+    typeof sandboxId !== "string" ||
+    typeof workdir !== "string"
+  ) {
     throw new Error(`not a ${providerName} sandbox handle`);
   }
   return { sandboxId, workdir };

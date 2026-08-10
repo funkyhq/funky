@@ -64,10 +64,7 @@ export const agentConfigs = pgTable(
     namespace: text("namespace").notNull(), // opaque partition key ("default" in OSS)
     name: text("name").notNull(), // 1-256 chars, free-form; validated at API edge
     description: text("description"), // identity-level metadata: mutable WITHOUT a version bump
-    metadata: jsonb("metadata")
-      .$type<Record<string, string>>()
-      .notNull()
-      .default({}), // user labels; enforce ≤16 pairs at the API edge
+    metadata: jsonb("metadata").$type<Record<string, string>>().notNull().default({}), // user labels; enforce ≤16 pairs at the API edge
     latestVersion: integer("latest_version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -98,10 +95,7 @@ export const agentConfigVersions = pgTable(
     // ---- the actual config (name/model/system prompt requirement lives here) ----
     systemPrompt: text("system_prompt").notNull(),
     model: jsonb("model").$type<ModelConfig>().notNull(),
-    toolPolicy: jsonb("tool_policy")
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}), // allowed tools, max turns/iterations, budgets
+    toolPolicy: jsonb("tool_policy").$type<Record<string, unknown>>().notNull().default({}), // allowed tools, max turns/iterations, budgets
     // null = native loop (backwards compatible). Validated with zod at the API edge.
     runtime: jsonb("runtime").$type<RuntimeConfig>(),
 

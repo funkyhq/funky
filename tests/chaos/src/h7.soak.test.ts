@@ -27,7 +27,11 @@ afterAll(stopPg);
  *  the session's ONE marker, so a correct run leaves exactly two lines. */
 function twoToolScript(runId: string): FakeTurn[] {
   const cmd = () => ({ kind: "exec" as const, cmd: sideEffectCmd(runId, { sleepSec: 0.2 }) });
-  return [{ content: "", toolCall: cmd() }, { content: "", toolCall: cmd() }, { content: "all done" }];
+  return [
+    { content: "", toolCall: cmd() },
+    { content: "", toolCall: cmd() },
+    { content: "all done" },
+  ];
 }
 
 it("50 sessions × 3 workers × random kills → all complete, zero double-execution", async () => {
@@ -50,7 +54,11 @@ it("50 sessions × 3 workers × random kills → all complete, zero double-execu
   // reclaimed. Replacements are started through worlds[0], so its cleanup kills them all.
   const allMetrics: Metrics[] = [];
   const spawn = async (): Promise<WorkerHandle> => {
-    const { worker, metrics } = await worlds[0]!.startWorker({ llm, heartbeatMs: 200, concurrency: 8 });
+    const { worker, metrics } = await worlds[0]!.startWorker({
+      llm,
+      heartbeatMs: 200,
+      concurrency: 8,
+    });
     allMetrics.push(metrics);
     return worker;
   };
@@ -70,14 +78,17 @@ it("50 sessions × 3 workers × random kills → all complete, zero double-execu
   const CAP_MS = 120_000;
   for (;;) {
     if ((await completedCount()) >= N) break;
-    if (Date.now() - start > CAP_MS) throw new Error(`soak timed out: ${await completedCount()}/${N} completed`);
+    if (Date.now() - start > CAP_MS)
+      throw new Error(`soak timed out: ${await completedCount()}/${N} completed`);
     if (rand() < 0.1) {
       const idx = Math.floor(rand() * workers.length);
       await workers[idx]!.kill(); // stop pulling, stop heartbeats, abandon in-flight (awaited
       // so a straggler pull can't land after the expiry below and re-lease a job for 60s)
       // Release the dead worker's orphaned jobs promptly (don't wait out the 60s lease). Live
       // workers re-extend within 200ms, so this only permanently frees the abandoned ones.
-      await pool.query("update turn_jobs set lease_expires_at = now() - interval '1 minute' where state = 'running'");
+      await pool.query(
+        "update turn_jobs set lease_expires_at = now() - interval '1 minute' where state = 'running'",
+      );
       workers[idx] = await spawn();
       kills += 1;
     }

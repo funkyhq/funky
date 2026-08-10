@@ -211,7 +211,12 @@ function localShellProvider(onCreate?: (options?: CreateSandboxOptions) => void)
         });
         return { stdout, stderr, exitCode: 0, durationMs: Date.now() - t0 };
       } catch (err) {
-        const e = err as { code?: number | string; stdout?: string; stderr?: string; message?: string };
+        const e = err as {
+          code?: number | string;
+          stdout?: string;
+          stderr?: string;
+          message?: string;
+        };
         return {
           stdout: e.stdout ?? "",
           stderr: e.stderr || (e.message ?? String(err)),

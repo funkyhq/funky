@@ -1,23 +1,32 @@
-import type { ReactNode } from 'react'
-import { useState } from 'react'
-import { AlertTriangle, Archive, Cpu, Layers, MessageSquare, MoreVertical, X, Zap } from 'lucide-react'
-import { Button, Select, Textarea } from '../ui/ui'
-import { MODEL_OPTIONS } from '../lib/models'
-import type { Provider } from '../lib/types'
-import type { NetworkMode } from '../lib/network'
-import { useClickOutside } from './data'
+import type { ReactNode } from "react";
+import { useState } from "react";
+import {
+  AlertTriangle,
+  Archive,
+  Cpu,
+  Layers,
+  MessageSquare,
+  MoreVertical,
+  X,
+  Zap,
+} from "lucide-react";
+import { Button, Select, Textarea } from "../ui/ui";
+import { MODEL_OPTIONS } from "../lib/models";
+import type { Provider } from "../lib/types";
+import type { NetworkMode } from "../lib/network";
+import { useClickOutside } from "./data";
 
-export type Tab = 'quickstart' | 'agents' | 'sessions' | 'environments'
+export type Tab = "quickstart" | "agents" | "sessions" | "environments";
 
 const API_URL =
-  typeof __FUNKY_API_URL__ !== 'undefined' ? __FUNKY_API_URL__ : 'http://localhost:3000'
+  typeof __FUNKY_API_URL__ !== "undefined" ? __FUNKY_API_URL__ : "http://localhost:3000";
 
 const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
-  { id: 'quickstart', label: 'Quick Start', icon: <Zap size={19} /> },
-  { id: 'agents', label: 'Agents', icon: <Cpu size={19} /> },
-  { id: 'sessions', label: 'Sessions', icon: <MessageSquare size={19} /> },
-  { id: 'environments', label: 'Environments', icon: <Layers size={19} /> },
-]
+  { id: "quickstart", label: "Quick Start", icon: <Zap size={19} /> },
+  { id: "agents", label: "Agents", icon: <Cpu size={19} /> },
+  { id: "sessions", label: "Sessions", icon: <MessageSquare size={19} /> },
+  { id: "environments", label: "Environments", icon: <Layers size={19} /> },
+];
 
 export function Sidebar({ tab, onSelect }: { tab: Tab; onSelect: (t: Tab) => void }) {
   return (
@@ -38,7 +47,7 @@ export function Sidebar({ tab, onSelect }: { tab: Tab; onSelect: (t: Tab) => voi
         </button>
       ))}
     </aside>
-  )
+  );
 }
 
 export function PageHeader({
@@ -46,9 +55,9 @@ export function PageHeader({
   subtitle,
   action,
 }: {
-  title: string
-  subtitle: string
-  action?: ReactNode
+  title: string;
+  subtitle: string;
+  action?: ReactNode;
 }) {
   return (
     <div className="head-row">
@@ -58,7 +67,7 @@ export function PageHeader({
       </div>
       {action}
     </div>
-  )
+  );
 }
 
 /** One shared shape for every "no items yet" page: icon · title · subtitle. */
@@ -67,9 +76,9 @@ export function EmptyState({
   title,
   subtitle,
 }: {
-  icon: ReactNode
-  title: string
-  subtitle: string
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
 }) {
   return (
     <div className="empty">
@@ -77,7 +86,7 @@ export function EmptyState({
       <h3>{title}</h3>
       <p>{subtitle}</p>
     </div>
-  )
+  );
 }
 
 /**
@@ -90,11 +99,11 @@ export function ModelField({ value, onChange }: { value: string; onChange: (v: s
       <div className="field">
         <span className="field__label">Model</span>
         <p className="model-hint">
-          Please specify <code>ANTHROPIC_API_KEY</code> or <code>TOGETHER_API_KEY</code> in
-          your <code>.env</code> file.
+          Please specify <code>ANTHROPIC_API_KEY</code> or <code>TOGETHER_API_KEY</code> in your{" "}
+          <code>.env</code> file.
         </p>
       </div>
-    )
+    );
   }
   return (
     <Select
@@ -107,7 +116,7 @@ export function ModelField({ value, onChange }: { value: string; onChange: (v: s
       }))}
       onChange={onChange}
     />
-  )
+  );
 }
 
 // How the agent runs its turns. Claude Code is only valid for Anthropic models; Together
@@ -117,27 +126,27 @@ export function RuntimeField({
   onChange,
   modelProvider,
 }: {
-  value: 'native' | 'claude-code'
-  onChange: (v: 'native' | 'claude-code') => void
-  modelProvider: Provider
+  value: "native" | "claude-code";
+  onChange: (v: "native" | "claude-code") => void;
+  modelProvider: Provider;
 }) {
-  const claudeCodeAvailable = modelProvider === 'anthropic'
+  const claudeCodeAvailable = modelProvider === "anthropic";
   return (
     <div className="field">
       <Select
         label="Runtime"
         value={value}
         options={[
-          { value: 'native', label: 'Native — Funky’s built-in agent loop' },
+          { value: "native", label: "Native — Funky’s built-in agent loop" },
           {
-            value: 'claude-code',
-            label: 'Claude Code — run turns inside the Claude Agent SDK',
+            value: "claude-code",
+            label: "Claude Code — run turns inside the Claude Agent SDK",
             disabled: !claudeCodeAvailable,
           },
         ]}
-        onChange={(v) => onChange(v as 'native' | 'claude-code')}
+        onChange={(v) => onChange(v as "native" | "claude-code")}
       />
-      {value === 'claude-code' ? (
+      {value === "claude-code" ? (
         <p className="model-hint">
           Runs each turn inside Claude Code; needs <code>ANTHROPIC_API_KEY</code> on the worker.
         </p>
@@ -145,7 +154,7 @@ export function RuntimeField({
         <p className="model-hint">Together AI models run with the Native runtime.</p>
       ) : null}
     </div>
-  )
+  );
 }
 
 export function NetworkFields({
@@ -154,10 +163,10 @@ export function NetworkFields({
   onModeChange,
   onAllowedHostsChange,
 }: {
-  mode: NetworkMode
-  allowedHosts: string
-  onModeChange: (mode: NetworkMode) => void
-  onAllowedHostsChange: (hosts: string) => void
+  mode: NetworkMode;
+  allowedHosts: string;
+  onModeChange: (mode: NetworkMode) => void;
+  onAllowedHostsChange: (hosts: string) => void;
 }) {
   return (
     <>
@@ -165,12 +174,12 @@ export function NetworkFields({
         label="Network access"
         value={mode}
         options={[
-          { value: 'unrestricted', label: 'Unrestricted — allow all outbound traffic' },
-          { value: 'limited', label: 'Limited — only allow selected hosts' },
+          { value: "unrestricted", label: "Unrestricted — allow all outbound traffic" },
+          { value: "limited", label: "Limited — only allow selected hosts" },
         ]}
         onChange={(value) => onModeChange(value as NetworkMode)}
       />
-      {mode === 'limited' ? (
+      {mode === "limited" ? (
         <div className="network-hosts">
           <Textarea
             label="Allowed hosts"
@@ -179,17 +188,19 @@ export function NetworkFields({
             value={allowedHosts}
             onChange={onAllowedHostsChange}
           />
-          <p className="field-hint">Separate hosts with commas or new lines. Leave empty to deny all outbound access.</p>
+          <p className="field-hint">
+            Separate hosts with commas or new lines. Leave empty to deny all outbound access.
+          </p>
         </div>
       ) : null}
     </>
-  )
+  );
 }
 
 /** A three-dots menu button. `children` renders the menu items and receives a `close` fn. */
 export function Kebab({ children }: { children: (close: () => void) => ReactNode }) {
-  const [open, setOpen] = useState(false)
-  const ref = useClickOutside<HTMLDivElement>(open, () => setOpen(false))
+  const [open, setOpen] = useState(false);
+  const ref = useClickOutside<HTMLDivElement>(open, () => setOpen(false));
   return (
     <div className="kebab" ref={ref}>
       <button
@@ -202,7 +213,7 @@ export function Kebab({ children }: { children: (close: () => void) => ReactNode
       </button>
       {open ? <div className="kebab__menu">{children(() => setOpen(false))}</div> : null}
     </div>
-  )
+  );
 }
 
 export function ArchiveItem({ onClick }: { onClick: () => void }) {
@@ -211,7 +222,7 @@ export function ArchiveItem({ onClick }: { onClick: () => void }) {
       <Archive size={16} />
       Archive
     </button>
-  )
+  );
 }
 
 export function SelectionBar({
@@ -219,11 +230,11 @@ export function SelectionBar({
   onClear,
   onArchive,
 }: {
-  count: number
-  onClear: () => void
-  onArchive: () => void
+  count: number;
+  onClear: () => void;
+  onArchive: () => void;
 }) {
-  if (count === 0) return null
+  if (count === 0) return null;
   return (
     <div className="selbar">
       <span className="selbar__count">{count} selected</span>
@@ -235,7 +246,7 @@ export function SelectionBar({
         Archive
       </Button>
     </div>
-  )
+  );
 }
 
 export function HealthGate({ onRetry }: { onRetry: () => void }) {
@@ -249,8 +260,8 @@ export function HealthGate({ onRetry }: { onRetry: () => void }) {
           <h3 className="gate__title">Backend API not reachable</h3>
         </div>
         <p className="gate__body">
-          The console can&rsquo;t reach the Funky API at <code>{API_URL}/health</code>. Start the stack,
-          then retry:
+          The console can&rsquo;t reach the Funky API at <code>{API_URL}/health</code>. Start the
+          stack, then retry:
         </p>
         <pre className="gate__pre">
           {`cp .env.example .env        # set FUNKY_AUTH_TOKEN to any long random string
@@ -263,5 +274,5 @@ docker compose up --build`}
         </div>
       </div>
     </div>
-  )
+  );
 }
