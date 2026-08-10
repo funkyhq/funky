@@ -9,7 +9,15 @@ import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { runTurn } from "@funky/sessions";
 import { gatedLlm, scriptedLlm } from "./fixtures";
-import { buildWorld, makeJob, normalize, REFERENCE_LOG, resetDb, stopPg, type World } from "./harness";
+import {
+  buildWorld,
+  makeJob,
+  normalize,
+  REFERENCE_LOG,
+  resetDb,
+  stopPg,
+  type World,
+} from "./harness";
 
 let world: World;
 beforeEach(resetDb);

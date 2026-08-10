@@ -14,8 +14,7 @@ import type { FakeLlm } from "./drivers/fake";
 // already-built driver in tests. The worker entrypoint reads FUNKY_LLM and builds the
 // ai-sdk driver from env.
 export type LlmConfig =
-  | { driver: "fake"; instance: FakeLlm }
-  | { driver: "ai-sdk"; credentials: AiSdkCredentials };
+  { driver: "fake"; instance: FakeLlm } | { driver: "ai-sdk"; credentials: AiSdkCredentials };
 
 export function makeLlm(cfg: LlmConfig): LlmPort {
   switch (cfg.driver) {

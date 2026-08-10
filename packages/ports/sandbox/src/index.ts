@@ -8,7 +8,11 @@ export { SandboxGoneError, SandboxUnavailableError, SandboxUnreachableError } fr
 // the fast, offline in-process driver the test suites — including the chaos warranty — run
 // against; production sandboxes are `docker` (local containers) or `e2b` (remote).
 export { SubprocessDriver } from "./drivers/subprocess";
-export { ComputeSdkDriver, type ComputeSdkDriverOptions, type ComputeProvider } from "./drivers/computesdk";
+export {
+  ComputeSdkDriver,
+  type ComputeSdkDriverOptions,
+  type ComputeProvider,
+} from "./drivers/computesdk";
 export { dockerProvider, type DockerProviderOptions } from "./drivers/docker";
 export { e2bProvider, type E2bProviderOptions } from "./drivers/e2b";
 export { runSandboxTck } from "./tck";

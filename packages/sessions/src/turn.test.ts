@@ -8,10 +8,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type Db } from "@funky/db";
@@ -81,15 +78,15 @@ beforeEach(async () => {
   await pool.query("delete from agent_config_versions");
   await pool.query("delete from agent_configs");
   await pool.query("delete from env_configs");
-  await pool.query("insert into agent_configs (id, namespace, name, latest_version) values ($1,$2,$3,1)", [
-    agentConfigId,
-    NS,
-    "test-agent",
-  ]);
   await pool.query(
-    "insert into env_configs (id, namespace, name) values ($1,$2,$3)",
-    [envConfigId, NS, "test-env"],
+    "insert into agent_configs (id, namespace, name, latest_version) values ($1,$2,$3,1)",
+    [agentConfigId, NS, "test-agent"],
   );
+  await pool.query("insert into env_configs (id, namespace, name) values ($1,$2,$3)", [
+    envConfigId,
+    NS,
+    "test-env",
+  ]);
   sessionId = randomUUID();
 });
 
@@ -101,8 +98,7 @@ afterEach(async () => {
 
 /** Insert the pinned agent version. tool_policy carries max_iterations. */
 async function seedAgentVersion(opts: { systemPrompt?: string; maxIterations?: number } = {}) {
-  const toolPolicy =
-    opts.maxIterations !== undefined ? { max_iterations: opts.maxIterations } : {};
+  const toolPolicy = opts.maxIterations !== undefined ? { max_iterations: opts.maxIterations } : {};
   await pool.query(
     `insert into agent_config_versions (agent_config_id, version, namespace, system_prompt, model, tool_policy)
      values ($1, 1, $2, $3, $4, $5)`,
@@ -117,18 +113,17 @@ async function seedAgentVersion(opts: { systemPrompt?: string; maxIterations?: n
 }
 
 /** Insert the session row. Provisions a real subprocess sandbox unless told otherwise. */
-async function seedSession(opts: {
-  status?: string;
-  provision?: boolean;
-  handle?: SandboxHandle;
-} = {}) {
+async function seedSession(
+  opts: {
+    status?: string;
+    provision?: boolean;
+    handle?: SandboxHandle;
+  } = {},
+) {
   const status = opts.status ?? "ready";
   let handle: SandboxHandle | null = opts.handle ?? null;
   if (!handle && opts.provision !== false) {
-    handle = await sandbox.provision(
-      { network: { type: "unrestricted" } },
-      sessionId,
-    );
+    handle = await sandbox.provision({ network: { type: "unrestricted" } }, sessionId);
     handles.push(handle);
   }
   await pool.query(
@@ -231,7 +226,11 @@ describe("runTurn — iteration budget", () => {
 
     const alwaysTool: LlmPort = {
       async complete(): Promise<LlmResult> {
-        return { content: "", toolCall: exec("echo loop"), usage: { inputTokens: 1, outputTokens: 1 } };
+        return {
+          content: "",
+          toolCall: exec("echo loop"),
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
       },
     };
     const outcome = await runTurn(job(), deps(alwaysTool));
@@ -478,16 +477,32 @@ describe("buildContext", () => {
       evt(1, "session_provisioned", {}),
       evt(2, "user_message", { content: textContent("hi") }),
       evt(3, "assistant_message", { content: textContent("on it"), tool_calls: [exec("ls")] }),
-      evt(4, "tool_result", { idem_key: `${sessionId}:3:0`, output: "files", exit_code: 0, truncated: false }),
+      evt(4, "tool_result", {
+        idem_key: `${sessionId}:3:0`,
+        output: "files",
+        exit_code: 0,
+        truncated: false,
+      }),
       evt(5, "assistant_message", { content: textContent("done"), tool_calls: [] }),
       evt(6, "turn_completed", {}),
     ];
     const messages = buildContext(events, sys);
-    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool", "assistant"]);
+    expect(messages.map((m) => m.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
     expect(messages[0]).toEqual({ role: "system", content: sys });
     // the tool-calling assistant carries its toolCall; the tool message pairs by idemKey
     expect(messages[2]).toMatchObject({ role: "assistant", toolCall: exec("ls") });
-    expect(messages[3]).toEqual({ role: "tool", idemKey: `${sessionId}:3:0`, output: "files", exitCode: 0 });
+    expect(messages[3]).toEqual({
+      role: "tool",
+      idemKey: `${sessionId}:3:0`,
+      output: "files",
+      exitCode: 0,
+    });
   });
 
   it("the system prompt comes from the PINNED agent version, not the agent's latest", async () => {
@@ -497,7 +512,12 @@ describe("buildContext", () => {
     await pool.query(
       `insert into agent_config_versions (agent_config_id, version, namespace, system_prompt, model, tool_policy)
        values ($1, 2, $2, $3, $4, '{}')`,
-      [agentConfigId, NS, "LATEST-V2-PROMPT", JSON.stringify({ provider: "anthropic", model: "m" })],
+      [
+        agentConfigId,
+        NS,
+        "LATEST-V2-PROMPT",
+        JSON.stringify({ provider: "anthropic", model: "m" }),
+      ],
     );
     await pool.query("update agent_configs set latest_version = 2 where id = $1", [agentConfigId]);
     await seedSession(); // agent_version pinned to 1 by seedSession

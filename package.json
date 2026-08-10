@@ -1,16 +1,19 @@
 {
-    "name": "funky",
-    "private": true,
-    "type": "module",
-    "packageManager": "pnpm@10.14.0",
-    "scripts": {
-      "preinstall": "npx only-allow pnpm",
-      "typecheck": "tsc --noEmit",
-      "test": "pnpm -r --if-present test",
-      "dev": "pnpm -F api dev"
-    },
-    "devDependencies": {
-      "typescript": "^5.8.3",
-      "@types/node": "^22.0.0"
-    }
+  "name": "funky",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r --if-present test",
+    "dev": "pnpm -F api dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.8.3"
+  }
 }

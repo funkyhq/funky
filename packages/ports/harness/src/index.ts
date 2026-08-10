@@ -2,10 +2,7 @@
 // The worker imports the port; the entrypoint selects a driver by config.
 
 export * from "./port";
-export {
-  ClaudeCodeHarness,
-  type ClaudeCodeHarnessOptions,
-} from "./drivers/claude-code";
+export { ClaudeCodeHarness, type ClaudeCodeHarnessOptions } from "./drivers/claude-code";
 export {
   DrizzleSessionStore,
   latestSdkSessionId,
@@ -19,9 +16,11 @@ import { ClaudeCodeHarness } from "./drivers/claude-code";
 /** Driver selection at the entrypoint, mirroring makeLlm/makeSandbox. Deliberately a
  *  union of one: the `never` guard below stays a compile error when a driver is added
  *  here but not handled. */
-export type HarnessConfig = { db: Db; scratchRoot?: string } & (
-  | { driver: "claude-code"; apiKey: string; cwdRoot?: string }
-);
+export type HarnessConfig = { db: Db; scratchRoot?: string } & {
+  driver: "claude-code";
+  apiKey: string;
+  cwdRoot?: string;
+};
 
 export function makeHarness(cfg: HarnessConfig): HarnessPort {
   switch (cfg.driver) {

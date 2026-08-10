@@ -225,8 +225,7 @@ function unansweredCalls(
     const idemKey = idemKeyFor(sessionId, e.seq, 0);
     const answered = turn.some(
       (r) =>
-        r.type === "tool_result" &&
-        (r.payload as EventPayload<"tool_result">).idem_key === idemKey,
+        r.type === "tool_result" && (r.payload as EventPayload<"tool_result">).idem_key === idemKey,
     );
     if (!answered) out.push({ call, seq: e.seq });
   }
@@ -277,7 +276,9 @@ function continuationPrompt(
       lines.push(
         `$ ${call.cmd}`,
         `[exit code: ${result.exitCode}]`,
-        result.output.length > 4000 ? `${result.output.slice(0, 4000)}\n[truncated]` : result.output,
+        result.output.length > 4000
+          ? `${result.output.slice(0, 4000)}\n[truncated]`
+          : result.output,
         "",
       );
     }

@@ -12,10 +12,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Client, Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, type Db } from "@funky/db";
@@ -65,12 +62,18 @@ beforeAll(async () => {
   await pool.query(
     `insert into agent_config_versions (agent_config_id, version, namespace, system_prompt, model)
      values ($1, 1, $2, $3, $4::jsonb)`,
-    [agentConfigId, NS, "You are a test agent.", JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" })],
+    [
+      agentConfigId,
+      NS,
+      "You are a test agent.",
+      JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" }),
+    ],
   );
-  await pool.query(
-    "insert into env_configs (id, namespace, name) values ($1,$2,$3)",
-    [envConfigId, NS, "test-env"],
-  );
+  await pool.query("insert into env_configs (id, namespace, name) values ($1,$2,$3)", [
+    envConfigId,
+    NS,
+    "test-env",
+  ]);
 
   db = createDb(pool);
   store = new EventStore(db);
@@ -124,12 +127,22 @@ async function startTestWorker(opts: {
   return { worker, metrics };
 }
 
-async function seedSession(opts: { id?: string; status?: string; handle?: unknown } = {}): Promise<string> {
+async function seedSession(
+  opts: { id?: string; status?: string; handle?: unknown } = {},
+): Promise<string> {
   const id = opts.id ?? randomUUID();
   await pool.query(
     `insert into sessions (id, namespace, agent_config_id, agent_version, env_config_id, status, sandbox_handle)
      values ($1,$2,$3,$4,$5,$6,$7)`,
-    [id, NS, agentConfigId, 1, envConfigId, opts.status ?? "ready", opts.handle ? JSON.stringify(opts.handle) : null],
+    [
+      id,
+      NS,
+      agentConfigId,
+      1,
+      envConfigId,
+      opts.status ?? "ready",
+      opts.handle ? JSON.stringify(opts.handle) : null,
+    ],
   );
   return id;
 }
@@ -392,7 +405,10 @@ it("keeps a long-running turn's lease fresh via the heartbeat (not stolen)", asy
   );
 
   // Simulate a near-expired lease; the heartbeat must push it back out before it can be stolen.
-  await pool.query("update turn_jobs set lease_expires_at = now() + interval '1 second' where id=$1", [jobId]);
+  await pool.query(
+    "update turn_jobs set lease_expires_at = now() + interval '1 second' where id=$1",
+    [jobId],
+  );
   await sleep(300); // ~7 heartbeats at 40ms
 
   expect(await queue.pull()).toBeNull(); // not reclaimable — the heartbeat kept it leased
@@ -403,16 +419,17 @@ it("keeps a long-running turn's lease fresh via the heartbeat (not stolen)", asy
   expect(Number(rows[0].ahead)).toBeGreaterThan(30);
 
   release();
-  await waitFor(async () => (await eventTypes(sid)).at(-1) === "turn_completed", 15_000, "completed");
+  await waitFor(
+    async () => (await eventTypes(sid)).at(-1) === "turn_completed",
+    15_000,
+    "completed",
+  );
 });
 
 it("★ crash-resumes: worker B finishes the turn worker A abandoned, running the tool once", async () => {
   // A provisioned subprocess sandbox both workers share (same session → same workdir).
   const sid = randomUUID();
-  const handle = await realSandbox.provision(
-    { network: { type: "unrestricted" } },
-    sid,
-  );
+  const handle = await realSandbox.provision({ network: { type: "unrestricted" } }, sid);
   await seedSession({ id: sid, status: "ready", handle });
   await appendUser(sid);
   const jobId = await insertTurnJob(sid);
@@ -461,7 +478,10 @@ it("★ crash-resumes: worker B finishes the turn worker A abandoned, running th
   );
   await workerA.kill(); // crash A: heartbeats stop, its in-flight turn is abandoned (awaited
   // so a pull already on the wire lands BEFORE the expiry below — it can't re-lease the job)
-  await pool.query("update turn_jobs set lease_expires_at = now() - interval '1 second' where id=$1", [jobId]);
+  await pool.query(
+    "update turn_jobs set lease_expires_at = now() - interval '1 second' where id=$1",
+    [jobId],
+  );
 
   // Worker B — real sandbox — reclaims the expired lease and finishes the turn.
   await startTestWorker({ llm, sandbox: realSandbox });
@@ -556,7 +576,10 @@ it("kill() resolves only after an in-flight pull lands, so post-kill lease edits
   expect(rows[0]).toMatchObject({ state: "running", attempts: 1 }); // the straggler claim landed first
 
   // Because kill() was awaited, this expiry cannot be raced; a fresh worker reclaims at once.
-  await pool.query("update turn_jobs set lease_expires_at = now() - interval '1 second' where id=$1", [jobId]);
+  await pool.query(
+    "update turn_jobs set lease_expires_at = now() - interval '1 second' where id=$1",
+    [jobId],
+  );
   await startTestWorker({ llm: doneLlm() });
   // Job-gone, not the terminal event: the event lands before the ack, so asserting on the
   // row right after seeing the event would race B's delete.
@@ -573,7 +596,9 @@ it("wakes on NOTIFY, starting the turn well before the fallback poll", async () 
 
   const t0 = Date.now();
   const jobId = randomUUID();
-  await db.transaction((tx) => queue.enqueue(tx, { id: jobId, namespace: NS, sessionId: sid, kind: "turn" }));
+  await db.transaction((tx) =>
+    queue.enqueue(tx, { id: jobId, namespace: NS, sessionId: sid, kind: "turn" }),
+  );
 
   await waitFor(async () => !(await jobExists(jobId)), 5000, "turn processed");
   const elapsed = Date.now() - t0;

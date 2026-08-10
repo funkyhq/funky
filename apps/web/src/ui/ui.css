@@ -11,7 +11,10 @@
   justify-content: center;
   gap: 8px;
   white-space: nowrap;
-  transition: background 0.12s ease, transform 0.06s ease, box-shadow 0.06s ease;
+  transition:
+    background 0.12s ease,
+    transform 0.06s ease,
+    box-shadow 0.06s ease;
 }
 .btn:disabled {
   opacity: 0.55;
@@ -95,7 +98,9 @@
   border-radius: var(--radius-md);
   font: 14px var(--font-body);
   outline: none;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 .control--area {
   height: auto;

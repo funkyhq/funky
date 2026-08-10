@@ -272,7 +272,9 @@ describe("POST /v1/sessions/:id/messages", () => {
 describe("GET /v1/sessions/:id/events", () => {
   async function sessionWithEvents(n: number): Promise<string> {
     const [agentId, envId] = await Promise.all([seedAgent(), seedEnv()]);
-    const created = await (await postJson("/v1/sessions", { agent: agentId, environment_id: envId })).json();
+    const created = await (
+      await postJson("/v1/sessions", { agent: agentId, environment_id: envId })
+    ).json();
     const sid = created.id;
     // Append events directly, as the worker would (bypassing the one-turn guard).
     for (let seq = 1; seq <= n; seq++) {
@@ -298,11 +300,15 @@ describe("GET /v1/sessions/:id/events", () => {
       payload: { content: [{ type: "text", text: "m1" }] },
     });
 
-    const page2 = await (await app.request(`/v1/sessions/${sid}/events?after_seq=2&limit=2`)).json();
+    const page2 = await (
+      await app.request(`/v1/sessions/${sid}/events?after_seq=2&limit=2`)
+    ).json();
     expect(page2.data.map((e: { seq: number }) => e.seq)).toEqual([3, 4]);
     expect(page2.has_more).toBe(true);
 
-    const page3 = await (await app.request(`/v1/sessions/${sid}/events?after_seq=4&limit=2`)).json();
+    const page3 = await (
+      await app.request(`/v1/sessions/${sid}/events?after_seq=4&limit=2`)
+    ).json();
     expect(page3.data.map((e: { seq: number }) => e.seq)).toEqual([5]);
     expect(page3.has_more).toBe(false);
     expect(page3.last_seq).toBe(5);
@@ -319,7 +325,9 @@ describe("GET /v1/sessions/:id/events", () => {
 describe("namespace isolation", () => {
   it("a cross-namespace read is a 404, identical to a nonexistent session", async () => {
     const [agentId, envId] = await Promise.all([seedAgent(), seedEnv()]);
-    const created = await (await postJson("/v1/sessions", { agent: agentId, environment_id: envId })).json();
+    const created = await (
+      await postJson("/v1/sessions", { agent: agentId, environment_id: envId })
+    ).json();
 
     // same id, wrong namespace → not found
     await expect(sessions.get(OTHER, created.id)).rejects.toBeInstanceOf(NotFoundError);

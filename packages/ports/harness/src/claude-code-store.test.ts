@@ -9,10 +9,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type Db } from "@funky/db";
@@ -154,9 +151,7 @@ describe("★ the write fence", () => {
     await zombie.append(key("cc-1"), [entry(1)]); // accepted while current
 
     await setFence("a2"); // a new attempt took the turn
-    await expect(zombie.append(key("cc-1"), [entry(2)])).rejects.toBeInstanceOf(
-      HarnessFencedError,
-    );
+    await expect(zombie.append(key("cc-1"), [entry(2)])).rejects.toBeInstanceOf(HarnessFencedError);
     expect(zombie.fenced).toBe(true); // the driver reads this to classify mirror_error
 
     // The zombie's post-fence batch never landed — no interleaving, ever.

@@ -21,7 +21,7 @@ replay it and compute the next action (`reducer.ts`).
 Agent SDKs like Claude Code invert this: the loop (context management, tool planning,
 compaction, subagents) lives inside a vendor harness — for Claude Code, a
 non-open-source CLI binary that the SDK spawns as a subprocess. We want Funky sessions
-to be able to *be* a Claude Code conversation, without giving up:
+to be able to _be_ a Claude Code conversation, without giving up:
 
 1. **Stateless workers** — any worker can pick up any turn; nothing meaningful lives
    only in worker memory or on a worker's disk.
@@ -54,7 +54,7 @@ DB, the subprocess resumes it.
 Two documented caveats we design around:
 
 - `sessionStore` cannot be combined with `persistSession: false` or file checkpointing.
-- **Mirror writes are best-effort**: after 3 failed attempts a batch is *dropped* and a
+- **Mirror writes are best-effort**: after 3 failed attempts a batch is _dropped_ and a
   `{type:"system", subtype:"mirror_error"}` message is emitted. Because our local copy
   is ephemeral, a dropped batch would be silent context loss — so the driver treats
   `mirror_error` as a turn-aborting transient failure (§6). A committed turn is
@@ -106,7 +106,7 @@ Division of labor (mirrors the llm/sandbox ports):
   exec-with-reboot, and the outcome/error mapping. It selects the strategy by the pinned
   `runtime` and dispatches. The native loop is the degenerate strategy — its context is
   a pure function of the log, so it needs no attempt-token fence, no recovery pre-pass,
-  and no continuation prompt; those exist *only* to reconcile a harness's external
+  and no continuation prompt; those exist _only_ to reconcile a harness's external
   transcript with the log.
 
 ### Selection
@@ -125,7 +125,7 @@ mid-life.
 - `Executor.exec(cmd, idemKey)` performs an atomic `mkdir .funky/<idemKey>` inside the
   sandbox. The winner spawns the command detached; it writes `out` and stamps `exit`
   from inside the sandbox. Any later call with the same key loses the `mkdir` and
-  simply tails the same files. Exec-with-known-key *is* attach.
+  simply tails the same files. Exec-with-known-key _is_ attach.
 - The sandbox outlives workers. Recovery is **forward-only re-attach**, never rollback.
 
 ### 4.2 The harness transplant
@@ -154,7 +154,7 @@ On (re)delivery of a harness turn, `harnessStrategy` (run by the `runTurn` shell
    Losing the seq race = another worker owns the turn.
 3. **Resolves unanswered exec calls** from this turn (reducer step 4, harness
    flavor): for each projected `assistant_message` tool call without a matching
-   `tool_result`, re-run `exec` with the *same* idemKey. If the crashed attempt
+   `tool_result`, re-run `exec` with the _same_ idemKey. If the crashed attempt
    started it, this attaches; if the crash landed between append and spawn, this
    starts it — the logged decision is replayed, and the `mkdir` lock makes the race
    against a zombie harmless. Append each `tool_result`.
@@ -167,14 +167,14 @@ On (re)delivery of a harness turn, `harnessStrategy` (run by the `runTurn` shell
 
 Case analysis for a command with side effects:
 
-| Crash point | What happens on retry |
-|---|---|
-| before the `assistant_message` append | nothing was decided durably and nothing ran; the model re-decides on continuation — zero executions so far |
-| after append, before exec spawn | recovery replays the logged decision — runs once |
-| after exec spawn, before `tool_result` | command kept running in the sandbox; recovery **attaches** — runs once |
-| after `tool_result`, before commit | recovery sees it answered; continuation prompt reports it — runs once |
+| Crash point                            | What happens on retry                                                                                      |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| before the `assistant_message` append  | nothing was decided durably and nothing ran; the model re-decides on continuation — zero executions so far |
+| after append, before exec spawn        | recovery replays the logged decision — runs once                                                           |
+| after exec spawn, before `tool_result` | command kept running in the sandbox; recovery **attaches** — runs once                                     |
+| after `tool_result`, before commit     | recovery sees it answered; continuation prompt reports it — runs once                                      |
 
-No path executes a command twice. A model that *chooses* to re-run something after
+No path executes a command twice. A model that _chooses_ to re-run something after
 reading the recovery note is issuing a new command — the same as a user asking twice.
 
 ## 5. Write fencing (the zombie-worker problem)
@@ -190,7 +190,7 @@ The `SessionStore` contract has no caller-computed seq — batches are opaque an
 unconditional — so we fence in the adapter, which we own:
 
 - Acquiring a turn attempt sets `sessions.harness_attempt = <token>` (transactionally
-  with the `harness_attempt_started` event — winning the seq race *is* acquiring the
+  with the `harness_attempt_started` event — winning the seq race _is_ acquiring the
   fence).
 - The adapter's `append` is a **single guarded INSERT**:
   `INSERT … WHERE (SELECT harness_attempt FROM sessions …) = $token` — the check is
@@ -199,12 +199,12 @@ unconditional — so we fence in the adapter, which we own:
 
 A zombie is therefore killed by whichever write it attempts first — a transcript batch
 (fence) or a tool call (log conflict) — and until it dies, every one of its writes
-bounces. Worker B flips the fence *before* `load()`, so B reads exactly A's accepted
+bounces. Worker B flips the fence _before_ `load()`, so B reads exactly A's accepted
 prefix; nothing can interleave after the flip.
 
 Severity asymmetry the driver must preserve: for a **fenced** writer, rejection means
 "stand down" (ack as conflict); for the **current** attempt, a mirror failure that is
-*not* a fence rejection (DB blip, retries exhausted) means "the transcript would have
+_not_ a fence rejection (DB blip, retries exhausted) means "the transcript would have
 a hole" → abort and retry later. The adapter throws distinguishable errors.
 
 ### 5.2 The transcript lineage
@@ -220,22 +220,22 @@ newly minted one): whatever id the entries land under is the tip.
 
 Mapped onto the existing worker outcomes — no queue or worker changes:
 
-| Condition | Class | Outcome |
-|---|---|---|
-| fence lost / seq conflict | conflict | ack silently (another worker owns it) |
-| `mirror_error` on current attempt | `HarnessTransientError` | nack → `retry_later`; terminal `INTERNAL` on last attempt |
-| SDK/process transient failure, `error_during_execution` result | `HarnessTransientError` | same |
-| non-anthropic model, auth failure | `HarnessPermanentError` | `turn_failed(HARNESS)` |
-| harness session on a worker with no driver (no `ANTHROPIC_API_KEY`) | — | terminal `turn_failed(HARNESS)` |
-| `error_max_turns` / `error_max_budget_usd` result | budget stop (returned, not thrown) | `turn_failed(BUDGET)` — the transcript tip is still committed, so the session continues cleanly on the next turn |
-| sandbox unobservable, reboot fails | `SandboxUnavailableError` | `retry_later` → `SANDBOX_FATAL` on last attempt (identical to native; a fatally dead sandbox fails the session honestly — see §7 "snapshots") |
+| Condition                                                           | Class                              | Outcome                                                                                                                                       |
+| ------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| fence lost / seq conflict                                           | conflict                           | ack silently (another worker owns it)                                                                                                         |
+| `mirror_error` on current attempt                                   | `HarnessTransientError`            | nack → `retry_later`; terminal `INTERNAL` on last attempt                                                                                     |
+| SDK/process transient failure, `error_during_execution` result      | `HarnessTransientError`            | same                                                                                                                                          |
+| non-anthropic model, auth failure                                   | `HarnessPermanentError`            | `turn_failed(HARNESS)`                                                                                                                        |
+| harness session on a worker with no driver (no `ANTHROPIC_API_KEY`) | —                                  | terminal `turn_failed(HARNESS)`                                                                                                               |
+| `error_max_turns` / `error_max_budget_usd` result                   | budget stop (returned, not thrown) | `turn_failed(BUDGET)` — the transcript tip is still committed, so the session continues cleanly on the next turn                              |
+| sandbox unobservable, reboot fails                                  | `SandboxUnavailableError`          | `retry_later` → `SANDBOX_FATAL` on last attempt (identical to native; a fatally dead sandbox fails the session honestly — see §7 "snapshots") |
 
 ## 7. Alternatives considered (and why not)
 
 **Fork-per-turn / fork-per-attempt transcripts.** Earlier design: every attempt
 `forkSession`s from the last committed Claude session id; commit advances the pointer;
 crashed attempts leave orphaned branches. Correct, and attractive because retries
-replay from a clean snapshot — but (a) retry-by-fork lets the model *re-decide* the
+replay from a clean snapshot — but (a) retry-by-fork lets the model _re-decide_ the
 turn, degrading tool execution to at-least-once unless paired with the §4.3 recovery
 anyway, and (b) fork copies the entire history per turn (O(n²) storage). Once write
 fencing gives the same writer-isolation guarantee the fork was providing, the fork
@@ -246,13 +246,13 @@ identical to the native event log.
 memory) after every step; on failure restore the last snapshot and re-run. Rejected
 for two reasons. Practically: `docker checkpoint` (CRIU) is experimental and fragile,
 and E2B exposes pause/resume, not point-in-time restore. Fundamentally: restore
-*worsens* side-effect semantics — a command that fired an external effect (HTTP POST,
+_worsens_ side-effect semantics — a command that fired an external effect (HTTP POST,
 `git push`, email) before the crash would be re-run against a rolled-back sandbox that
 no longer remembers it ran, duplicating the effect. Snapshots can roll back the
 sandbox but not the world. Funky's model — the one execution survives (detached, in a
 sandbox that outlives workers) and retries **attach** to it — is the only way to
 exactly-once for side-effecting commands. Consequence kept from the native design: a
-*fatally* destroyed sandbox is an honest `SANDBOX_FATAL` failure, never a silent
+_fatally_ destroyed sandbox is an honest `SANDBOX_FATAL` failure, never a silent
 re-provision (a fresh sandbox would make the log lie about accumulated state).
 
 **Adapter-level fencing vs. fork (the tie-breaker).** Fencing needs the attempt token
@@ -272,7 +272,7 @@ sandbox-hosted driver later.
 **Reusing `session_events` as the SessionStore.** The transcript entry format is
 CLI-internal, opaque, and much richer than our event schema (thinking blocks,
 compaction state, summaries, tags). Storing entries as our typed events would couple
-us to an undocumented format; projecting *both* directions invites divergence. Instead
+us to an undocumented format; projecting _both_ directions invites divergence. Instead
 entries are stored verbatim in their own table (pass-through blobs, per the SDK
 contract) and the log receives a **projection** (assistant text, exec calls, results)
 that the existing API/SSE/UI consume unchanged.
@@ -364,20 +364,20 @@ not projected in v1 (additive `ContentBlock` kind later).
 
 Where each piece of this document lives, and the test that pins it:
 
-| Piece (§) | Code | Pinned by |
-|---|---|---|
-| The port + error taxonomy (§3, §6) | `src/port.ts` | type-level; policy tested via harness-turn tests |
-| Exec bridge: journal → idemKey → exec → record (§4.2) | `makeExecToolHandler` in `src/drivers/claude-code.ts` | `src/claude-code.test.ts` ("journals BEFORE executing…") |
-| Driver: confinement, projection, mirror_error, result mapping (§6, §9) | `ClaudeCodeHarness` in `src/drivers/claude-code.ts` | `src/claude-code.test.ts` (fake `queryFn` seam) |
-| Fenced transcript store (§5.1) | `src/drivers/claude-code-store.ts` | `src/claude-code-store.test.ts` ("★ the write fence") |
-| Transcript lineage / resume tip (§5.2) | `latestTranscriptTip` in `packages/sessions/src/harness-strategy.ts` (and `latestClaudeSessionId` in the store module) | store test "latestClaudeSessionId"; harness-turn test "resumes from the transcript tip" |
-| Fence acquisition + recovery + commit (§4.3, §5) | `harnessStrategy` in `packages/sessions/src/harness-strategy.ts` | `packages/sessions/src/harness-turn.test.ts` — the two ★ crash-resume tests are the exactly-once proof |
-| Shared turn shell + strategy seam (§3) | `runTurn` / `selectStrategy` in `packages/sessions/src/turn.ts`; `TurnShell` / `TurnStrategy` in `packages/sessions/src/strategy.ts`; `nativeStrategy` in `native-strategy.ts` | driven through `runTurn` by `turn.test.ts` + `harness-turn.test.ts` |
-| Shared exec/reboot policy (§4.1) | `packages/sessions/src/exec.ts` (extracted from `turn.ts`, used by both strategies) | native `turn.test.ts` + chaos suite (unchanged) |
-| Schema (§8) | `packages/db/schema/harness.ts`, `sessions.ts`, `configs.ts`; migration `20260718201401_harness_port` | `packages/db/src/schema.test.ts` |
-| Event model additions (§8) | `harness_attempt_started` + `HARNESS` error class in `packages/sessions/src/events.ts` | `events.test.ts` round-trip |
-| API edge (`runtime` on agents) (§3, §9) | `apps/api/src/routes/agents.ts`, `packages/configs/{types,service}.ts` | `apps/api/test/agents.test.ts` |
-| Worker wiring + env knobs (§9) | `apps/worker/src/{index,config,worker}.ts`; compose tmpfs in `docker-compose.yml` | `apps/worker/test/config.test.ts` |
+| Piece (§)                                                              | Code                                                                                                                                                                           | Pinned by                                                                                              |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| The port + error taxonomy (§3, §6)                                     | `src/port.ts`                                                                                                                                                                  | type-level; policy tested via harness-turn tests                                                       |
+| Exec bridge: journal → idemKey → exec → record (§4.2)                  | `makeExecToolHandler` in `src/drivers/claude-code.ts`                                                                                                                          | `src/claude-code.test.ts` ("journals BEFORE executing…")                                               |
+| Driver: confinement, projection, mirror_error, result mapping (§6, §9) | `ClaudeCodeHarness` in `src/drivers/claude-code.ts`                                                                                                                            | `src/claude-code.test.ts` (fake `queryFn` seam)                                                        |
+| Fenced transcript store (§5.1)                                         | `src/drivers/claude-code-store.ts`                                                                                                                                             | `src/claude-code-store.test.ts` ("★ the write fence")                                                  |
+| Transcript lineage / resume tip (§5.2)                                 | `latestTranscriptTip` in `packages/sessions/src/harness-strategy.ts` (and `latestClaudeSessionId` in the store module)                                                         | store test "latestClaudeSessionId"; harness-turn test "resumes from the transcript tip"                |
+| Fence acquisition + recovery + commit (§4.3, §5)                       | `harnessStrategy` in `packages/sessions/src/harness-strategy.ts`                                                                                                               | `packages/sessions/src/harness-turn.test.ts` — the two ★ crash-resume tests are the exactly-once proof |
+| Shared turn shell + strategy seam (§3)                                 | `runTurn` / `selectStrategy` in `packages/sessions/src/turn.ts`; `TurnShell` / `TurnStrategy` in `packages/sessions/src/strategy.ts`; `nativeStrategy` in `native-strategy.ts` | driven through `runTurn` by `turn.test.ts` + `harness-turn.test.ts`                                    |
+| Shared exec/reboot policy (§4.1)                                       | `packages/sessions/src/exec.ts` (extracted from `turn.ts`, used by both strategies)                                                                                            | native `turn.test.ts` + chaos suite (unchanged)                                                        |
+| Schema (§8)                                                            | `packages/db/schema/harness.ts`, `sessions.ts`, `configs.ts`; migration `20260718201401_harness_port`                                                                          | `packages/db/src/schema.test.ts`                                                                       |
+| Event model additions (§8)                                             | `harness_attempt_started` + `HARNESS` error class in `packages/sessions/src/events.ts`                                                                                         | `events.test.ts` round-trip                                                                            |
+| API edge (`runtime` on agents) (§3, §9)                                | `apps/api/src/routes/agents.ts`, `packages/configs/{types,service}.ts`                                                                                                         | `apps/api/test/agents.test.ts`                                                                         |
+| Worker wiring + env knobs (§9)                                         | `apps/worker/src/{index,config,worker}.ts`; compose tmpfs in `docker-compose.yml`                                                                                              | `apps/worker/test/config.test.ts`                                                                      |
 
 Not covered offline: a live end-to-end run against the real Claude Code subprocess
 (needs `ANTHROPIC_API_KEY`). The driver's SDK-facing behavior is exercised through the

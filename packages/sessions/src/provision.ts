@@ -59,7 +59,13 @@ export async function runProvision(job: Job, deps: TurnDeps): Promise<TurnOutcom
     return "completed";
   } catch (err) {
     if (err instanceof ErrConflict) return "conflict"; // another worker already provisioned
-    return failProvision(deps, job, ns, sessionId, err instanceof Error ? err.message : String(err));
+    return failProvision(
+      deps,
+      job,
+      ns,
+      sessionId,
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 

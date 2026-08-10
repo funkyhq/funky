@@ -10,10 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Db } from "@funky/db";
-import {
-  ClaudeCodeHarness,
-  makeExecToolHandler,
-} from "./drivers/claude-code";
+import { ClaudeCodeHarness, makeExecToolHandler } from "./drivers/claude-code";
 import {
   HarnessPermanentError,
   HarnessTransientError,
@@ -250,9 +247,7 @@ describe("ClaudeCodeHarness.runTurn — projection and result mapping", () => {
   });
 
   it("maps error_max_turns to a budget stop (still carrying the transcript tip)", async () => {
-    const { queryFn } = fakeQuery([
-      { ...successResult, subtype: "error_max_turns" },
-    ]);
+    const { queryFn } = fakeQuery([{ ...successResult, subtype: "error_max_turns" }]);
     const { req } = makeRequest();
     const result = await harness(queryFn).runTurn(req);
     expect(result.stop).toEqual({ type: "budget", message: "harness max_turns exhausted" });

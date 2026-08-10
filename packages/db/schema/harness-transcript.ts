@@ -14,7 +14,16 @@
 // max-ord main-transcript row IS the resume tip for a session.
 
 import { sql } from "drizzle-orm";
-import { bigserial, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  bigserial,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { sessions } from "./sessions";
 
 export const harnessTranscriptEntries = pgTable(
