@@ -5,7 +5,14 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
     "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
   }
 }
