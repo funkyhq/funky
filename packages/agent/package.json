@@ -10,7 +10,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@funky/core": "workspace:*"
+    "@funky/core": "workspace:*",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "vitest": "^4.1.10"
