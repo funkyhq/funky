@@ -173,6 +173,9 @@ importers:
       '@funky/core':
         specifier: workspace:*
         version: link:../core
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       vitest:
         specifier: ^4.1.10
