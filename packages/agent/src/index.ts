@@ -1,3 +1,4 @@
+export { buildContext } from "./build-context";
 export { inference } from "./inference";
 export type { InferenceDeps, InferenceRequest } from "./inference";
 export { executeTools } from "./execute-tools";

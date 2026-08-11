@@ -107,6 +107,8 @@ function errorResult(call: ToolCall, message: string): ToolResultMessage {
   };
 }
 
-function interruptedResult(call: ToolCall): ToolResultMessage {
+/** Also used by buildContext to close dangling calls — one definition of the
+ *  interruption text, so the model sees the same signal either way. */
+export function interruptedResult(call: ToolCall): ToolResultMessage {
   return errorResult(call, "Tool execution was interrupted.");
 }
