@@ -50,7 +50,6 @@ const interrupted = (toolCallId: string): ToolResultMessage => ({
 const entry = (seq: number, message: AgentMessage): SessionEntry => ({
   id: `e${seq}`,
   seq,
-  runId: "r1",
   timestamp: "2026-08-10T12:00:00Z",
   type: "message",
   message,
@@ -83,7 +82,6 @@ describe("buildContext", () => {
     const custom: SessionEntry = {
       id: "e1",
       seq: 1,
-      runId: null,
       timestamp: "2026-08-10T12:00:00Z",
       type: "custom",
       namespace: "billing",
@@ -92,11 +90,21 @@ describe("buildContext", () => {
     expect(buildContext([entry(0, user("hi")), custom])).toEqual([user("hi")]);
   });
 
+  it("skips control entries — cancel never reaches the model", () => {
+    const control: SessionEntry = {
+      id: "e1",
+      seq: 1,
+      timestamp: "2026-08-10T12:00:00Z",
+      type: "control",
+      control: "cancel",
+    };
+    expect(buildContext([entry(0, user("hi")), control])).toEqual([user("hi")]);
+  });
+
   it("treats compaction entries as a no-op for now", () => {
     const compaction: SessionEntry = {
       id: "e1",
       seq: 1,
-      runId: null,
       timestamp: "2026-08-10T12:00:00Z",
       type: "compaction",
       summary: "earlier work…",

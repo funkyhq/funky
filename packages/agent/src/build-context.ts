@@ -8,9 +8,9 @@ import { interruptedResult } from "./execute-tools";
  *
  * The log and the context deliberately diverge — the log keeps everything,
  * the context keeps what the model may see:
- * - custom entries are app payload, skipped; compaction is reserved and a
- *   no-op until its semantics land (then: drop seq <= upToSeq, inject the
- *   summary as user-role text)
+ * - custom entries (app payload) and control entries (harness signals)
+ *   are skipped; compaction is reserved and a no-op until its semantics
+ *   land (then: drop seq <= upToSeq, inject the summary as user-role text)
  *   TODO(compaction): upToSeq must land on a call/result group boundary —
  *   a cut between an assistant message and its results would orphan the
  *   results and this fold would silently drop them from context. This is

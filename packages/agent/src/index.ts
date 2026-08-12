@@ -9,6 +9,6 @@ export type {
   ToolUpdate,
 } from "./execute-tools";
 export { nextAction } from "./next-action";
-export type { Action, RunEndStatus, RunState } from "./next-action";
+export type { Action, RunEndStatus } from "./next-action";
 export type { Tool, ToolContext, ToolOutcome } from "./tool";
-export type { ModelProvider, StreamRequest } from "./model-provider";
+export type { InferenceProvider, StreamRequest } from "./inference-provider";

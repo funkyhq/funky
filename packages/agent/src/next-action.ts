@@ -1,10 +1,5 @@
 import type { AgentMessage, ToolCall } from "@funky/core";
 
-export interface RunState {
-  /** Set by Store.requestCancel; checked here, at every boundary. */
-  cancelRequested: boolean;
-}
-
 export type RunEndStatus = "completed" | "max_tokens" | "cancelled";
 
 export type Action =
@@ -23,11 +18,13 @@ export type Action =
  * the message union itself; there is no separate "step result" vocabulary.
  *
  * Pure and memoryless. The caller invokes it at commit time and persists the
- * consequence — the next item, or the run's terminal status — in the same
- * transaction as the step's output, so statuses change through one write
- * path and a crash can never lose the decision. Decision order:
+ * consequence — the next item, or the run's end as the atomic NON-creation
+ * of one — in the same transaction as the step's output, so a crash can
+ * never separate a message from the decision it caused. Decision order:
  *
- *   1. cancelRequested ends the run "cancelled", whatever the step produced.
+ *   1. cancelRequested — true when a cancel control entry addresses the
+ *      current run; the driver computes it from the log at each boundary —
+ *      ends the run "cancelled", whatever the step produced.
  *   2. User messages and tool results feed into inference — error results
  *      too; recovery is the model's job.
  *   3. An assistant message dispatches on failure first (error → driver
@@ -43,8 +40,8 @@ export type Action =
  * (buildContext) and follow-ups chain new runs (intake); neither changes
  * which item comes next.
  */
-export function nextAction(message: AgentMessage, run: RunState): Action {
-  if (run.cancelRequested) return { kind: "end_run", status: "cancelled" };
+export function nextAction(message: AgentMessage, cancelRequested: boolean): Action {
+  if (cancelRequested) return { kind: "end_run", status: "cancelled" };
 
   switch (message.role) {
     case "user":
