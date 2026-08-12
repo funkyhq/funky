@@ -38,8 +38,8 @@ const toolResult = (isError = false): ToolResultMessage => ({
   isError,
 });
 
-const live = { cancelRequested: false };
-const cancelled = { cancelRequested: true };
+const live = false;
+const cancelled = true;
 
 describe("nextAction", () => {
   describe("after a user message", () => {

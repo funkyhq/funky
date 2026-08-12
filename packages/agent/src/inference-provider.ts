@@ -16,7 +16,7 @@ import type { AgentMessage, ProviderEvent, ToolSpec } from "@funky/core";
  *   exceptions into `aborted`/`error`-stopped messages.
  * - Each `stream()` call is stateless and independent.
  */
-export interface ModelProvider {
+export interface InferenceProvider {
   stream(req: StreamRequest, signal: AbortSignal): AsyncIterable<ProviderEvent>;
 }
 

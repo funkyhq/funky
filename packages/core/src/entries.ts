@@ -19,9 +19,6 @@ const EntryBase = {
   id: z.string(),
   // Per-session ordering; assigned by the store, gapless within a session.
   seq: z.number().int().nonnegative(),
-  // Attribution, not ownership: entries belong to the session; null for
-  // entries written outside any run.
-  runId: z.string().nullable(),
   timestamp: z.iso.datetime(),
 };
 
@@ -53,9 +50,23 @@ export const CompactionEntry = z.object({
 });
 export type CompactionEntry = z.infer<typeof CompactionEntry>;
 
+// The harness control plane riding in the log. requestCancel appends one;
+// workers check for it behind the tail at boundaries. Seq order scopes it
+// precisely: a cancel landing before the run's terminal message addresses
+// that run; landing after it, the cancel addresses a run that no longer
+// exists and is ignored — the log's total order, not flag timing, decides.
+// Never model context: buildContext skips it.
+export const ControlEntry = z.object({
+  ...EntryBase,
+  type: z.literal("control"),
+  control: z.literal("cancel"),
+});
+export type ControlEntry = z.infer<typeof ControlEntry>;
+
 export const SessionEntry = z.discriminatedUnion("type", [
   MessageEntry,
   CustomEntry,
   CompactionEntry,
+  ControlEntry,
 ]);
 export type SessionEntry = z.infer<typeof SessionEntry>;

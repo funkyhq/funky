@@ -4,7 +4,6 @@ import { SessionEntry } from "../src/entries";
 const envelope = {
   id: "e1",
   seq: 0,
-  runId: "r1",
   timestamp: "2026-08-10T12:00:00Z",
 };
 
@@ -42,15 +41,14 @@ describe("SessionEntry", () => {
     expect(SessionEntry.parse(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
   });
 
-  it("accepts a null runId — entries written outside any run", () => {
-    const entry = {
-      ...envelope,
-      runId: null,
-      type: "custom",
-      namespace: "billing",
-      data: {},
-    };
-    expect(SessionEntry.parse(entry).runId).toBeNull();
+  it("round-trips a control entry — cancel rides the log, not a flag", () => {
+    const entry = { ...envelope, type: "control", control: "cancel" };
+    expect(SessionEntry.parse(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
+  });
+
+  it("rejects an unknown control kind", () => {
+    const result = SessionEntry.safeParse({ ...envelope, type: "control", control: "pause" });
+    expect(result.success).toBe(false);
   });
 
   it("rejects an unknown entry type", () => {

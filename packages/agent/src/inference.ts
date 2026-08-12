@@ -9,10 +9,10 @@ import type {
   ToolSpec,
   Usage,
 } from "@funky/core";
-import type { ModelProvider } from "./model-provider";
+import type { InferenceProvider } from "./inference-provider";
 
 export interface InferenceDeps {
-  provider: ModelProvider;
+  provider: InferenceProvider;
   /** Sync fire-and-forget tap. Failures are swallowed: decoration never breaks the step. */
   onDelta?: (e: ProviderEvent) => void;
 }

@@ -1,8 +1,8 @@
 import type { ProviderEvent } from "@funky/core";
-import type { ModelProvider, StreamRequest } from "./model-provider";
+import type { InferenceProvider, StreamRequest } from "./inference-provider";
 
 /**
- * A scripted ModelProvider for tests: yields the given steps in order.
+ * A scripted InferenceProvider for tests: yields the given steps in order.
  * Beyond plain events, a step can throw (provider/network failure) or park
  * until the caller aborts (for testing mid-stream cancellation, mimicking an
  * SDK that raises AbortError when the signal fires).
@@ -11,11 +11,11 @@ import type { ModelProvider, StreamRequest } from "./model-provider";
  */
 export type FakeStep = ProviderEvent | { kind: "throw"; error: Error } | { kind: "untilAborted" };
 
-export interface FakeModelProvider extends ModelProvider {
+export interface FakeInferenceProvider extends InferenceProvider {
   requests: StreamRequest[];
 }
 
-export function createFakeModelProvider(script: FakeStep[]): FakeModelProvider {
+export function createFakeInferenceProvider(script: FakeStep[]): FakeInferenceProvider {
   const requests: StreamRequest[] = [];
   return {
     requests,
