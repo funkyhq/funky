@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ToolCall } from "@funky/core";
-import { executeTools, type ExecuteToolsDeps, type ToolUpdate } from "../src/execute-tools";
-import type { Tool, ToolOutcome } from "../src/tool";
+import { executeTools, type ExecuteToolsDeps, type ToolUpdate } from "../src/engine/execute-tools";
+import type { Tool, ToolOutcome } from "../src/engine/tool";
 
 const liveSignal = (): AbortSignal => new AbortController().signal;
 

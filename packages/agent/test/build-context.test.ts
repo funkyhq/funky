@@ -7,7 +7,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@funky/core";
-import { buildContext } from "../src/build-context";
+import { buildContext } from "../src/engine/build-context";
 
 const user = (text: string): UserMessage => ({
   role: "user",

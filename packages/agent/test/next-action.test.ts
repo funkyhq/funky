@@ -6,7 +6,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@funky/core";
-import { nextAction } from "../src/next-action";
+import { nextAction } from "../src/engine/next-action";
 
 const user = (): UserMessage => ({
   role: "user",

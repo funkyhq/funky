@@ -9,7 +9,7 @@ import type {
   ToolSpec,
   Usage,
 } from "@funky/core";
-import type { InferenceProvider } from "./inference-provider";
+import type { InferenceProvider } from "../ports/inference-provider";
 
 export interface InferenceDeps {
   provider: InferenceProvider;

@@ -16,7 +16,7 @@ import type {
   UserMessage,
   WorkItem,
 } from "@funky/core";
-import type { RunEndStatus } from "./next-action";
+import type { RunEndStatus } from "../engine/next-action";
 
 /**
  * The Store port — the harness's single source of truth. Deliberately one
