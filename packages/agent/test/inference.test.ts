@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderEvent, Usage } from "@funky/core";
-import { createFakeInferenceProvider, type FakeStep } from "../src/fake-inference-provider";
-import { inference, type InferenceRequest } from "../src/inference";
+import { createFakeInferenceProvider, type FakeStep } from "../src/ports/fake-inference-provider";
+import { inference, type InferenceRequest } from "../src/engine/inference";
 
 const usage: Usage = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 };
 const req: InferenceRequest = { model: "test-model", system: "sys", context: [], tools: [] };
