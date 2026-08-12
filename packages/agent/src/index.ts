@@ -12,3 +12,4 @@ export { nextAction } from "./next-action";
 export type { Action, RunEndStatus } from "./next-action";
 export type { Tool, ToolContext, ToolOutcome } from "./tool";
 export type { InferenceProvider, StreamRequest } from "./inference-provider";
+export type { CommitStepRequest, Store } from "./store";
