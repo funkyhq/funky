@@ -30,6 +30,22 @@ jobs:
     # ubuntu runner provides via its preinstalled Docker.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The Store conformance suite runs on two bindings: PGlite (always) and a
+    # network postgres — the binding that exercises true concurrency (contended
+    # claims, lease races) that single-connection PGlite serializes away. This
+    # service is what un-skips packages/adapters/test/pg-postgres.test.ts.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: pw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -39,6 +55,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter '!chaos-tests' -r --if-present test
+        env:
+          STORE_TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres
 
   chaos:
     # The product's warranty — durable agent execution proven at every crash point, under
