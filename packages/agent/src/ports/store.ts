@@ -73,19 +73,22 @@ export interface Store {
    * undefined = no work. No type filter — workers dispatch on the
    * claimed item's type. sessionId narrows the scan for the (deferred)
    * driver-per-sandbox topology.
+   *
+   * The returned token is the fencing credential, minted by the store
+   * fresh for every claim (2026-08-12) — uniqueness is structural, not
+   * caller discipline. A re-claim of the same item always issues a new
+   * token, so a previous holder's zombie is fenced by construction.
    */
-  claimItem(req: {
-    owner: string;
-    leaseMs: number;
-    sessionId?: SessionId;
-  }): Promise<WorkItem | undefined>;
+  claimItem(req: { leaseMs: number; sessionId?: SessionId }): Promise<Claim | undefined>;
 
   /**
-   * Extend the lease; false = lease lost, the driver must abort its
-   * step. outputTail is a coarse progress checkpoint (~2s), not the
-   * transcript — the transcript is written once, at commit.
+   * Extend the lease by the duration chosen at claim; false = lease
+   * lost, the driver must abort its step. itemId addresses the item;
+   * the token authorizes the write. (A progress-checkpoint payload was
+   * cut 2026-08-12 — it returns with its first reader, shaped by that
+   * reader's needs.)
    */
-  heartbeat(itemId: ItemId, owner: string, opts?: { outputTail?: string }): Promise<boolean>;
+  heartbeat(itemId: ItemId, token: LeaseToken): Promise<boolean>;
 
   /**
    * Appends a cancel ControlEntry to the log — nothing else. Workers
@@ -109,18 +112,32 @@ export interface Store {
   /**
    * The driver's write path: append the step's output, drain any
    * consumed inputs, and resolve the claimed item — cause and
-   * consequence in one transaction. Fenced like heartbeat: a stale
-   * owner throws. Re-committing a done item resolves idempotently
-   * (crash-after-commit recovery).
+   * consequence in one transaction. Fenced symmetrically with
+   * heartbeat: the commit must carry the claim's token within a live
+   * lease — a stale token OR an expired lease throws, even if no one
+   * has reclaimed the item (strict expiry, 2026-08-12). Late work
+   * is discarded, never merged: after expiry the item's fate belongs
+   * to its next claimer. Re-committing a done item resolves
+   * idempotently (crash-after-commit recovery).
    */
   commitStep(req: CommitStepRequest): Promise<void>;
 
   // P4 adds reaper operations (lease expiry, interrupted-result synthesis).
 }
 
+/** Minted by the store per claim; opaque to callers, checked by equality. */
+export type LeaseToken = string;
+
+/** claimItem's result: the leased item plus its fencing credential. */
+export interface Claim {
+  item: WorkItem;
+  token: LeaseToken;
+}
+
 export interface CommitStepRequest {
   itemId: ItemId;
-  owner: string;
+  /** The claim's credential — itemId addresses, the token authorizes. */
+  token: LeaseToken;
   /** Payloads — the store mints envelopes. Drained steering precedes step output. */
   append: AgentMessage[];
   /** Pending rows whose messages are in `append` — deleted in the same transaction. */

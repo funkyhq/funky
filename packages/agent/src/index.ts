@@ -12,4 +12,4 @@ export { nextAction } from "./engine/next-action";
 export type { Action, RunEndStatus } from "./engine/next-action";
 export type { Tool, ToolContext, ToolOutcome } from "./engine/tool";
 export type { InferenceProvider, StreamRequest } from "./ports/inference-provider";
-export type { CommitStepRequest, Store } from "./ports/store";
+export type { Claim, CommitStepRequest, LeaseToken, Store } from "./ports/store";
