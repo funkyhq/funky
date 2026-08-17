@@ -1,10 +1,10 @@
 # engine/
 
 The step functions of the harness — pure, no I/O of their own. Their
-caller is the **driver**: the claim → step → commit loop, written as a
-library and hosted by a worker process (`apps/worker`) or a local CLI —
-the Store port's "two callers" are the api (intake) and this loop
-(commitStep). Nothing here knows that loop exists.
+caller is the **driver** (`../driver`): the claim → step → commit loop,
+written as a library and hosted by a worker process (`apps/worker`) —
+the Store port's "two callers" are the api (intake) and that loop
+(commitStep). Nothing here knows the loop exists.
 
 | function       | shape                                                            |
 | -------------- | ---------------------------------------------------------------- |

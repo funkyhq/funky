@@ -17,9 +17,13 @@ export interface InferenceDeps {
   onDelta?: (e: ProviderEvent) => void;
 }
 
-/** Serializable data only — loggable, replayable. */
+/** Serializable data only — loggable, replayable. The engine reads only
+ *  `model` (stamped onto the message); the sampling fields ride through
+ *  for the provider adapter to map. */
 export interface InferenceRequest {
   model: string;
+  maxTokens?: number;
+  temperature?: number;
   system: string;
   context: AgentMessage[];
   tools: ToolSpec[];
