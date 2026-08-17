@@ -57,6 +57,9 @@ jobs:
       - run: pnpm --filter '!chaos-tests' -r --if-present test
         env:
           STORE_TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres
+          # The crash-resume randomized sweep scales with iterations; CI
+          # affords a wider net than the local default of 6.
+          CRASH_SWEEP_ITERATIONS: "24"
 
   chaos:
     # The product's warranty — durable agent execution proven at every crash point, under
