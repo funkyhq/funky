@@ -25,6 +25,11 @@ const send = (message: unknown): void => {
 const onStall = (): void => send({ t: "stalled", spec });
 
 const client = new PGlite(dataDir);
+// Full open (including crash recovery of the copied/killed data dir)
+// before announcing readiness — the parent times its kills from the
+// `ready` signal, never from fork, because process startup on a cold,
+// contended CI runner can outlast any sane kill window.
+await client.waitReady;
 const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
 
 let claims = 0;
@@ -54,4 +59,5 @@ const deps: DriverDeps = {
   tools: createTools({ spec, onStall }),
 };
 
+send({ t: "ready" });
 await runDriver(deps, { leaseMs, idlePollMs: 25 });

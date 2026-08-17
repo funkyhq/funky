@@ -194,7 +194,10 @@ function forkDriver(dir: string, spec?: KillSpec): DriverHandle {
 
   return {
     received,
-    waitFor(pred, label, timeoutMs = 30_000) {
+    // Inner timeouts stay below the test timeouts: a rejected wait runs
+    // the caller's reap-finally, while a vitest timeout would strand the
+    // async body mid-await and leak live children.
+    waitFor(pred, label, timeoutMs = 60_000) {
       const hit = received.find(pred);
       if (hit) return Promise.resolve(hit);
       if (died) return Promise.reject(fail(`${label}: child already dead`));
@@ -360,7 +363,7 @@ describe.concurrent("crash-resume: deterministic kill points", () => {
     async (_name, sc) => {
       await runScenario(sc);
     },
-    90_000,
+    180_000,
   );
 });
 
@@ -402,8 +405,13 @@ describe.concurrent("crash-resume: randomized sweep", () => {
           if (attempts > 20) throw new Error(`${label}: no progress after 20 children`);
           const child = forkDriver(dir);
           children.push(child);
-          // Escalating floor guarantees progress; the random tail scatters
-          // the kill over startup, steps, and commits alike.
+          // Arm the kill timer only at the child's ready signal — timed
+          // from fork it races process startup, which loses on a cold,
+          // contended CI runner; a pre-ready kill exercises nothing (no
+          // claim can precede the store existing). The escalating floor
+          // rides out lease expiry from the previous kill; the random
+          // tail scatters the kill over claims, steps, and commits.
+          await child.waitFor((m) => m.t === "ready", `${label}: child ready`, 90_000);
           const delay = 100 + attempts * 200 + Math.floor(rng() * 800);
           await Promise.race([child.waitFor(endRun, `${label}: end_run`, 60_000), sleep(delay)]);
           await child.kill();
@@ -415,6 +423,6 @@ describe.concurrent("crash-resume: randomized sweep", () => {
         for (const child of children) await child.kill();
       }
     },
-    120_000,
+    300_000,
   );
 });
