@@ -125,6 +125,20 @@ export interface Store {
   // P4 adds reaper operations (lease expiry, interrupted-result synthesis).
 }
 
+/**
+ * Thrown by commitStep when the fence rejects the write — a stale token
+ * or an expired lease. A typed class because the driver must tell this
+ * apart from infrastructure failure: fenced means the item's fate belongs
+ * to another claim, so the correct response is to drop the step's work
+ * and claim again; anything else means the commit's outcome is unknown.
+ */
+export class FencedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FencedError";
+  }
+}
+
 /** Minted by the store per claim; opaque to callers, checked by equality. */
 export type LeaseToken = string;
 

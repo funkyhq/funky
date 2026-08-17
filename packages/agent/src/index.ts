@@ -1,3 +1,5 @@
+export { cancelRequested, runDriver, runStep } from "./driver/loop";
+export type { DriverDeps, DriverOptions } from "./driver/loop";
 export { buildContext } from "./engine/build-context";
 export { inference } from "./engine/inference";
 export type { InferenceDeps, InferenceRequest } from "./engine/inference";
@@ -10,6 +12,8 @@ export type {
 } from "./engine/execute-tools";
 export { nextAction } from "./engine/next-action";
 export type { Action, RunEndStatus } from "./engine/next-action";
+export { toToolSpec } from "./engine/tool";
 export type { Tool, ToolContext, ToolOutcome } from "./engine/tool";
 export type { InferenceProvider, StreamRequest } from "./ports/inference-provider";
+export { FencedError } from "./ports/store";
 export type { Claim, CommitStepRequest, LeaseToken, Store } from "./ports/store";

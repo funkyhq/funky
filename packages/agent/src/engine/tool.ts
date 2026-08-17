@@ -1,5 +1,5 @@
-import type { z } from "zod";
-import type { ImageContent, JsonValue, TextContent } from "@funky/core";
+import { z } from "zod";
+import type { ImageContent, JsonValue, TextContent, ToolSpec } from "@funky/core";
 
 /**
  * The executable half of a tool — deliberately a different type from
@@ -14,6 +14,19 @@ export interface Tool {
   /** Zod schema for arguments; projected to the spec's JSON Schema at the edge. */
   input: z.ZodType;
   execute(args: unknown, ctx: ToolContext): Promise<ToolOutcome>;
+}
+
+/**
+ * The one projection from executable to declaration — "the edge" the type
+ * comments on both sides refer to. `io: "input"` because the spec
+ * describes what the model writes: the schema's pre-transform input side.
+ */
+export function toToolSpec(tool: Tool): ToolSpec {
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: z.toJSONSchema(tool.input, { io: "input" }) as Record<string, JsonValue>,
+  };
 }
 
 /**

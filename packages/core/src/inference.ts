@@ -2,10 +2,13 @@ import { z } from "zod";
 
 /**
  * The inference vocabulary — the declarative description of how a
- * session's inference runs: which model serves it and how to sample. The
- * InferenceProvider adapter is the interpreter: `provider` routes within
- * it ("anthropic", "openai", …) the way env recipes route within the
- * SandboxProvider — core does not enumerate vendors.
+ * session's inference runs: which provider serves it, which model, and
+ * how to sample. `provider` ("anthropic", "openai", …) names the
+ * interpreting adapter and is consumed picking it (2026-08-15) — the
+ * composition root today, a registry when a second vendor exists; it is
+ * not part of the StreamRequest. model/maxTokens/temperature ride the
+ * request for the chosen adapter to map. Core does not enumerate
+ * vendors.
  */
 export const InferenceConfig = z.object({
   provider: z.string(),

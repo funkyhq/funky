@@ -17,6 +17,11 @@ import { interruptedResult } from "./execute-tools";
  *   a constraint on the future compactor; nothing enforces it yet.
  *   TODO(compaction): with multiple compaction entries (recompaction),
  *   the highest upToSeq governs; earlier ones are themselves superseded.
+ *   TODO(compaction): compaction edits the model's view, never the
+ *   control plane — a compactor must not compact past an unanswered
+ *   cancel (or control-plane reads must stay full-log), else a pending
+ *   cancel could vanish from a windowed read. Trailing cancels are safe
+ *   (they sit after the compaction entry); see cancelRequested.
  * - assistant messages with stopReason aborted/error stay in the log but
  *   are dropped here
  * - tool calls and results must pair up, repaired in both directions: a

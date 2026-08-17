@@ -1,6 +1,6 @@
 // The Store port over vanilla postgres. One adapter, many runtimes: the
-// composition root binds `db` to PGlite (tests, local REPL) or a network
-// postgres (compose, k8s, managed) — there is no test/prod adapter split.
+// composition root binds `db` to PGlite (tests) or a network postgres
+// (compose, k8s, managed) — there is no test/prod adapter split.
 //
 // Concurrency discipline:
 // - Per-session write serialization: every writing transaction locks the
@@ -41,7 +41,7 @@ import {
   UserMessage,
   WorkItem,
 } from "@funky/core";
-import type { CommitStepRequest, Store } from "@funky/agent";
+import { type CommitStepRequest, FencedError, type Store } from "@funky/agent";
 import {
   agentConfigs,
   envConfigs,
@@ -233,9 +233,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async claimItem(req) {
       return db.transaction(async (tx) => {
         const t = now();
-        // "Expired" has one spelling everywhere: live iff now < leaseExpiresAt.
-        // Equality is dead — heartbeat and commitStep agree, so the instant
-        // the old holder loses authority is the instant a claimer gains it.
+        // "Expired" iff leaseExpiresAt <= now.
         const claimable = or(
           eq(workItems.status, "ready"),
           and(eq(workItems.status, "leased"), lte(workItems.leaseExpiresAt, t)),
@@ -336,13 +334,15 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         if (!item) throw new Error(`commitStep: unknown item ${req.itemId}`);
         if (item.status === "done") {
           if (item.leaseToken !== req.token)
-            throw new Error(`commitStep: fenced — ${req.itemId} was finished under another claim`);
+            throw new FencedError(
+              `commitStep: fenced — ${req.itemId} was finished under another claim`,
+            );
           return; // idempotent re-commit (crash-after-commit recovery)
         }
         if (item.status !== "leased" || item.leaseToken !== req.token)
-          throw new Error(`commitStep: fenced — stale token for ${req.itemId}`);
+          throw new FencedError(`commitStep: fenced — stale token for ${req.itemId}`);
         if (item.leaseExpiresAt === null || item.leaseExpiresAt.getTime() <= now().getTime())
-          throw new Error(`commitStep: fenced — ${req.itemId}'s lease expired before commit`);
+          throw new FencedError(`commitStep: fenced — ${req.itemId}'s lease expired before commit`);
         await lockSession(tx, item.sessionId);
         await appendEntries(
           tx,

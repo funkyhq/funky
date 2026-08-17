@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AssistantMessage, UserMessage } from "@funky/core";
-import type { CommitStepRequest, Store } from "@funky/agent";
+import { type CommitStepRequest, FencedError, type Store } from "@funky/agent";
 
 export interface StoreHarness {
   store: Store;
@@ -246,7 +246,7 @@ export function describeStoreConformance(
             append: [assistant("stale work")],
             next: { kind: "end_run", status: "completed" },
           }),
-        ).rejects.toThrow(/fenced/);
+        ).rejects.toThrow(FencedError);
         await store.commitStep({
           itemId,
           token: reclaimed!.token,
@@ -267,7 +267,7 @@ export function describeStoreConformance(
             append: [assistant("at the wire")],
             next: { kind: "end_run", status: "completed" },
           }),
-        ).rejects.toThrow(/fenced/);
+        ).rejects.toThrow(FencedError);
         const reclaimed = await store.claimItem({ leaseMs: 60_000 }); // …and a claimer is in
         expect(reclaimed?.item.id).toBe(itemId);
       });
@@ -283,7 +283,7 @@ export function describeStoreConformance(
             append: [assistant("late")],
             next: { kind: "end_run", status: "completed" },
           }),
-        ).rejects.toThrow(/fenced/);
+        ).rejects.toThrow(FencedError);
         // The rejected commit rolled back whole — nothing landed.
         expect(await store.readEntries(sessionId)).toHaveLength(1);
         // After expiry the item's fate belongs to its next claimer.

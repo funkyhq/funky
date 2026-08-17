@@ -1,9 +1,9 @@
 # ports/
 
 The contracts the engine and the driver (the claim → step → commit loop
-hosted by a worker — see `../engine/README.md`) consume. Implementations
-live downstream in `packages/adapters`; this directory defines what they
-must be, never what they are.
+in `../driver`) consume. Implementations live downstream in
+`packages/adapters`; this directory defines what they must be, never
+what they are.
 
 | port                | one line                                                |
 | ------------------- | ------------------------------------------------------- |
@@ -29,5 +29,5 @@ Why the ports live here and not elsewhere:
 
 Adapters are held to these contracts behaviorally, not just structurally:
 the Store conformance suite (in `packages/adapters`) runs against every
-implementation, memory and pg alike. If a port's jsdoc promises it, the
+implementation on every binding. If a port's jsdoc promises it, the
 suite pins it.
