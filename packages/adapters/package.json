@@ -14,6 +14,7 @@
     "@funky/core": "workspace:*",
     "ai": "^7.0.0",
     "drizzle-orm": "^1.0.0-beta.2",
+    "e2b": "^2.33.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
