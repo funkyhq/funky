@@ -13,7 +13,8 @@ export type {
 export { nextAction } from "./engine/next-action";
 export type { Action, RunEndStatus } from "./engine/next-action";
 export { toToolSpec } from "./engine/tool";
-export type { Tool, ToolContext, ToolOutcome } from "./engine/tool";
+export type { Tool, ToolContext, ToolDefinition, ToolOutcome } from "./engine/tool";
+export { createSandboxTools, sandboxToolSpecs } from "./tools/sandbox-tools";
 export type { InferenceProvider, StreamRequest } from "./ports/inference-provider";
 export type {
   CommandResult,

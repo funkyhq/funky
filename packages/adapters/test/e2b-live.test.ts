@@ -69,6 +69,13 @@ if (!apiKey) {
       const bytes = new Uint8Array([0, 1, 2, 255, 128, 0, 42]);
       await sandbox.writeFile("/home/user/blob.bin", bytes);
       expect(Array.from(await sandbox.readFile("/home/user/blob.bin"))).toEqual(Array.from(bytes));
+
+      // The port's writeFile promise: missing parent directories are created.
+      await sandbox.writeFile("/home/user/deep/nested/leaf.txt", "made the path\n");
+      const nested = new TextDecoder().decode(
+        await sandbox.readFile("/home/user/deep/nested/leaf.txt"),
+      );
+      expect(nested).toBe("made the path\n");
     }, 60_000);
 
     test("lists by metadata equality", async () => {

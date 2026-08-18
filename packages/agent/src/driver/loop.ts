@@ -150,6 +150,10 @@ export async function runStep(deps: DriverDeps, claim: Claim, leaseMs: number): 
       consumeInputs = pending.map((input) => input.id);
       tail = message;
     } else {
+      // TODO(attempt): a re-claimed execute_tools item re-executes its
+      // calls' side effects. Step 4's carve-out — `work_items.attempt` +
+      // synthesized interrupted results on attempt > 1 — lands with the
+      // Store schema change and its own crash-resume tests.
       const calls = tailCalls(entries);
       const results = await executeTools(
         { tools: deps.tools, onUpdate: deps.onUpdate },
