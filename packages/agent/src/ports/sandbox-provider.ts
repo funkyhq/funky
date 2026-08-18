@@ -13,9 +13,10 @@
 // - `pause` frees compute and preserves the workspace FILESYSTEM;
 //   whether in-memory state survives is backend-dependent (E2B
 //   preserves it, docker does not) and callers must not rely on it.
-// - `connect` reattaches to a running sandbox and throws otherwise;
-//   `resume` revives a paused one and is idempotent on a running one,
-//   so find-or-revive needs no state check between list and resume.
+// - `connect` reattaches to a sandbox, reviving it in place when paused
+//   (idempotent on a running one), so find-or-revive needs no state
+//   check between list and connect. It throws only when the sandbox is
+//   unknown or killed.
 // - `run` executes through a shell; a non-zero exit is a result, never
 //   a throw. Throwing means the sandbox itself was unreachable, after
 //   one transparent recovery attempt. File content moves through
@@ -31,10 +32,8 @@ import type { NetworkPolicy } from "@funky/core";
 
 export interface SandboxProvider {
   create(opts?: CreateSandboxOptions): Promise<Sandbox>;
-  /** Reattach to a running sandbox; throws if paused or unknown. */
+  /** Reattach, reviving a paused sandbox; throws if unknown or killed. */
   connect(sandboxId: string): Promise<Sandbox>;
-  /** Revive a paused sandbox and reattach; idempotent on a running one. */
-  resume(sandboxId: string): Promise<Sandbox>;
   /** Every non-killed sandbox, optionally filtered by metadata equality. */
   list(filter?: { metadata?: Record<string, string> }): Promise<SandboxInfo[]>;
 }
