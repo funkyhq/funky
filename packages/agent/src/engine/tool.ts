@@ -17,11 +17,19 @@ export interface Tool {
 }
 
 /**
+ * The declaration half of a Tool — everything but `execute`. Tool modules
+ * export their definition as a static constant and bind the executable
+ * separately, so specs project from the same source as the executable
+ * (drift is impossible) without needing one.
+ */
+export type ToolDefinition = Pick<Tool, "name" | "description" | "input">;
+
+/**
  * The one projection from executable to declaration — "the edge" the type
  * comments on both sides refer to. `io: "input"` because the spec
  * describes what the model writes: the schema's pre-transform input side.
  */
-export function toToolSpec(tool: Tool): ToolSpec {
+export function toToolSpec(tool: ToolDefinition): ToolSpec {
   return {
     name: tool.name,
     description: tool.description,
