@@ -14,13 +14,14 @@ import { z } from "zod";
 import type { ProviderEvent, SessionEntry, Usage, UserMessage } from "@funky/core";
 import {
   type Claim,
-  type DriverDeps,
   FencedError,
   type InferenceProvider,
   runStep,
+  type StepDeps,
   type Store,
   type StreamRequest,
   type Tool,
+  toToolSpec,
 } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
 
@@ -116,7 +117,6 @@ const echo: Tool = {
 };
 
 const echoOnly = new Map([[echo.name, echo]]);
-const noTools = new Map<string, Tool>();
 
 const user = (text: string): UserMessage => ({ role: "user", content: [{ type: "text", text }] });
 
@@ -169,11 +169,17 @@ describe("driver steps over the pg store", () => {
   it("runs a full turn: inference → tools → inference → completion", async () => {
     const sessionId = await newSession();
     const provider = scriptedProvider([callEcho("hi"), sayText("done!")]);
-    const deps: DriverDeps = { store, provider, tools: echoOnly };
+    const deps: StepDeps = {
+      store,
+      provider,
+      toolSpecs: [...echoOnly.values()].map(toToolSpec),
+    };
 
     await store.intake(sessionId, user("go"));
+    // Only the execute_tools step receives executables — the loop's
+    // ensure-on-claim; inference steps declare specs without a sandbox.
     await runStep(deps, await claim(sessionId), 60_000); // inference → tool call
-    await runStep(deps, await claim(sessionId), 60_000); // execute_tools
+    await runStep(deps, await claim(sessionId), 60_000, echoOnly); // execute_tools
     await runStep(deps, await claim(sessionId), 60_000); // inference → end_turn
     // The run ended: its end is the non-creation of a fourth item.
     expect(await store.claimItem({ leaseMs: 60_000, sessionId })).toBeUndefined();
@@ -207,7 +213,7 @@ describe("driver steps over the pg store", () => {
     expect(queued.kind).toBe("queued");
 
     const provider = scriptedProvider([sayText("ok")]);
-    await runStep({ store, provider, tools: noTools }, await claim(sessionId), 60_000);
+    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionId), 60_000);
 
     // Steering shaped the context (appended at the tail)…
     expect(provider.requests[0]?.context.map((m) => m.role)).toEqual(["user", "user"]);
@@ -228,7 +234,7 @@ describe("driver steps over the pg store", () => {
       [...sayText("first").slice(0, 3), { wait: gate.promise }, sayText("first")[3] as Step],
       sayText("second"),
     ]);
-    const deps: DriverDeps = { store, provider, tools: noTools };
+    const deps: StepDeps = { store, provider, toolSpecs: [] };
 
     const inFlight = runStep(deps, await claim(sessionId), 60_000);
     // Arrive after run 1's inference prep: too late to steer this step.
@@ -256,7 +262,7 @@ describe("driver steps over the pg store", () => {
     expect(queued.kind).toBe("queued");
 
     const provider = scriptedProvider([sayText("fresh")]);
-    const deps: DriverDeps = { store, provider, tools: noTools };
+    const deps: StepDeps = { store, provider, toolSpecs: [] };
     await runStep(deps, await claim(sessionId), 60_000);
 
     // The run ended without inference, appending nothing; the queued
@@ -280,7 +286,7 @@ describe("driver steps over the pg store", () => {
     const sessionId = await newSession();
     await store.intake(sessionId, user("go"));
     const provider = scriptedProvider([[{ throw: new Error("provider exploded") }]]);
-    await runStep({ store, provider, tools: noTools }, await claim(sessionId), 60_000);
+    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionId), 60_000);
 
     const log = messages(await store.readEntries(sessionId));
     expect(log).toHaveLength(2);
@@ -293,7 +299,7 @@ describe("driver steps over the pg store", () => {
     const sessionId = await newSession();
     await store.intake(sessionId, user("go"));
     const provider = scriptedProvider([["untilAborted"], sayText("recovered")]);
-    const deps: DriverDeps = { store, provider, tools: noTools };
+    const deps: StepDeps = { store, provider, toolSpecs: [] };
 
     const inFlight = runStep(deps, await claim(sessionId, 500), 500);
     await until(() => provider.requests.length === 1);
@@ -327,7 +333,7 @@ describe("driver steps over the pg store", () => {
     };
 
     const provider = scriptedProvider([sayText("a"), sayText("b")]);
-    const deps: DriverDeps = { store: fencingStore, provider, tools: noTools };
+    const deps: StepDeps = { store: fencingStore, provider, toolSpecs: [] };
 
     // First step's commit is fenced: runStep swallows it and drops the work.
     await runStep(deps, await claim(sessionId, 300), 300);
