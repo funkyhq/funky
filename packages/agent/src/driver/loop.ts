@@ -31,12 +31,13 @@ import type {
   SessionEntry,
   SessionId,
   ToolCall,
+  ToolSpec,
 } from "@funky/core";
 import { buildContext } from "../engine/build-context";
 import { executeTools, type ToolUpdate } from "../engine/execute-tools";
 import { inference } from "../engine/inference";
 import { type Action, nextAction } from "../engine/next-action";
-import { type Tool, toToolSpec } from "../engine/tool";
+import type { Tool } from "../engine/tool";
 import type { InferenceProvider } from "../ports/inference-provider";
 import {
   type Claim,
@@ -46,14 +47,29 @@ import {
   type Store,
 } from "../ports/store";
 
-export interface DriverDeps {
+/** What one step needs. Executables are not here: runStep receives the
+ *  bound map as an argument, because binding is the loop's job. */
+export interface StepDeps {
   store: Store;
   provider: InferenceProvider;
-  /** Executables by name; projected to specs at the inference edge. */
-  tools: Map<string, Tool>;
+  /** Static tool declarations for the inference branch. Declaring tools
+   *  never needs a sandbox, so an inference-only turn never pays for
+   *  one — the ensure-on-claim half of the ratified lifecycle. */
+  toolSpecs: ToolSpec[];
   /** Decoration taps forwarded to the engine steps. Fire-and-forget. */
   onDelta?: (event: ProviderEvent) => void;
   onUpdate?: (update: ToolUpdate) => void;
+}
+
+export interface DriverDeps extends StepDeps {
+  /** Bind the executables for a claim whose item is execute_tools:
+   *  ensure the sandbox, bind the tools, hand the map to runStep. The
+   *  composition root closes this over ensureSandbox +
+   *  createSandboxTools; tests hand back a fixed map. A rejection is
+   *  worker trouble, not tool trouble: it propagates uncommitted, and
+   *  the crash rule applies — the lease expires and another claim
+   *  retries. */
+  bindTools(sessionId: SessionId): Promise<Map<string, Tool>>;
 }
 
 export interface DriverOptions {
@@ -80,17 +96,32 @@ export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Pro
       await sleep(idlePollMs);
       continue;
     }
-    await runStep(deps, claim, leaseMs);
+    // Ensure-on-claim: only an execute_tools item pays for a sandbox.
+    // The bind runs on the claim's initial lease — heartbeats start
+    // inside runStep — so if a slow sandbox create outlives the lease,
+    // the step's commit is fenced: wasted work, never wrong work.
+    const tools =
+      claim.item.type === "execute_tools" ? await deps.bindTools(claim.item.sessionId) : undefined;
+    await runStep(deps, claim, leaseMs, tools);
   }
 }
+
+const EMPTY_TOOLS = new Map<string, Tool>();
 
 /**
  * One claim → at most one commit; the tested unit of the driver — the
  * loop above is policy around it. Holds the lease via heartbeats for
  * the step's duration; a lost lease aborts the step, and an interrupted
- * step is dropped, never committed.
+ * step is dropped, never committed. `tools` carries the executables the
+ * loop bound for an execute_tools claim; an inference step never reads
+ * it.
  */
-export async function runStep(deps: DriverDeps, claim: Claim, leaseMs: number): Promise<void> {
+export async function runStep(
+  deps: StepDeps,
+  claim: Claim,
+  leaseMs: number,
+  tools: Map<string, Tool> = EMPTY_TOOLS,
+): Promise<void> {
   const { store } = deps;
   const { item, token } = claim;
 
@@ -134,15 +165,16 @@ export async function runStep(deps: DriverDeps, claim: Claim, leaseMs: number): 
       const steering = pending.map((input) => input.message);
       // config.inference.provider picked the adapter at composition and
       // is not part of the request.
+      // StepDeps is structurally an InferenceDeps; no re-wrapping.
       const message = await inference(
-        { provider: deps.provider, onDelta: deps.onDelta },
+        deps,
         {
           model: config.inference.model,
           maxTokens: config.inference.maxTokens,
           temperature: config.inference.temperature,
           system: config.systemPrompt,
           context: buildContext(entries, steering),
-          tools: [...deps.tools.values()].map(toToolSpec),
+          tools: deps.toolSpecs,
         },
         step.signal,
       );
@@ -156,7 +188,7 @@ export async function runStep(deps: DriverDeps, claim: Claim, leaseMs: number): 
       // Store schema change and its own crash-resume tests.
       const calls = tailCalls(entries);
       const results = await executeTools(
-        { tools: deps.tools, onUpdate: deps.onUpdate },
+        { tools, onUpdate: deps.onUpdate },
         { calls },
         step.signal,
       );

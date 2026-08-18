@@ -35,7 +35,7 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type DriverDeps, runStep, type Store } from "@funky/agent";
+import { runStep, type StepDeps, type Store, toToolSpec } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
 import {
   createProvider,
@@ -80,11 +80,16 @@ async function copyOf(template: string): Promise<string> {
 /** The parent's in-process driver — used only to build templates and the
  *  uninterrupted reference; the same runStep the children run. */
 async function driveToIdle(store: Store): Promise<void> {
-  const deps: DriverDeps = { store, provider: createProvider(), tools: createTools() };
+  const tools = createTools();
+  const deps: StepDeps = {
+    store,
+    provider: createProvider(),
+    toolSpecs: [...tools.values()].map(toToolSpec),
+  };
   for (;;) {
     const claim = await store.claimItem({ leaseMs: 60_000 });
     if (!claim) return;
-    await runStep(deps, claim, 60_000);
+    await runStep(deps, claim, 60_000, tools);
   }
 }
 

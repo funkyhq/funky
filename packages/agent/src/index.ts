@@ -1,5 +1,6 @@
 export { cancelRequested, runDriver, runStep } from "./driver/loop";
-export type { DriverDeps, DriverOptions } from "./driver/loop";
+export type { DriverDeps, DriverOptions, StepDeps } from "./driver/loop";
+export { ensureSandbox } from "./driver/ensure-sandbox";
 export { buildContext } from "./engine/build-context";
 export { inference } from "./engine/inference";
 export type { InferenceDeps, InferenceRequest } from "./engine/inference";

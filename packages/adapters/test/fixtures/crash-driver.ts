@@ -9,7 +9,7 @@
 
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { type DriverDeps, runDriver, type Store } from "@funky/agent";
+import { type DriverDeps, runDriver, type Store, toToolSpec } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../../src";
 import { createProvider, createTools, type KillSpec, stallForever } from "./crash-script";
 
@@ -53,10 +53,12 @@ const wrapped: Store = {
   },
 };
 
+const tools = createTools({ spec, onStall });
 const deps: DriverDeps = {
   store: wrapped,
   provider: createProvider({ spec, onStall }),
-  tools: createTools({ spec, onStall }),
+  toolSpecs: [...tools.values()].map(toToolSpec),
+  bindTools: async () => tools,
 };
 
 send({ t: "ready" });
