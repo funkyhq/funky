@@ -15,5 +15,13 @@ export type { Action, RunEndStatus } from "./engine/next-action";
 export { toToolSpec } from "./engine/tool";
 export type { Tool, ToolContext, ToolOutcome } from "./engine/tool";
 export type { InferenceProvider, StreamRequest } from "./ports/inference-provider";
+export type {
+  CommandResult,
+  CreateSandboxOptions,
+  RunOptions,
+  Sandbox,
+  SandboxInfo,
+  SandboxProvider,
+} from "./ports/sandbox-provider";
 export { FencedError } from "./ports/store";
 export type { Claim, CommitStepRequest, LeaseToken, Store } from "./ports/store";

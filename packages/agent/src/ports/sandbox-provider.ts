@@ -27,6 +27,8 @@
 //   simply never committed, and the fence rejects late work.
 // - `kill` destroys the sandbox including its workspace.
 
+import type { NetworkPolicy } from "@funky/core";
+
 export interface SandboxProvider {
   create(opts?: CreateSandboxOptions): Promise<Sandbox>;
   /** Reattach to a running sandbox; throws if paused or unknown. */
@@ -42,6 +44,11 @@ export interface CreateSandboxOptions {
   timeoutMs?: number;
   /** What the TTL does: pause (keep the workspace) or kill. Default "pause". */
   lifecycle?: "pause" | "kill";
+  /** Egress intent (core/environment.ts). Adapters translate it to
+   *  their provider's enforcement and MUST reject create() when they
+   *  cannot enforce it — never silently run more open than asked.
+   *  Absent = unrestricted. */
+  network?: NetworkPolicy;
   /** Opaque labels; the driver stores the session mapping here. */
   metadata?: Record<string, string>;
 }
