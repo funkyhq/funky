@@ -140,6 +140,33 @@ export function describeStoreConformance(
         expect(session?.envConfigId).toBeDefined();
       });
 
+      it("bindSandbox: first writer wins, losers learn the winner", async () => {
+        const sessionId = await newSession();
+        expect((await store.getSession(sessionId))?.sandboxId).toBeUndefined();
+
+        expect(await store.bindSandbox(sessionId, "sbx_a")).toBe("sbx_a");
+        // The loser's candidate is not recorded; it gets the winner back.
+        expect(await store.bindSandbox(sessionId, "sbx_b")).toBe("sbx_a");
+        expect((await store.getSession(sessionId))?.sandboxId).toBe("sbx_a");
+      });
+
+      it("bindSandbox replaces only the expected previous binding", async () => {
+        const sessionId = await newSession();
+        await store.bindSandbox(sessionId, "sbx_a");
+
+        // Wrong expectation: nothing written, the current binding returns.
+        expect(await store.bindSandbox(sessionId, "sbx_c", "sbx_b")).toBe("sbx_a");
+        expect((await store.getSession(sessionId))?.sandboxId).toBe("sbx_a");
+
+        // Right expectation: the dead binding is replaced.
+        expect(await store.bindSandbox(sessionId, "sbx_c", "sbx_a")).toBe("sbx_c");
+        expect((await store.getSession(sessionId))?.sandboxId).toBe("sbx_c");
+      });
+
+      it("bindSandbox rejects an unknown session", async () => {
+        await expect(store.bindSandbox("nope", "sbx_a")).rejects.toThrow("unknown session");
+      });
+
       it("rejects a session naming an unknown agent config", async () => {
         const envConfigId = await store.createEnvConfig({});
         await expect(store.createSession({ agentConfigId: "nope", envConfigId })).rejects.toThrow();

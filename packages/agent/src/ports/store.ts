@@ -57,6 +57,14 @@ export interface Store {
   /** Rejects unknown config ids — a session never dangles. */
   createSession(req: CreateSessionRequest): Promise<SessionId>;
   getSession(id: SessionId): Promise<Session | undefined>;
+  /** Register the session's one sandbox: a compare-and-set on the
+   *  binding — fills a null binding when `previous` is omitted, or
+   *  replaces exactly `previous` when the caller is recovering a dead
+   *  sandbox. Returns the bound id either way: the atomic pick that
+   *  keeps every claimer executing in one workspace — a racer whose
+   *  candidate lost learns the winner and discards its own (see
+   *  driver/ensure-sandbox.ts). Rejects an unknown session. */
+  bindSandbox(sessionId: SessionId, sandboxId: string, previous?: string): Promise<string>;
 
   // --- reads — table-shaped; reads need no atomicity ---
 

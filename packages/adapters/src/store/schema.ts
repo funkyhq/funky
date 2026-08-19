@@ -60,6 +60,8 @@ export const sessions = pgTable("sessions", {
   envConfigId: text("env_config_id")
     .notNull()
     .references(() => envConfigs.id),
+  // The session's one workspace; null until bindSandbox registers it.
+  sandboxId: text("sandbox_id"),
   metadata: jsonb("metadata").$type<WrappedJson>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });

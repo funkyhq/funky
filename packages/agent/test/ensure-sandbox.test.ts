@@ -1,70 +1,90 @@
-// ensure-on-claim over a fake provider: find by session metadata and
-// connect (which revives), create stamped with the session id when
-// nothing exists, and converge deterministically when a race left two.
+// ensure-on-claim over fakes: connect when the Store already registered
+// the session's sandbox, create-and-register when none exists, kill the
+// duplicate and join the winner when the registration CAS is lost, and
+// replace a binding only when the provider says it is definitively gone.
 
 import { describe, expect, test } from "vitest";
+import type { Session } from "@funky/core";
 import { ensureSandbox } from "../src/driver/ensure-sandbox";
-import type {
-  CreateSandboxOptions,
-  Sandbox,
-  SandboxInfo,
-  SandboxProvider,
+import {
+  type CreateSandboxOptions,
+  type Sandbox,
+  SandboxNotFoundError,
+  type SandboxProvider,
 } from "../src/ports/sandbox-provider";
 
-function stub(sandboxId: string): Sandbox {
-  return { sandboxId } as Sandbox;
-}
-
-function fakeProvider(existing: SandboxInfo[]) {
-  const calls = {
-    list: [] as ({ metadata?: Record<string, string> } | undefined)[],
-    connect: [] as string[],
-    create: [] as (CreateSandboxOptions | undefined)[],
-  };
+function fakeProvider(opts?: { deadIds?: string[]; connectError?: Error }) {
+  const calls = { connect: [] as string[], create: [] as (CreateSandboxOptions | undefined)[] };
+  let killed = 0;
   const provider: SandboxProvider = {
-    create: async (opts) => {
-      calls.create.push(opts);
-      return stub("sbx_created");
+    create: async (createOpts) => {
+      calls.create.push(createOpts);
+      return {
+        sandboxId: "sbx_created",
+        kill: async () => {
+          killed++;
+        },
+      } as Sandbox;
     },
     connect: async (sandboxId) => {
       calls.connect.push(sandboxId);
-      return stub(sandboxId);
+      if (opts?.connectError) throw opts.connectError;
+      if (opts?.deadIds?.includes(sandboxId)) {
+        throw new SandboxNotFoundError(`sandbox ${sandboxId} not found`);
+      }
+      return { sandboxId } as Sandbox;
     },
-    list: async (filter) => {
-      calls.list.push(filter);
-      return existing;
-    },
+    list: async () => [],
   };
-  return { provider, calls };
+  return { provider, calls, killed: () => killed };
 }
 
-const info = (sandboxId: string): SandboxInfo => ({
-  sandboxId,
-  state: "paused",
-  metadata: { sessionId: "s1" },
-});
+function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
+  const binds: { candidate: string; previous?: string }[] = [];
+  const session: Session = {
+    id: "s1",
+    agentConfigId: "a1",
+    envConfigId: "e1",
+    createdAt: "2026-08-18T00:00:00.000Z",
+    ...(opts?.sandboxId ? { sandboxId: opts.sandboxId } : {}),
+  };
+  return {
+    binds,
+    getSession: async (id: string) => (id === "s1" ? session : undefined),
+    bindSandbox: async (_sessionId: string, candidate: string, previous?: string) => {
+      binds.push({ candidate, previous });
+      return opts?.winner ?? candidate;
+    },
+  };
+}
 
 describe("ensureSandbox", () => {
-  test("connects to the sandbox found by session metadata", async () => {
-    const { provider, calls } = fakeProvider([info("sbx_a")]);
+  test("connects to the registered sandbox without creating or binding", async () => {
+    const store = fakeStore({ sandboxId: "sbx_bound" });
+    const { provider, calls } = fakeProvider();
 
-    const sandbox = await ensureSandbox(provider, "s1");
-    expect(sandbox.sandboxId).toBe("sbx_a");
-    expect(calls.list).toEqual([{ metadata: { sessionId: "s1" } }]);
-    expect(calls.connect).toEqual(["sbx_a"]);
+    const sandbox = await ensureSandbox(store, provider, "s1");
+    expect(sandbox.sandboxId).toBe("sbx_bound");
+    expect(calls.connect).toEqual(["sbx_bound"]);
     expect(calls.create).toEqual([]);
+    expect(store.binds).toEqual([]);
   });
 
-  test("creates with the session stamped into metadata when none exists", async () => {
-    const { provider, calls } = fakeProvider([]);
+  test("throws on an unknown session", async () => {
+    const { provider } = fakeProvider();
+    await expect(ensureSandbox(fakeStore(), provider, "nope")).rejects.toThrow("unknown session");
+  });
 
-    const sandbox = await ensureSandbox(provider, "s1", {
+  test("creates, stamps the session into metadata, and registers", async () => {
+    const store = fakeStore();
+    const { provider, calls, killed } = fakeProvider();
+
+    const sandbox = await ensureSandbox(store, provider, "s1", {
       timeoutMs: 60_000,
       network: { type: "none" },
       metadata: { tier: "test" },
     });
     expect(sandbox.sandboxId).toBe("sbx_created");
-    expect(calls.connect).toEqual([]);
     expect(calls.create).toEqual([
       {
         timeoutMs: 60_000,
@@ -72,14 +92,51 @@ describe("ensureSandbox", () => {
         metadata: { tier: "test", sessionId: "s1" },
       },
     ]);
+    expect(store.binds).toEqual([{ candidate: "sbx_created", previous: undefined }]);
+    expect(calls.connect).toEqual([]);
+    expect(killed()).toBe(0);
   });
 
-  test("converges on the lexicographically first sandbox when a race left two", async () => {
-    const { provider, calls } = fakeProvider([info("sbx_z"), info("sbx_a")]);
+  test("kills its duplicate and joins the winner when the CAS is lost", async () => {
+    const store = fakeStore({ winner: "sbx_theirs" });
+    const { provider, calls, killed } = fakeProvider();
 
-    const sandbox = await ensureSandbox(provider, "s1");
-    expect(sandbox.sandboxId).toBe("sbx_a");
-    expect(calls.connect).toEqual(["sbx_a"]);
+    const sandbox = await ensureSandbox(store, provider, "s1");
+    expect(sandbox.sandboxId).toBe("sbx_theirs");
+    expect(store.binds).toEqual([{ candidate: "sbx_created", previous: undefined }]);
+    expect(killed()).toBe(1);
+    expect(calls.connect).toEqual(["sbx_theirs"]);
+  });
+
+  test("replaces a binding the provider reports definitively gone", async () => {
+    const store = fakeStore({ sandboxId: "sbx_dead" });
+    const { provider, calls, killed } = fakeProvider({ deadIds: ["sbx_dead"] });
+
+    const sandbox = await ensureSandbox(store, provider, "s1");
+    expect(sandbox.sandboxId).toBe("sbx_created");
+    expect(calls.connect).toEqual(["sbx_dead"]);
+    // The CAS names the dead binding it expects to replace.
+    expect(store.binds).toEqual([{ candidate: "sbx_created", previous: "sbx_dead" }]);
+    expect(killed()).toBe(0);
+  });
+
+  test("joins whoever replaced the dead binding first", async () => {
+    const store = fakeStore({ sandboxId: "sbx_dead", winner: "sbx_theirs" });
+    const { provider, calls, killed } = fakeProvider({ deadIds: ["sbx_dead"] });
+
+    const sandbox = await ensureSandbox(store, provider, "s1");
+    expect(sandbox.sandboxId).toBe("sbx_theirs");
+    expect(store.binds).toEqual([{ candidate: "sbx_created", previous: "sbx_dead" }]);
+    expect(killed()).toBe(1);
+    expect(calls.connect).toEqual(["sbx_dead", "sbx_theirs"]);
+  });
+
+  test("propagates a transient connect failure without touching the binding", async () => {
+    const store = fakeStore({ sandboxId: "sbx_bound" });
+    const { provider, calls } = fakeProvider({ connectError: new Error("fetch failed") });
+
+    await expect(ensureSandbox(store, provider, "s1")).rejects.toThrow("fetch failed");
     expect(calls.create).toEqual([]);
+    expect(store.binds).toEqual([]);
   });
 });

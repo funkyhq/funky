@@ -127,9 +127,16 @@ export async function runStep(
 
   // Fires only on lease loss — "stop working; this step will not commit".
   const step = new AbortController();
-  const stopHeartbeat = startHeartbeat(store, item.id, token, leaseMs, () => step.abort());
+  const heartbeat = startHeartbeat(store, item.id, token, leaseMs, () => step.abort());
 
   try {
+    // The first beat is awaited: no step work — not even reads — happens
+    // on a claim whose lease wasn't just revalidated. Without the await,
+    // a claim that expired during the loop's sandbox bind could execute
+    // a tool before the heartbeat noticed.
+    await heartbeat.validated;
+    if (step.signal.aborted) return;
+
     const entries = bySeq(await store.readEntries(item.sessionId));
 
     // Claim boundary: a pending cancel ends the run without running the
@@ -221,7 +228,7 @@ export async function runStep(
     if (err instanceof FencedError) return; // reclaimed elsewhere — drop, claim again
     throw err;
   } finally {
-    stopHeartbeat();
+    heartbeat.stop();
   }
 }
 
@@ -285,10 +292,15 @@ function toNext(action: Action): CommitStepRequest["next"] {
 }
 
 /**
- * Extend the lease every leaseMs / 3 until stopped. A heartbeat that
- * throws gets the lost-lease response: abort the step and let the lease
- * decide — if it was actually alive, the item is simply re-executed
- * after expiry. Wasted work, never wrong work.
+ * Extend the lease immediately and then every leaseMs / 3 until
+ * stopped. The first beat is an entry-time revalidation runStep AWAITS
+ * (`validated`) before doing any work: it re-covers whatever the
+ * claim's initial lease already spent before the step began — above
+ * all the loop's sandbox bind — so a step whose lease is already gone
+ * drops before executing a single tool. A heartbeat that throws gets
+ * the lost-lease response: abort the step and let the lease decide —
+ * if it was actually alive, the item is simply re-executed after
+ * expiry. Wasted work, never wrong work.
  */
 function startHeartbeat(
   store: Store,
@@ -296,7 +308,7 @@ function startHeartbeat(
   token: LeaseToken,
   leaseMs: number,
   onLost: () => void,
-): () => void {
+): { validated: Promise<void>; stop: () => void } {
   const period = Math.max(1, Math.floor(leaseMs / 3));
   let stopped = false;
   let timer: ReturnType<typeof setTimeout>;
@@ -314,10 +326,12 @@ function startHeartbeat(
     }
     timer = setTimeout(() => void beat(), period);
   };
-  timer = setTimeout(() => void beat(), period);
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
+  return {
+    validated: beat(),
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+    },
   };
 }
 
