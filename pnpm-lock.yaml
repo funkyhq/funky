@@ -20,29 +20,29 @@ importers:
 
   apps/api:
     dependencies:
-      '@funky/configs':
+      '@funky/adapters':
         specifier: workspace:*
-        version: link:../../packages/configs
-      '@funky/db':
+        version: link:../../packages/adapters
+      '@funky/agent':
         specifier: workspace:*
-        version: link:../../packages/db
-      '@funky/sessions':
+        version: link:../../packages/agent
+      '@funky/core':
         specifier: workspace:*
-        version: link:../../packages/sessions
+        version: link:../../packages/core
       '@hono/node-server':
         specifier: ^2.0.8
         version: 2.0.8(hono@4.12.29)
       '@hono/zod-validator':
         specifier: ^0.7.4
         version: 0.7.6(hono@4.12.29)(zod@4.4.3)
-      dotenv:
-        specifier: ^17.2.0
-        version: 17.4.2
+      drizzle-orm:
+        specifier: ^1.0.0-beta.2
+        version: 1.0.0-rc.4-5d5b77c(@electric-sql/pglite@0.5.4)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)(typebox@1.3.7)(zod@4.4.3)
       hono:
         specifier: ^4.12.27
         version: 4.12.29
       pg:
-        specifier: ^8.16.0
+        specifier: ^8.22.0
         version: 8.22.0
       uuid:
         specifier: ^13.0.0
@@ -51,24 +51,18 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
     devDependencies:
-      '@testcontainers/postgresql':
-        specifier: ^12.0.4
-        version: 12.0.4
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.1
+      '@electric-sql/pglite':
+        specifier: ^0.5.4
+        version: 0.5.4
       '@types/pg':
-        specifier: ^8.11.0
+        specifier: ^8.20.0
         version: 8.20.0
       tsx:
-        specifier: ^4.7.1
+        specifier: ^4.23.0
         version: 4.23.0
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
   apps/web:
     dependencies:
@@ -3316,14 +3310,6 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.10(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))':
-    dependencies:
-      '@vitest/spy': 4.1.10
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)
-
   '@vitest/mocker@4.1.10(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.10
@@ -4634,21 +4620,6 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0):
-    dependencies:
-      lightningcss: 1.32.0
-      picomatch: 4.0.5
-      postcss: 8.5.16
-      rolldown: 1.1.5
-      tinyglobby: 0.2.17
-    optionalDependencies:
-      '@types/node': 22.20.1
-      esbuild: 0.28.1
-      fsevents: 2.3.3
-      jiti: 2.7.0
-      tsx: 4.23.0
-      yaml: 2.9.0
-
   vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.32.0
@@ -4663,34 +4634,6 @@ snapshots:
       jiti: 2.7.0
       tsx: 4.23.0
       yaml: 2.9.0
-
-  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)):
-    dependencies:
-      '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-      '@vitest/pretty-format': 4.1.10
-      '@vitest/runner': 4.1.10
-      '@vitest/snapshot': 4.1.10
-      '@vitest/spy': 4.1.10
-      '@vitest/utils': 4.1.10
-      es-module-lexer: 2.3.0
-      expect-type: 1.4.0
-      magic-string: 0.30.21
-      obug: 2.1.3
-      pathe: 2.0.3
-      picomatch: 4.0.5
-      std-env: 4.2.0
-      tinybench: 2.9.0
-      tinyexec: 1.2.4
-      tinyglobby: 0.2.17
-      tinyrainbow: 3.1.0
-      vite: 8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)
-      why-is-node-running: 2.3.0
-    optionalDependencies:
-      '@opentelemetry/api': 1.9.1
-      '@types/node': 22.20.1
-    transitivePeerDependencies:
-      - msw
 
   vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)):
     dependencies:
