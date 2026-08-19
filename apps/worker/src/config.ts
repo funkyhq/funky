@@ -1,146 +1,55 @@
 // apps/worker/src/config.ts
-// The only place process.env is read. dotenv is loaded by index.ts (entrypoint), not here.
-// Mirrors apps/api/src/config.ts: zod, fail-fast via process.exit(1); never boot half-configured.
+// The single place env is parsed (main.ts is the only caller): zod,
+// fail-fast via process.exit(1) — never boot half-configured. Every
+// secret is required: this worker exists to
+// run real steps against a real vendor and a real sandbox; a keyless
+// variant would claim items it cannot serve.
 import { z } from "zod";
-import { METRICS_MODES, type MetricsMode } from "./telemetry";
 
-// Compose interpolation (`${VAR:-}`) delivers an UNSET optional secret as an EMPTY
-// STRING, not as a missing variable — treat "" as absent so the zero-key path boots.
-const optionalSecret = z.preprocess(
-  (v) => (v === "" ? undefined : v),
-  z.string().min(1).optional(),
-);
-
-const EnvSchema = z
-  .object({
-    DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-    FUNKY_WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(50),
-    FUNKY_WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(9090),
-    // Comma-separated metric exporters: "prometheus" (default; GET /metrics on the health
-    // port), "otlp" (push via OTEL_EXPORTER_OTLP_* env vars), "gcm" (direct to Google
-    // Cloud Monitoring). E.g. FUNKY_METRICS=prometheus,otlp.
-    FUNKY_METRICS: z.preprocess(
-      (v) => (v === "" ? undefined : v), // compose `${VAR:-}` sends "" for unset — use the default
-      z
-        .string()
-        .default("prometheus")
-        .transform((s) => [
-          ...new Set(
-            s
-              .split(",")
-              .map((m) => m.trim())
-              .filter(Boolean),
-          ),
-        ])
-        .pipe(
-          z
-            .array(
-              z.enum(METRICS_MODES, {
-                error: `FUNKY_METRICS entries must be one of: ${METRICS_MODES.join(", ")}`,
-              }),
-            )
-            .min(1, "FUNKY_METRICS must name at least one exporter"),
-        ),
-    ),
-    FUNKY_LLM: z.enum(["fake", "ai-sdk"]).default("fake"),
-    // docker (default): an isolated container per session on the local daemon — no account.
-    // e2b: an isolated remote sandbox per session. (The in-process subprocess driver still
-    // exists for the offline test suites, but is not a production sandbox option.)
-    FUNKY_SANDBOX: z.enum(["docker", "e2b"]).default("docker"),
-    // Used by the direct Anthropic provider and by agents with runtime=claude-code (the
-    // harness driver is only constructed when this key is present).
-    ANTHROPIC_API_KEY: optionalSecret,
-    // Direct AI SDK provider credentials. At least one supported provider key is required
-    // when the real driver is enabled; each agent still selects its own provider/model.
-    OPENAI_API_KEY: optionalSecret,
-    TOGETHER_API_KEY: optionalSecret,
-    // Harness (claude-code) knobs. CWD_ROOT must be identical across the worker
-    // fleet — the harness derives the transcript store's projectKey from it.
-    // SCRATCH_ROOT holds the disposable per-attempt local session copy; point it at
-    // RAM-backed storage (tmpfs) in production.
-    FUNKY_HARNESS_CWD_ROOT: z.string().min(1).default("/tmp/funky-harness-cwd"),
-    FUNKY_HARNESS_SCRATCH_ROOT: z.string().min(1).default("/tmp/funky-harness-scratch"),
-    // Required ONLY when FUNKY_SANDBOX=e2b (docker needs no account).
-    E2B_API_KEY: optionalSecret,
-    // Base image for the docker driver (built from docker/sandbox.Dockerfile).
-    FUNKY_DOCKER_IMAGE: z.string().min(1).default("funky-sandbox:trixie"),
-    // Idle lifetime before an e2b sandbox auto-pauses (resumed on the next command).
-    FUNKY_E2B_SANDBOX_TIMEOUT_MS: z.coerce
-      .number()
-      .int()
-      .min(60_000)
-      .default(30 * 60_000),
-    DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
-  })
-  .refine(
-    (e) =>
-      e.FUNKY_LLM !== "ai-sdk" ||
-      e.ANTHROPIC_API_KEY !== undefined ||
-      e.OPENAI_API_KEY !== undefined ||
-      e.TOGETHER_API_KEY !== undefined,
-    {
-      message:
-        "ANTHROPIC_API_KEY, OPENAI_API_KEY, or TOGETHER_API_KEY is required when " +
-        "FUNKY_LLM=ai-sdk. Set the key for your model provider, or leave FUNKY_LLM=fake " +
-        "for local development.",
-      path: ["FUNKY_LLM"],
-    },
-  )
-  .refine((e) => e.FUNKY_SANDBOX !== "e2b" || e.E2B_API_KEY !== undefined, {
-    message:
-      "E2B_API_KEY is required when FUNKY_SANDBOX=e2b. " +
-      "Set it, or leave FUNKY_SANDBOX=docker for local development.",
-    path: ["E2B_API_KEY"],
-  });
+const EnvSchema = z.object({
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required"),
+  E2B_API_KEY: z.string().min(1, "E2B_API_KEY is required"),
+  // Lease duration per claim; each heartbeat extends by the same amount.
+  FUNKY_LEASE_MS: z.coerce.number().int().min(100).default(60_000),
+  // Delay between empty claim attempts — poll-only until a Notifier port exists.
+  FUNKY_IDLE_POLL_MS: z.coerce.number().int().min(10).default(1_000),
+  // Idle TTL before a session's sandbox auto-pauses (revived on the next connect).
+  FUNKY_SANDBOX_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(10_000)
+    .default(30 * 60_000),
+  DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
+});
 
 export type Config = {
   databaseUrl: string;
-  concurrency: number;
-  healthPort: number;
-  /** Metric exporters, deduped, in FUNKY_METRICS order. Default ["prometheus"]. */
-  metricsModes: MetricsMode[];
-  llm: "fake" | "ai-sdk";
-  sandbox: "docker" | "e2b";
-  /** null = this provider is unavailable (and, for Anthropic, no Claude Code harness). */
-  anthropicApiKey: string | null;
-  openaiApiKey: string | null;
-  togetherApiKey: string | null;
-  harnessCwdRoot: string;
-  harnessScratchRoot: string;
-  /** null = docker driver; no key needed. */
-  e2bApiKey: string | null;
-  e2bSandboxTimeoutMs: number;
-  /** Base image for the docker driver. */
-  dockerImage: string;
+  anthropicApiKey: string;
+  e2bApiKey: string;
+  leaseMs: number;
+  idlePollMs: number;
+  sandboxTimeoutMs: number;
   dbPoolMax: number;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
-    // Fail fast with a readable message; never boot half-configured.
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".") || "env"}: ${i.message}`)
       .join("\n");
-    console.error(`funky-worker: invalid configuration:\n${issues}`);
+    console.error(`worker: invalid configuration:\n${issues}`);
     process.exit(1);
   }
   const e = parsed.data;
   return {
     databaseUrl: e.DATABASE_URL,
-    concurrency: e.FUNKY_WORKER_CONCURRENCY,
-    healthPort: e.FUNKY_WORKER_HEALTH_PORT,
-    metricsModes: e.FUNKY_METRICS,
-    llm: e.FUNKY_LLM,
-    sandbox: e.FUNKY_SANDBOX,
-    anthropicApiKey: e.ANTHROPIC_API_KEY ?? null,
-    openaiApiKey: e.OPENAI_API_KEY ?? null,
-    togetherApiKey: e.TOGETHER_API_KEY ?? null,
-    harnessCwdRoot: e.FUNKY_HARNESS_CWD_ROOT,
-    harnessScratchRoot: e.FUNKY_HARNESS_SCRATCH_ROOT,
-    e2bApiKey: e.E2B_API_KEY ?? null,
-    e2bSandboxTimeoutMs: e.FUNKY_E2B_SANDBOX_TIMEOUT_MS,
-    dockerImage: e.FUNKY_DOCKER_IMAGE,
+    anthropicApiKey: e.ANTHROPIC_API_KEY,
+    e2bApiKey: e.E2B_API_KEY,
+    leaseMs: e.FUNKY_LEASE_MS,
+    idlePollMs: e.FUNKY_IDLE_POLL_MS,
+    sandboxTimeoutMs: e.FUNKY_SANDBOX_TIMEOUT_MS,
     dbPoolMax: e.DB_POOL_MAX,
   };
 }
