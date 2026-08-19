@@ -1,7 +1,14 @@
 // apps/api/src/config.ts
-// The only place process.env is read. dotenv is loaded by index.ts (entrypoint), not here.
+// The single place env is parsed (main.ts is the only caller): zod,
+// fail-fast via process.exit(1) — never boot half-configured. Auth is
+// required by default; disabling it is an explicit, loudly-warned dev
+// override, never an omission.
 import { z } from "zod";
 
+/** Where a request's namespace comes from: "static" pins every request
+ *  to DEFAULT_NAMESPACE (the OSS deployment shape); "header" trusts
+ *  X-Funky-Namespace — for the managed gateway, which authenticates
+ *  users itself and holds this api's bearer token privately. */
 export type NamespaceSource = "static" | "header";
 
 const EnvSchema = z
@@ -35,11 +42,10 @@ export type Config = {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
-    // Fail fast with a readable message; never boot half-configured.
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".") || "env"}: ${i.message}`)
       .join("\n");
-    console.error(`funky-api: invalid configuration:\n${issues}`);
+    console.error(`api: invalid configuration:\n${issues}`);
     process.exit(1);
   }
   const e = parsed.data;
