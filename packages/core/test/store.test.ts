@@ -129,7 +129,7 @@ describe("sessions", () => {
 
 describe("work items", () => {
   it("round-trips a work item", () => {
-    const item = { id: "i1", sessionId: "s1", type: "inference", status: "ready" };
+    const item = { id: "i1", sessionId: "s1", type: "inference", status: "ready", attempt: 0 };
     expect(roundTrip(WorkItem, item)).toEqual(item);
   });
 

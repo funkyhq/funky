@@ -107,6 +107,11 @@ export const WorkItem = z.object({
   sessionId: z.string(),
   type: ItemType,
   status: ItemStatus,
+  // Times claimed (claimItem increments; 0 = never claimed). attempt > 1
+  // means an earlier claimer died holding this item — its side effects
+  // may have run uncommitted, so the driver never re-executes tools on a
+  // re-claim; it synthesizes interrupted results instead.
+  attempt: z.number().int().min(0),
 });
 export type WorkItem = z.infer<typeof WorkItem>;
 

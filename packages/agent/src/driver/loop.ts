@@ -9,9 +9,13 @@
 //
 // The rule the durability story rests on: an interrupted step is never
 // committed. A dying worker — SIGKILL, OOM, node loss — commits nothing
-// mid-step; the lease expires and the next claimer re-executes from the
-// unchanged log. Shutdown IS a crash, so crash-safety is exercised on
-// every shutdown. FencedError on commit is the same rule from the other
+// mid-step; the lease expires and the next claimer resumes from the
+// unchanged log — re-running an inference item, but never an
+// execute_tools item: attempt > 1 marks the dead claimer, and the
+// re-claim commits interrupted results instead of re-executing side
+// effects (tools are at-most-once across claims). Shutdown IS a crash,
+// so crash-safety is exercised on every shutdown. FencedError on
+// commit is the same rule from the other
 // side: the item's fate belongs to another claim now — drop the work,
 // claim again. The only mid-step abort is internal: the heartbeat
 // losing (or failing to reach) the lease aborts the in-flight provider
@@ -34,7 +38,7 @@ import type {
   ToolSpec,
 } from "@funky/core";
 import { buildContext } from "../engine/build-context";
-import { executeTools, type ToolUpdate } from "../engine/execute-tools";
+import { executeTools, interruptedResult, type ToolUpdate } from "../engine/execute-tools";
 import { inference } from "../engine/inference";
 import { type Action, nextAction } from "../engine/next-action";
 import type { Tool } from "../engine/tool";
@@ -66,9 +70,11 @@ export interface DriverDeps extends StepDeps {
    *  ensure the sandbox, bind the tools, hand the map to runStep. The
    *  composition root closes this over ensureSandbox +
    *  createSandboxTools; tests hand back a fixed map. A rejection is
-   *  worker trouble, not tool trouble: it propagates uncommitted, and
-   *  the crash rule applies — the lease expires and another claim
-   *  retries. */
+   *  worker trouble, not tool trouble: it propagates uncommitted and
+   *  the crash rule applies. Note the cost: the claim already counted,
+   *  so the re-claim sees attempt > 1 and interrupts the batch rather
+   *  than retrying the bind — a transient sandbox outage costs the
+   *  model one recoverable batch, never a duplicated side effect. */
   bindTools(sessionId: SessionId): Promise<Map<string, Tool>>;
 }
 
@@ -96,12 +102,16 @@ export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Pro
       await sleep(idlePollMs);
       continue;
     }
-    // Ensure-on-claim: only an execute_tools item pays for a sandbox.
-    // The bind runs on the claim's initial lease — heartbeats start
-    // inside runStep — so if a slow sandbox create outlives the lease,
-    // the step's commit is fenced: wasted work, never wrong work.
+    // Ensure-on-claim: only an execute_tools item that will actually
+    // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
+    // interrupted results and needs none. The bind runs on the claim's
+    // initial lease — heartbeats start inside runStep — so if a slow
+    // sandbox create outlives the lease, the step's commit is fenced:
+    // wasted work, never wrong work.
     const tools =
-      claim.item.type === "execute_tools" ? await deps.bindTools(claim.item.sessionId) : undefined;
+      claim.item.type === "execute_tools" && claim.item.attempt === 1
+        ? await deps.bindTools(claim.item.sessionId)
+        : undefined;
     await runStep(deps, claim, leaseMs, tools);
   }
 }
@@ -189,16 +199,17 @@ export async function runStep(
       consumeInputs = pending.map((input) => input.id);
       tail = message;
     } else {
-      // TODO(attempt): a re-claimed execute_tools item re-executes its
-      // calls' side effects. Step 4's carve-out — `work_items.attempt` +
-      // synthesized interrupted results on attempt > 1 — lands with the
-      // Store schema change and its own crash-resume tests.
+      // Never-retry extends across claims: attempt > 1 means an earlier
+      // claimer died holding this item, and its side effects may have
+      // run uncommitted — indistinguishable from not having run at all.
+      // The step is not re-executed; every call settles as the same
+      // interrupted result buildContext synthesizes for dangling calls,
+      // and the model decides recovery from what it can see.
       const calls = tailCalls(entries);
-      const results = await executeTools(
-        { tools, onUpdate: deps.onUpdate },
-        { calls },
-        step.signal,
-      );
+      const results =
+        item.attempt > 1
+          ? calls.map((call) => interruptedResult(call))
+          : await executeTools({ tools, onUpdate: deps.onUpdate }, { calls }, step.signal);
       append = results;
       // All results share one fate; the last one becomes the tail.
       const last = results[results.length - 1];
@@ -206,8 +217,9 @@ export async function runStep(
       tail = last;
     }
 
-    // An interrupted step is never committed (see header). The lease will
-    // expire and the next claimer re-executes from the unchanged log.
+    // An interrupted step is never committed (see header). The lease
+    // will expire and the next claimer resumes from the unchanged log —
+    // re-running inference, interrupting a tool batch (attempt > 1).
     if (step.signal.aborted) return;
 
     // Commit boundary: pick up cancels that landed during the step. Only
@@ -299,8 +311,9 @@ function toNext(action: Action): CommitStepRequest["next"] {
  * all the loop's sandbox bind — so a step whose lease is already gone
  * drops before executing a single tool. A heartbeat that throws gets
  * the lost-lease response: abort the step and let the lease decide —
- * if it was actually alive, the item is simply re-executed after
- * expiry. Wasted work, never wrong work.
+ * if it was actually alive, the item simply expires into a re-claim
+ * (inference re-runs; a tool batch interrupts). Wasted work, never
+ * wrong work.
  */
 function startHeartbeat(
   store: Store,
