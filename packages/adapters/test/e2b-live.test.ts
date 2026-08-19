@@ -11,7 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
-import type { Sandbox, SandboxProvider } from "@funky/agent";
+import { type Sandbox, SandboxNotFoundError, type SandboxProvider } from "@funky/agent";
 import { createE2bProvider } from "../src/sandbox/e2b";
 
 const apiKey = process.env.E2B_API_KEY;
@@ -103,9 +103,14 @@ if (!apiKey) {
       sandbox = revived;
     }, 240_000);
 
-    test("kill removes the sandbox from list", async () => {
+    test("kill removes the sandbox from list, and connect rejects as gone", async () => {
       await sandbox.kill();
       await expect(provider.list({ metadata: { funkySuite: marker } })).resolves.toEqual([]);
+      // The port's typed "definitively gone" rejection — the signal
+      // dead-binding recovery keys on.
+      await expect(provider.connect(sandbox.sandboxId)).rejects.toBeInstanceOf(
+        SandboxNotFoundError,
+      );
     }, 60_000);
   });
 }

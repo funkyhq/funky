@@ -5,6 +5,7 @@
 // exercised by the key-gated live suite in e2b-live.test.ts.
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { SandboxNotFoundError } from "@funky/agent";
 import { createE2bProvider } from "../src/sandbox/e2b";
 
 const mocks = vi.hoisted(() => {
@@ -18,9 +19,11 @@ const mocks = vi.hoisted(() => {
     }
   }
   class TimeoutError extends Error {}
+  class SandboxNotFoundError extends Error {}
   return {
     CommandExitError,
     TimeoutError,
+    SandboxNotFoundError,
     create: vi.fn(),
     connect: vi.fn(),
     getInfo: vi.fn(),
@@ -31,6 +34,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("e2b", () => ({
   CommandExitError: mocks.CommandExitError,
   TimeoutError: mocks.TimeoutError,
+  SandboxNotFoundError: mocks.SandboxNotFoundError,
   Sandbox: class {
     static create = mocks.create;
     static connect = mocks.connect;
@@ -97,6 +101,17 @@ describe("createE2bProvider", () => {
     await provider.connect("sbx_1");
     expect(mocks.getInfo).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledWith("sbx_1", expect.anything());
+  });
+
+  test("connect maps a missing sandbox to the port's typed rejection", async () => {
+    const provider = createE2bProvider();
+    mocks.connect.mockRejectedValue(new mocks.SandboxNotFoundError("sandbox sbx_gone not found"));
+
+    await expect(provider.connect("sbx_gone")).rejects.toBeInstanceOf(SandboxNotFoundError);
+
+    // A transient failure stays untyped — recovery must not fire on it.
+    mocks.connect.mockRejectedValue(new Error("fetch failed"));
+    await expect(provider.connect("sbx_1")).rejects.toThrow("fetch failed");
   });
 
   test("list drains every page and maps to the port's info shape", async () => {

@@ -87,6 +87,9 @@ export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 
 export const Session = CreateSessionRequest.extend({
   id: z.string(),
+  // The session's one workspace, registered by the driver's first
+  // execute_tools claim (Store.bindSandbox); absent until then.
+  sandboxId: z.string().optional(),
   createdAt: z.iso.datetime(),
 });
 export type Session = z.infer<typeof Session>;

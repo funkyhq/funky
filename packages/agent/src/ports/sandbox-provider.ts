@@ -1,10 +1,12 @@
 // The SandboxProvider port
 //
-// The port is session-agnostic — sandboxes are addressed by sandboxId,
-// and the session mapping is data, not interface: the driver creates
-// with metadata {sessionId} and finds with list({metadata}). The
-// ratified ensure-on-claim lifecycle is therefore a driver-side helper
-// composed from list/connect/create, not a port method.
+// The port is session-agnostic — sandboxes are addressed by sandboxId.
+// The session mapping lives in the Store (sessions.sandbox_id via the
+// bindSandbox CAS); the {sessionId} metadata stamped at create is
+// observability, not identity — a listing can never say which sandbox
+// a session's committed history ran in. The ratified ensure-on-claim
+// lifecycle is a driver-side helper composed from connect/create plus
+// that CAS, not a port method.
 //
 // Contract for implementations:
 // - `create`'s timeout is a TTL the provider enforces on its own — the
@@ -30,9 +32,20 @@
 
 import type { NetworkPolicy } from "@funky/core";
 
+/**
+ * connect()'s "definitively gone" rejection: the sandbox no longer
+ * exists (killed, or expired past recovery) — as opposed to being
+ * unreachable. Rebinding a fresh sandbox over a dead one keys on this,
+ * so adapters MUST throw it only on provider confirmation, never for a
+ * transient failure — misclassifying an outage would abandon a live
+ * workspace.
+ */
+export class SandboxNotFoundError extends Error {}
+
 export interface SandboxProvider {
   create(opts?: CreateSandboxOptions): Promise<Sandbox>;
-  /** Reattach, reviving a paused sandbox; throws if unknown or killed. */
+  /** Reattach, reviving a paused sandbox. Rejects with
+   *  SandboxNotFoundError when the sandbox is unknown or killed. */
   connect(sandboxId: string): Promise<Sandbox>;
   /** Every non-killed sandbox, optionally filtered by metadata equality. */
   list(filter?: { metadata?: Record<string, string> }): Promise<SandboxInfo[]>;

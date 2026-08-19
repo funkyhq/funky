@@ -17,9 +17,15 @@
 // allowInternetAccess: false is deny-all), so the port's reject-when-
 // unenforceable clause never triggers here.
 
-import { CommandExitError, Sandbox as E2bSandbox, TimeoutError } from "e2b";
+import {
+  CommandExitError,
+  Sandbox as E2bSandbox,
+  SandboxNotFoundError as E2bSandboxNotFoundError,
+  TimeoutError,
+} from "e2b";
 import type { SandboxInfo as E2bSandboxInfo, SandboxOpts } from "e2b";
 import type { NetworkPolicy } from "@funky/core";
+import { SandboxNotFoundError } from "@funky/agent";
 import type {
   CommandResult,
   CreateSandboxOptions,
@@ -50,7 +56,16 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
     },
 
     async connect(sandboxId: string): Promise<Sandbox> {
-      return wrap(await E2bSandbox.connect(sandboxId, connection), connection);
+      try {
+        return wrap(await E2bSandbox.connect(sandboxId, connection), connection);
+      } catch (error) {
+        // e2b's own SandboxNotFoundError is the provider confirming the
+        // sandbox is gone — the port's typed rejection, not a transient.
+        if (error instanceof E2bSandboxNotFoundError) {
+          throw new SandboxNotFoundError(error.message);
+        }
+        throw error;
+      }
     },
 
     async list(filter?: { metadata?: Record<string, string> }): Promise<SandboxInfo[]> {

@@ -24,7 +24,7 @@
 // comparisons use it — never SQL now().
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gt, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   AgentConfig,
@@ -185,9 +185,29 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         id: row.id,
         agentConfigId: row.agentConfigId,
         envConfigId: row.envConfigId,
+        ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
         ...unwrapped(row.metadata),
         createdAt: iso(row.createdAt),
       });
+    },
+
+    async bindSandbox(sessionId, sandboxId, previous) {
+      // The CAS: one UPDATE guarded by the expected current value — at
+      // most one writer ever matches, whatever the interleaving.
+      const expected =
+        previous === undefined ? isNull(sessions.sandboxId) : eq(sessions.sandboxId, previous);
+      const [bound] = await db
+        .update(sessions)
+        .set({ sandboxId })
+        .where(and(eq(sessions.id, sessionId), expected))
+        .returning({ sandboxId: sessions.sandboxId });
+      if (bound?.sandboxId) return bound.sandboxId;
+      const [row] = await db
+        .select({ sandboxId: sessions.sandboxId })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId));
+      if (!row?.sandboxId) throw new Error(`unknown session: ${sessionId}`);
+      return row.sandboxId;
     },
 
     async readEntries(sessionId, after) {

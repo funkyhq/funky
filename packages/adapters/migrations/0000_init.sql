@@ -23,6 +23,9 @@ CREATE TABLE sessions (
   id text PRIMARY KEY,
   agent_config_id text NOT NULL REFERENCES agent_configs(id),
   env_config_id text NOT NULL REFERENCES env_configs(id),
+  -- The session's one workspace; null until the driver's first
+  -- execute_tools claim registers it (Store.bindSandbox, set-if-null).
+  sandbox_id text,
   metadata jsonb,
   created_at timestamptz NOT NULL
 );

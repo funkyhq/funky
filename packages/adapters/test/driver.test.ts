@@ -295,6 +295,28 @@ describe("driver steps over the pg store", () => {
     expect(await store.claimItem({ leaseMs: 60_000, sessionId })).toBeUndefined();
   });
 
+  it("revalidates the lease at entry: an expired claim does no work at all", async () => {
+    const sessionId = await newSession();
+    await store.intake(sessionId, user("go"));
+    const provider = scriptedProvider([sayText("later")]);
+    const deps: StepDeps = { store, provider, toolSpecs: [] };
+
+    // The lease dies between claim and runStep — the window the loop's
+    // sandbox bind occupies. The awaited first beat must catch it.
+    const expired = await claim(sessionId, 300);
+    clock.advance(10_000);
+    await runStep(deps, expired, 300);
+    expect(provider.requests).toHaveLength(0);
+    expect(messages(await store.readEntries(sessionId))).toHaveLength(1);
+
+    // The re-claim executes cleanly.
+    await runStep(deps, await claim(sessionId), 60_000);
+    expect(messages(await store.readEntries(sessionId)).map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+  });
+
   it("drops an interrupted step on lease loss; the next claim re-executes", async () => {
     const sessionId = await newSession();
     await store.intake(sessionId, user("go"));
