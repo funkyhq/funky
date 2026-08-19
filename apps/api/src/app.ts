@@ -6,6 +6,7 @@ import type { NamespaceSource } from "./config";
 import { errorHandler, errorResponse } from "./http";
 import { auth } from "./middleware/auth";
 import { requestId } from "./middleware/request-id";
+import { agentConfigRoutes } from "./routes/agent-configs";
 import { envConfigRoutes } from "./routes/env-configs";
 
 export type AppDeps = {
@@ -33,6 +34,7 @@ export function buildApp(deps: AppDeps) {
   });
 
   app.use("/v1/*", auth(deps.authToken, deps.namespaceSource));
+  app.route("/v1/agent-configs", agentConfigRoutes(deps.store));
   app.route("/v1/env-configs", envConfigRoutes(deps.store));
 
   app.notFound((c) => errorResponse(c, 404, "not_found_error", "unknown route"));
