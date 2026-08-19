@@ -358,7 +358,7 @@ describe("driver steps over the pg store", () => {
     ]);
   });
 
-  it("drops an interrupted step on lease loss; the next claim re-executes", async () => {
+  it("drops an interrupted inference step on lease loss; the next claim re-executes", async () => {
     const sessionId = await newSession();
     await store.intake(sessionId, user("go"));
     const provider = scriptedProvider([["untilAborted"], sayText("recovered")]);

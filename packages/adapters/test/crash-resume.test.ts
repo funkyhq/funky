@@ -13,8 +13,8 @@
 // follows a live child's progress through IPC signals from the child's
 // store wrapper (see fixtures/crash-driver.ts). Children run on the
 // real clock with short leases (300ms), so a dead child's claim expires
-// almost immediately and the resuming child re-executes from the
-// unchanged log.
+// almost immediately and the resuming child picks up from the unchanged
+// log — re-running inference, interrupting a claimed tool batch.
 //
 // Two modes:
 // - a deterministic matrix: the child stalls at a scheduled point

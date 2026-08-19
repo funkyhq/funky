@@ -21,10 +21,14 @@ What lives here is what neither the engine nor a host may own:
   zombie's side effects and spend, never correctness.
 - **The crash rule.** An interrupted step is never committed. A dying
   worker commits nothing mid-step; the lease expires and the next
-  claimer re-executes from the unchanged log — shutdown IS a crash, so
-  crash-safety is exercised on every shutdown and no drain logic exists.
-  `FencedError` on commit is the same rule from the other side — the
-  item's fate belongs to another claim; drop the work, claim again.
+  claimer resumes from the unchanged log — re-running an inference
+  item, but never an execute_tools item: `attempt > 1` marks the dead
+  claimer, and the re-claim commits interrupted results instead of
+  re-executing side effects (tools are at-most-once across claims).
+  Shutdown IS a crash, so crash-safety is exercised on every shutdown
+  and no drain logic exists. `FencedError` on commit is the same rule
+  from the other side — the item's fate belongs to another claim; drop
+  the work, claim again.
 - **Boundary cancel checks.** `cancelRequested` reads the log's tail:
   while an item is open, only cancels (and decoration entries) can
   trail the last message entry — a theorem of the one-open-item

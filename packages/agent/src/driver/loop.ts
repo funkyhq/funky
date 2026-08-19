@@ -9,9 +9,13 @@
 //
 // The rule the durability story rests on: an interrupted step is never
 // committed. A dying worker — SIGKILL, OOM, node loss — commits nothing
-// mid-step; the lease expires and the next claimer re-executes from the
-// unchanged log. Shutdown IS a crash, so crash-safety is exercised on
-// every shutdown. FencedError on commit is the same rule from the other
+// mid-step; the lease expires and the next claimer resumes from the
+// unchanged log — re-running an inference item, but never an
+// execute_tools item: attempt > 1 marks the dead claimer, and the
+// re-claim commits interrupted results instead of re-executing side
+// effects (tools are at-most-once across claims). Shutdown IS a crash,
+// so crash-safety is exercised on every shutdown. FencedError on
+// commit is the same rule from the other
 // side: the item's fate belongs to another claim now — drop the work,
 // claim again. The only mid-step abort is internal: the heartbeat
 // losing (or failing to reach) the lease aborts the in-flight provider
@@ -66,9 +70,11 @@ export interface DriverDeps extends StepDeps {
    *  ensure the sandbox, bind the tools, hand the map to runStep. The
    *  composition root closes this over ensureSandbox +
    *  createSandboxTools; tests hand back a fixed map. A rejection is
-   *  worker trouble, not tool trouble: it propagates uncommitted, and
-   *  the crash rule applies — the lease expires and another claim
-   *  retries. */
+   *  worker trouble, not tool trouble: it propagates uncommitted and
+   *  the crash rule applies. Note the cost: the claim already counted,
+   *  so the re-claim sees attempt > 1 and interrupts the batch rather
+   *  than retrying the bind — a transient sandbox outage costs the
+   *  model one recoverable batch, never a duplicated side effect. */
   bindTools(sessionId: SessionId): Promise<Map<string, Tool>>;
 }
 
@@ -211,8 +217,9 @@ export async function runStep(
       tail = last;
     }
 
-    // An interrupted step is never committed (see header). The lease will
-    // expire and the next claimer re-executes from the unchanged log.
+    // An interrupted step is never committed (see header). The lease
+    // will expire and the next claimer resumes from the unchanged log —
+    // re-running inference, interrupting a tool batch (attempt > 1).
     if (step.signal.aborted) return;
 
     // Commit boundary: pick up cancels that landed during the step. Only
@@ -304,8 +311,9 @@ function toNext(action: Action): CommitStepRequest["next"] {
  * all the loop's sandbox bind — so a step whose lease is already gone
  * drops before executing a single tool. A heartbeat that throws gets
  * the lost-lease response: abort the step and let the lease decide —
- * if it was actually alive, the item is simply re-executed after
- * expiry. Wasted work, never wrong work.
+ * if it was actually alive, the item simply expires into a re-claim
+ * (inference re-runs; a tool batch interrupts). Wasted work, never
+ * wrong work.
  */
 function startHeartbeat(
   store: Store,
