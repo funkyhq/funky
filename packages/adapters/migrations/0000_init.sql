@@ -45,6 +45,9 @@ CREATE TABLE work_items (
   lease_token text,
   lease_expires_at timestamptz,
   lease_ms integer,
+  -- Times claimed (claimItem increments). The driver's at-most-once
+  -- guard for tool side effects keys on attempt > 1.
+  attempt integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL
 );
 

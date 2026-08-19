@@ -91,6 +91,9 @@ export const workItems = pgTable(
     leaseToken: text("lease_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     leaseMs: integer("lease_ms"),
+    // Times claimed; the driver's at-most-once guard for tool side
+    // effects keys on attempt > 1.
+    attempt: integer("attempt").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (t) => [

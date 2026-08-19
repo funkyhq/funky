@@ -34,7 +34,7 @@ import type {
   ToolSpec,
 } from "@funky/core";
 import { buildContext } from "../engine/build-context";
-import { executeTools, type ToolUpdate } from "../engine/execute-tools";
+import { executeTools, interruptedResult, type ToolUpdate } from "../engine/execute-tools";
 import { inference } from "../engine/inference";
 import { type Action, nextAction } from "../engine/next-action";
 import type { Tool } from "../engine/tool";
@@ -96,12 +96,16 @@ export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Pro
       await sleep(idlePollMs);
       continue;
     }
-    // Ensure-on-claim: only an execute_tools item pays for a sandbox.
-    // The bind runs on the claim's initial lease — heartbeats start
-    // inside runStep — so if a slow sandbox create outlives the lease,
-    // the step's commit is fenced: wasted work, never wrong work.
+    // Ensure-on-claim: only an execute_tools item that will actually
+    // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
+    // interrupted results and needs none. The bind runs on the claim's
+    // initial lease — heartbeats start inside runStep — so if a slow
+    // sandbox create outlives the lease, the step's commit is fenced:
+    // wasted work, never wrong work.
     const tools =
-      claim.item.type === "execute_tools" ? await deps.bindTools(claim.item.sessionId) : undefined;
+      claim.item.type === "execute_tools" && claim.item.attempt === 1
+        ? await deps.bindTools(claim.item.sessionId)
+        : undefined;
     await runStep(deps, claim, leaseMs, tools);
   }
 }
@@ -189,16 +193,17 @@ export async function runStep(
       consumeInputs = pending.map((input) => input.id);
       tail = message;
     } else {
-      // TODO(attempt): a re-claimed execute_tools item re-executes its
-      // calls' side effects. Step 4's carve-out — `work_items.attempt` +
-      // synthesized interrupted results on attempt > 1 — lands with the
-      // Store schema change and its own crash-resume tests.
+      // Never-retry extends across claims: attempt > 1 means an earlier
+      // claimer died holding this item, and its side effects may have
+      // run uncommitted — indistinguishable from not having run at all.
+      // The step is not re-executed; every call settles as the same
+      // interrupted result buildContext synthesizes for dangling calls,
+      // and the model decides recovery from what it can see.
       const calls = tailCalls(entries);
-      const results = await executeTools(
-        { tools, onUpdate: deps.onUpdate },
-        { calls },
-        step.signal,
-      );
+      const results =
+        item.attempt > 1
+          ? calls.map((call) => interruptedResult(call))
+          : await executeTools({ tools, onUpdate: deps.onUpdate }, { calls }, step.signal);
       append = results;
       // All results share one fate; the last one becomes the tail.
       const last = results[results.length - 1];

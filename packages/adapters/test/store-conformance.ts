@@ -232,6 +232,22 @@ export function describeStoreConformance(
         expect(await store.claimItem({ leaseMs: 60_000 })).toBeUndefined();
       });
 
+      it("counts attempts: 0 until claimed, incremented by every claim", async () => {
+        const sessionId = await newSession();
+        await store.intake(sessionId, user("go"));
+        expect((await store.listItems(sessionId))[0]?.attempt).toBe(0);
+
+        const first = await store.claimItem({ leaseMs: 1_000 });
+        expect(first?.item.attempt).toBe(1);
+
+        // Expiry and re-claim — the signal the driver's at-most-once
+        // tool guard keys on.
+        clock.advance(5_000);
+        const second = await store.claimItem({ leaseMs: 1_000 });
+        expect(second?.item.attempt).toBe(2);
+        expect((await store.listItems(sessionId))[0]?.attempt).toBe(2);
+      });
+
       it("admits exactly one winner under contended claims", async () => {
         const sessionId = await newSession();
         await store.intake(sessionId, user("go"));

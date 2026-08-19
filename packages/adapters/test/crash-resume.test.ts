@@ -1,9 +1,12 @@
 // The crash-resume property test — the durability contract made
 // executable: for ANY kill point during a scripted two-turn run,
-// SIGKILL + resume by a fresh driver converges on a transcript
-// identical to the uninterrupted reference. This is also runDriver's
-// real coverage — a child process hosting the actual loop, killed the
-// only way it ever stops.
+// SIGKILL + resume by a fresh driver converges on the reference
+// transcript — verbatim, except that a batch whose execute_tools claim
+// was killed mid-flight commits interrupted results instead (the
+// attempt > 1 carve-out: tool side effects are at-most-once, so a
+// re-claim never re-executes them). This is also runDriver's real
+// coverage — a child process hosting the actual loop, killed the only
+// way it ever stops.
 //
 // Topology: PGlite is single-client, so data-dir ownership alternates —
 // the parent seeds and inspects only while no child is alive, and
@@ -105,10 +108,40 @@ async function intakeSecondPrompt(dir: string): Promise<void> {
   }
 }
 
-async function assertMatchesReference(dir: string): Promise<void> {
+/**
+ * The reference transcript with the given toolResult batches replaced by
+ * what a re-claimed execute_tools item commits: interrupted results,
+ * never re-executed side effects (the attempt > 1 carve-out).
+ */
+function withInterrupted(entries: unknown[], batches: number[]): unknown[] {
+  let batch = 0;
+  return entries.map((entry) => {
+    const e = entry as { message?: { role?: string; toolCallId?: string; toolName?: string } };
+    if (e.message?.role !== "toolResult") return entry;
+    if (!batches.includes(batch++)) return entry;
+    return {
+      ...(entry as object),
+      message: {
+        role: "toolResult",
+        toolCallId: e.message.toolCallId,
+        toolName: e.message.toolName,
+        content: [{ type: "text", text: "Tool execution was interrupted." }],
+        isError: true,
+      },
+    };
+  });
+}
+
+/** Every interruption shape the sweep's random kills can produce. */
+const ANY_INTERRUPTION: number[][] = [[], [0], [1], [0, 1]];
+
+async function assertMatchesReference(dir: string, acceptable: number[][] = [[]]): Promise<void> {
   const { store, close } = await openDir(dir);
   try {
-    expect(normalizeEntries(await store.readEntries(sessionId))).toEqual(refEntries);
+    const actual = normalizeEntries(await store.readEntries(sessionId));
+    const variants = acceptable.map((batches) => withInterrupted(refEntries, batches));
+    if (variants.length === 1) expect(actual).toEqual(variants[0]);
+    else expect(variants).toContainEqual(actual);
     const items = await store.listItems(sessionId);
     expect(items.map((i) => i.type)).toEqual(refItemTypes);
     expect(items.map((i) => i.status)).toEqual(refItemTypes.map(() => "done"));
@@ -306,6 +339,11 @@ interface Scenario {
    *  complete and turn two started, so child-local counts index turn two. */
   seed: "fresh" | "midway";
   spec: KillSpec;
+  /** toolResult batches the resume commits as interrupted results: set
+   *  exactly when the kill lands while an execute_tools claim is open
+   *  (claimed, uncommitted), so the re-claim sees attempt > 1 and never
+   *  re-executes. Omitted = the reference transcript verbatim. */
+  interrupted?: number[];
 }
 
 // Turn one exhaustively (claims/commits 0-2 are the child's whole life);
@@ -316,16 +354,18 @@ const MATRIX: Scenario[] = [
   { seed: "fresh", spec: { class: "mid-inference", n: 0 } },
   { seed: "fresh", spec: { class: "before-commit", n: 0 } },
   { seed: "fresh", spec: { class: "after-commit", n: 0 } },
-  { seed: "fresh", spec: { class: "after-claim", n: 1 } },
-  { seed: "fresh", spec: { class: "mid-tools", n: 0 } },
-  { seed: "fresh", spec: { class: "before-commit", n: 1 } },
+  { seed: "fresh", spec: { class: "after-claim", n: 1 }, interrupted: [0] },
+  { seed: "fresh", spec: { class: "mid-tools", n: 0 }, interrupted: [0] },
+  // Killed after executing but before committing: the tools DID run, the
+  // commit never landed — the re-claim still must not run them again.
+  { seed: "fresh", spec: { class: "before-commit", n: 1 }, interrupted: [0] },
   { seed: "fresh", spec: { class: "after-commit", n: 1 } },
   { seed: "fresh", spec: { class: "mid-inference", n: 1 } },
   { seed: "fresh", spec: { class: "before-commit", n: 2 } },
   { seed: "fresh", spec: { class: "after-commit", n: 2 } }, // after end_run
   { seed: "midway", spec: { class: "after-claim", n: 0 } },
   { seed: "midway", spec: { class: "mid-inference", n: 2 } },
-  { seed: "midway", spec: { class: "mid-tools", n: 1 } },
+  { seed: "midway", spec: { class: "mid-tools", n: 1 }, interrupted: [1] },
   { seed: "midway", spec: { class: "before-commit", n: 2 } }, // before turn-two end_run
 ];
 
@@ -356,7 +396,7 @@ async function runScenario(sc: Scenario): Promise<void> {
       endRuns += countEndRuns(resume.received);
     }
 
-    await assertMatchesReference(dir);
+    await assertMatchesReference(dir, [sc.interrupted ?? []]);
   } finally {
     for (const child of children) await child.kill();
   }
@@ -423,7 +463,9 @@ describe.concurrent("crash-resume: randomized sweep", () => {
           endRuns += countEndRuns(child.received);
         }
 
-        await assertMatchesReference(dir);
+        // Random kills may land on open execute_tools claims, so any
+        // interruption shape is legitimate — but nothing else is.
+        await assertMatchesReference(dir, ANY_INTERRUPTION);
       } finally {
         for (const child of children) await child.kill();
       }

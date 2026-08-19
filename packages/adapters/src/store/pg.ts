@@ -230,7 +230,13 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .where(eq(workItems.sessionId, sessionId))
         .orderBy(asc(workItems.createdAt));
       return rows.map((r) =>
-        WorkItem.parse({ id: r.id, sessionId: r.sessionId, type: r.type, status: r.status }),
+        WorkItem.parse({
+          id: r.id,
+          sessionId: r.sessionId,
+          type: r.type,
+          status: r.status,
+          attempt: r.attempt,
+        }),
       );
     },
 
@@ -259,7 +265,12 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           and(eq(workItems.status, "leased"), lte(workItems.leaseExpiresAt, t)),
         );
         const [candidate] = await tx
-          .select({ id: workItems.id, sessionId: workItems.sessionId, type: workItems.type })
+          .select({
+            id: workItems.id,
+            sessionId: workItems.sessionId,
+            type: workItems.type,
+            attempt: workItems.attempt,
+          })
           .from(workItems)
           .where(
             req.sessionId === undefined
@@ -271,6 +282,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           .for("update", { skipLocked: true });
         if (!candidate) return undefined;
         const token = randomUUID(); // fresh per claim — never re-issued
+        // The row is locked, so read-and-increment cannot race.
+        const attempt = candidate.attempt + 1;
         await tx
           .update(workItems)
           .set({
@@ -278,6 +291,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             leaseToken: token,
             leaseMs: req.leaseMs,
             leaseExpiresAt: new Date(t.getTime() + req.leaseMs),
+            attempt,
           })
           .where(eq(workItems.id, candidate.id));
         return {
@@ -286,6 +300,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             sessionId: candidate.sessionId,
             type: candidate.type,
             status: "leased",
+            attempt,
           }),
           token,
         };

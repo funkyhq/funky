@@ -295,6 +295,47 @@ describe("driver steps over the pg store", () => {
     expect(await store.claimItem({ leaseMs: 60_000, sessionId })).toBeUndefined();
   });
 
+  it("synthesizes interrupted results on a re-claimed execute_tools item — no re-execution", async () => {
+    const sessionId = await newSession();
+    const provider = scriptedProvider([callEcho("hi"), sayText("recovered")]);
+    let executions = 0;
+    const spiedEcho: Tool = {
+      ...echo,
+      execute: async (args, ctx) => {
+        executions++;
+        return echo.execute(args, ctx);
+      },
+    };
+    const deps: StepDeps = { store, provider, toolSpecs: [...echoOnly.values()].map(toToolSpec) };
+
+    await store.intake(sessionId, user("go"));
+    await runStep(deps, await claim(sessionId), 60_000); // inference → tool call
+
+    // First claim of the execute_tools item dies without committing —
+    // whether its side effects ran is unknowable.
+    const first = await claim(sessionId, 300);
+    expect(first.item.attempt).toBe(1);
+    clock.advance(10_000);
+    const second = await claim(sessionId);
+    expect(second.item.attempt).toBe(2);
+
+    await runStep(deps, second, 60_000, new Map([[spiedEcho.name, spiedEcho]]));
+    expect(executions).toBe(0);
+    const log = messages(await store.readEntries(sessionId));
+    expect(log[2]).toMatchObject({
+      role: "toolResult",
+      toolName: "echo",
+      content: [{ type: "text", text: "Tool execution was interrupted." }],
+      isError: true,
+    });
+
+    // The run continues: the model sees the interruption and answers.
+    await runStep(deps, await claim(sessionId), 60_000);
+    const finalLog = messages(await store.readEntries(sessionId));
+    expect(finalLog.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+    expect(finalLog[3]).toMatchObject({ stopReason: "end_turn" });
+  });
+
   it("revalidates the lease at entry: an expired claim does no work at all", async () => {
     const sessionId = await newSession();
     await store.intake(sessionId, user("go"));
