@@ -32,6 +32,7 @@ import {
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
   CreateSessionRequest,
+  DEFAULT_NAMESPACE,
   EnvConfig,
   IntakeResult,
   type JsonValue,
@@ -109,6 +110,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         id,
         inference: parsed.inference,
         systemPrompt: parsed.systemPrompt,
+        namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
         metadata: wrap(parsed.metadata),
         createdAt: now(),
       });
@@ -122,6 +124,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         id: row.id,
         inference: row.inference,
         systemPrompt: row.systemPrompt,
+        namespace: row.namespace,
         ...unwrapped(row.metadata),
         createdAt: iso(row.createdAt),
       });
@@ -135,6 +138,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         // Materialized at create — resolved decisions, not restatable defaults.
         network: parsed.network ?? { type: "unrestricted" },
         packages: parsed.packages ?? {},
+        namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
         metadata: wrap(parsed.metadata),
         createdAt: now(),
       });
@@ -148,6 +152,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         id: row.id,
         network: row.network,
         packages: row.packages,
+        namespace: row.namespace,
         ...unwrapped(row.metadata),
         createdAt: iso(row.createdAt),
       });
@@ -155,23 +160,30 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
 
     async createSession(req) {
       const parsed = CreateSessionRequest.parse(req);
+      const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
       // Configs are write-once and never deleted, so this pre-check cannot
       // go stale; the FK constraints remain as the structural backstop.
+      // The checks are namespace-scoped: a session and its configs always
+      // share one namespace, and a foreign config is "unknown" —
+      // indistinguishable from nonexistent, so nothing leaks.
       const [agent] = await db
         .select({ id: agentConfigs.id })
         .from(agentConfigs)
-        .where(eq(agentConfigs.id, parsed.agentConfigId));
+        .where(
+          and(eq(agentConfigs.id, parsed.agentConfigId), eq(agentConfigs.namespace, namespace)),
+        );
       if (!agent) throw new Error(`unknown agent config: ${parsed.agentConfigId}`);
       const [env] = await db
         .select({ id: envConfigs.id })
         .from(envConfigs)
-        .where(eq(envConfigs.id, parsed.envConfigId));
+        .where(and(eq(envConfigs.id, parsed.envConfigId), eq(envConfigs.namespace, namespace)));
       if (!env) throw new Error(`unknown env config: ${parsed.envConfigId}`);
       const id = randomUUID();
       await db.insert(sessions).values({
         id,
         agentConfigId: parsed.agentConfigId,
         envConfigId: parsed.envConfigId,
+        namespace,
         metadata: wrap(parsed.metadata),
         createdAt: now(),
       });
@@ -185,6 +197,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         id: row.id,
         agentConfigId: row.agentConfigId,
         envConfigId: row.envConfigId,
+        namespace: row.namespace,
         ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
         ...unwrapped(row.metadata),
         createdAt: iso(row.createdAt),

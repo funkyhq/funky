@@ -54,7 +54,10 @@ export interface Store {
 
   // --- sessions ---
 
-  /** Rejects unknown config ids — a session never dangles. */
+  /** Rejects unknown config ids — a session never dangles — and the
+   *  checks are namespace-scoped: a config in a different namespace IS
+   *  unknown (indistinguishable from nonexistent, so nothing leaks). A
+   *  session and its configs therefore always share one namespace. */
   createSession(req: CreateSessionRequest): Promise<SessionId>;
   getSession(id: SessionId): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the

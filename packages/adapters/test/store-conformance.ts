@@ -7,7 +7,7 @@
 // advancing time, never by sleeping.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AssistantMessage, UserMessage } from "@funky/core";
+import { type AssistantMessage, DEFAULT_NAMESPACE, type UserMessage } from "@funky/core";
 import { type CommitStepRequest, FencedError, type Store } from "@funky/agent";
 
 export interface StoreHarness {
@@ -178,6 +178,60 @@ export function describeStoreConformance(
           systemPrompt: "s",
         });
         await expect(store.createSession({ agentConfigId, envConfigId: "nope" })).rejects.toThrow();
+      });
+    });
+
+    describe("namespace", () => {
+      it("materializes DEFAULT_NAMESPACE when absent, on all three ownable rows", async () => {
+        const agentConfigId = await store.createAgentConfig({
+          inference: { provider: "fake", model: "m" },
+          systemPrompt: "s",
+        });
+        const envConfigId = await store.createEnvConfig({});
+        const sessionId = await store.createSession({ agentConfigId, envConfigId });
+        expect((await store.getAgentConfig(agentConfigId))?.namespace).toBe(DEFAULT_NAMESPACE);
+        expect((await store.getEnvConfig(envConfigId))?.namespace).toBe(DEFAULT_NAMESPACE);
+        expect((await store.getSession(sessionId))?.namespace).toBe(DEFAULT_NAMESPACE);
+      });
+
+      it("stores an explicit namespace verbatim", async () => {
+        const agentConfigId = await store.createAgentConfig({
+          inference: { provider: "fake", model: "m" },
+          systemPrompt: "s",
+          namespace: "tenant-a",
+        });
+        const envConfigId = await store.createEnvConfig({ namespace: "tenant-a" });
+        const sessionId = await store.createSession({
+          agentConfigId,
+          envConfigId,
+          namespace: "tenant-a",
+        });
+        expect((await store.getAgentConfig(agentConfigId))?.namespace).toBe("tenant-a");
+        expect((await store.getEnvConfig(envConfigId))?.namespace).toBe("tenant-a");
+        expect((await store.getSession(sessionId))?.namespace).toBe("tenant-a");
+      });
+
+      it("a foreign-namespace config is unknown — sessions and their configs share one namespace", async () => {
+        const agentA = await store.createAgentConfig({
+          inference: { provider: "fake", model: "m" },
+          systemPrompt: "s",
+          namespace: "tenant-a",
+        });
+        const envA = await store.createEnvConfig({ namespace: "tenant-a" });
+        const envB = await store.createEnvConfig({ namespace: "tenant-b" });
+
+        // Cross-namespace refs reject exactly like dangling refs — the
+        // error is the same "unknown", so existence never leaks.
+        await expect(
+          store.createSession({ agentConfigId: agentA, envConfigId: envB, namespace: "tenant-a" }),
+        ).rejects.toThrow("unknown env config");
+        await expect(
+          store.createSession({ agentConfigId: agentA, envConfigId: envA, namespace: "tenant-b" }),
+        ).rejects.toThrow("unknown agent config");
+        // The matched trio is accepted.
+        await expect(
+          store.createSession({ agentConfigId: agentA, envConfigId: envA, namespace: "tenant-a" }),
+        ).resolves.toBeDefined();
       });
     });
 

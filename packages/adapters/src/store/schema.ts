@@ -39,6 +39,9 @@ export const agentConfigs = pgTable("agent_configs", {
   id: text("id").primaryKey(),
   inference: jsonb("inference").$type<InferenceConfig>().notNull(),
   systemPrompt: text("system_prompt").notNull(),
+  // The tenancy boundary (core/store.ts) — the adapter materializes the
+  // default; no SQL DEFAULT, so the resolution lives in exactly one place.
+  namespace: text("namespace").notNull(),
   metadata: jsonb("metadata").$type<WrappedJson>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
@@ -48,6 +51,7 @@ export const envConfigs = pgTable("env_configs", {
   // Materialized at create — never SQL NULL (resolved decisions, not defaults).
   network: jsonb("network").$type<NetworkPolicy>().notNull(),
   packages: jsonb("packages").$type<Packages>().notNull(),
+  namespace: text("namespace").notNull(),
   metadata: jsonb("metadata").$type<WrappedJson>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
@@ -60,6 +64,7 @@ export const sessions = pgTable("sessions", {
   envConfigId: text("env_config_id")
     .notNull()
     .references(() => envConfigs.id),
+  namespace: text("namespace").notNull(),
   // The session's one workspace; null until bindSandbox registers it.
   sandboxId: text("sandbox_id"),
   metadata: jsonb("metadata").$type<WrappedJson>(),
