@@ -36,6 +36,20 @@ export type SessionId = string;
 export type ItemId = string;
 export type InputId = string;
 
+// --- namespace ---
+
+// The tenancy boundary, driven by the managed service's trusted gateway
+// (an OSS deployment runs single-tenant and never sets it). Ownership is
+// exactly-one and lives as a fact on the three ownable row types —
+// decided at create, immutable, resolved to DEFAULT_NAMESPACE when
+// absent, like every other materialized default. Work items, entries,
+// and pending inputs derive theirs through sessionId; the worker and
+// the driver never read it. Enforcement is split: the store guarantees
+// a session and its configs share one namespace (a foreign config is
+// "unknown" — indistinguishable from nonexistent, so nothing leaks);
+// scoping reads to a caller's namespace is the api's fetch-then-check.
+export const DEFAULT_NAMESPACE = "default";
+
 // --- configs ---
 
 // Config rows are write-once: the port exposes no update or delete, so
@@ -46,12 +60,14 @@ export type InputId = string;
 export const CreateAgentConfigRequest = z.object({
   inference: InferenceConfig,
   systemPrompt: z.string(),
+  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
 
 export const AgentConfig = CreateAgentConfigRequest.extend({
   id: z.string(),
+  namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
   createdAt: z.iso.datetime(),
 });
 export type AgentConfig = z.infer<typeof AgentConfig>;
@@ -63,6 +79,7 @@ export const CreateEnvConfigRequest = z.object({
   // Presence is guaranteed at create() or creation fails — missing deps
   // surface at provision, not mid-session.
   packages: Packages.optional(),
+  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateEnvConfigRequest = z.infer<typeof CreateEnvConfigRequest>;
@@ -72,6 +89,7 @@ export const EnvConfig = CreateEnvConfigRequest.extend({
   // Materialized at create — resolved decisions, not restatable defaults:
   network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
   packages: Packages, // absence resolved to {}
+  namespace: z.string().min(1), // absence resolved to DEFAULT_NAMESPACE
   createdAt: z.iso.datetime(),
 });
 export type EnvConfig = z.infer<typeof EnvConfig>;
@@ -81,12 +99,17 @@ export type EnvConfig = z.infer<typeof EnvConfig>;
 export const CreateSessionRequest = z.object({
   agentConfigId: z.string(),
   envConfigId: z.string(),
+  // Explicit, not derived from the configs: deriving would let a leaked
+  // foreign config id pull a session into the wrong namespace. The store
+  // enforces the match instead.
+  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 
 export const Session = CreateSessionRequest.extend({
   id: z.string(),
+  namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
   // The session's one workspace, registered by the driver's first
   // execute_tools claim (Store.bindSandbox); absent until then.
   sandboxId: z.string().optional(),

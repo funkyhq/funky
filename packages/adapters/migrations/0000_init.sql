@@ -3,10 +3,15 @@
 -- doc's "Postgres targets": the same DDL must run on PGlite, compose,
 -- k8s, Cloud SQL, PlanetScale-for-Postgres).
 
+-- namespace: the tenancy boundary (core/store.ts). Only the three
+-- ownable row types carry it; children derive theirs through
+-- session_id. No SQL DEFAULT — the adapter materializes the value, so
+-- the resolution lives in exactly one place.
 CREATE TABLE agent_configs (
   id text PRIMARY KEY,
   inference jsonb NOT NULL,
   system_prompt text NOT NULL,
+  namespace text NOT NULL,
   metadata jsonb,
   created_at timestamptz NOT NULL
 );
@@ -15,6 +20,7 @@ CREATE TABLE env_configs (
   id text PRIMARY KEY,
   network jsonb NOT NULL,
   packages jsonb NOT NULL,
+  namespace text NOT NULL,
   metadata jsonb,
   created_at timestamptz NOT NULL
 );
@@ -23,6 +29,7 @@ CREATE TABLE sessions (
   id text PRIMARY KEY,
   agent_config_id text NOT NULL REFERENCES agent_configs(id),
   env_config_id text NOT NULL REFERENCES env_configs(id),
+  namespace text NOT NULL,
   -- The session's one workspace; null until the driver's first
   -- execute_tools claim registers it (Store.bindSandbox, set-if-null).
   sandbox_id text,

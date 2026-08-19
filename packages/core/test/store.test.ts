@@ -25,6 +25,7 @@ describe("configs", () => {
         temperature: 0.7,
       },
       systemPrompt: "You are helpful.",
+      namespace: "tenant-a",
       metadata: { team: "growth" },
       createdAt: "2026-08-11T12:00:00Z",
     };
@@ -44,6 +45,7 @@ describe("configs", () => {
       id: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
+      namespace: "default",
       createdAt: "2026-08-11T12:00:00Z",
     };
     expect(roundTrip(AgentConfig, config)).toEqual(config);
@@ -74,6 +76,7 @@ describe("env configs", () => {
       id: "ec1",
       network: { type: "allowlist", domains: ["api.anthropic.com", "pypi.org"] },
       packages: { pip: ["pandas==2.2.0", "numpy"], npm: ["express@4.18.0"] },
+      namespace: "tenant-a",
       metadata: { envId: "env_014588" },
       createdAt: "2026-08-11T12:00:00Z",
     };
@@ -111,9 +114,20 @@ describe("sessions", () => {
       id: "s1",
       agentConfigId: "ac1",
       envConfigId: "ec1",
+      namespace: "default",
       createdAt: "2026-08-11T12:00:00Z",
     };
     expect(roundTrip(Session, session)).toEqual(session);
+  });
+
+  it("rejects a stored session missing namespace — materialized decisions must be present", () => {
+    const result = Session.safeParse({
+      id: "s1",
+      agentConfigId: "ac1",
+      envConfigId: "ec1",
+      createdAt: "2026-08-11T12:00:00Z",
+    });
+    expect(result.success).toBe(false);
   });
 
   it("rejects a create request without an agent config id", () => {
