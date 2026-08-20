@@ -29,8 +29,10 @@ beforeAll(async () => {
   client = new PGlite();
   await client.exec(ddl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-  app = buildApp({ store, authToken: null, namespaceSource: "static", ping: async () => ({}) });
-  scoped = buildApp({ store, authToken: null, namespaceSource: "header", ping: async () => ({}) });
+  const base = { store, authToken: null, ping: async () => ({}) };
+  const stream = { pollMs: 1000, heartbeatMs: 15_000 };
+  app = buildApp({ ...base, namespaceSource: "static", stream });
+  scoped = buildApp({ ...base, namespaceSource: "header", stream });
 });
 
 afterAll(async () => {

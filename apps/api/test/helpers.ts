@@ -15,6 +15,7 @@ export function makeApp(
     authToken: opts.authToken ?? null,
     namespaceSource: opts.namespaceSource ?? "static",
     ping: async () => ({}),
+    stream: { pollMs: 1000, heartbeatMs: 15_000 },
   });
 }
 

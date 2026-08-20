@@ -10,6 +10,7 @@
 // IntakeResult (started | queued) is returned verbatim, and both answer
 // 202: the work itself happens in a worker, asynchronously.
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { CreateSessionRequest, UserMessage } from "@funky/core";
 import type { Store } from "@funky/agent";
@@ -21,6 +22,14 @@ export type SessionStore = Pick<
   Store,
   "createSession" | "getSession" | "intake" | "requestCancel" | "readEntries" | "listItems"
 >;
+
+/** SSE tail pacing — from config in production, shrunk by tests. */
+export type StreamPacing = {
+  /** delay between entries-cursor polls */
+  pollMs: number;
+  /** quiet time before a keep-alive comment (defeats idle proxy timeouts) */
+  heartbeatMs: number;
+};
 
 type Env = { Variables: { requestId: string; namespace: string } };
 
@@ -37,7 +46,7 @@ const EntriesQuery = z.object({
   after: z.coerce.number().int().nonnegative().optional(),
 });
 
-export function sessionRoutes(store: SessionStore) {
+export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
   const r = new Hono<Env>();
 
   r.post("/", validate("json", WireCreateSession), async (c) => {
@@ -93,6 +102,52 @@ export function sessionRoutes(store: SessionStore) {
     const session = await owned(c);
     if (!session) return notFound(c);
     return c.json(await store.listItems(session.id));
+  });
+
+  // The entries read, delivered incrementally: replay past the cursor,
+  // then tail by re-polling it. Each event is `id: <seq>` + `data:
+  // <entry JSON>` — the same objects GET /entries returns, unnamed so a
+  // plain EventSource onmessage sees everything and `data.type`
+  // discriminates. `id: seq` makes resume SSE-native: an auto-reconnect
+  // sends Last-Event-ID, honored over ?after=. This is the truth lane
+  // only — committed entries, message granularity; the lossy delta fast
+  // lane (DeltaSink) is a later, additive event type on this same
+  // stream. Polling, not LISTEN/NOTIFY, by ratified decision: a
+  // Notifier would change latency inside this loop, never the wire.
+  //
+  // The stream has no server-side end — sessions don't terminate. The
+  // client hangs up; `aborted` stops the loop.
+  r.get("/:id/stream", validate("query", EntriesQuery), async (c) => {
+    const session = await owned(c);
+    if (!session) return notFound(c);
+    let after = c.req.valid("query").after;
+    const lastEventId = c.req.header("Last-Event-ID");
+    if (lastEventId !== undefined) {
+      const resumed = EntriesQuery.shape.after.safeParse(lastEventId);
+      if (!resumed.success) {
+        return errorResponse(c, 400, "invalid_request_error", "malformed Last-Event-ID");
+      }
+      after = resumed.data;
+    }
+    return streamSSE(c, async (stream) => {
+      let cursor = after;
+      let quietSince = Date.now();
+      while (!stream.aborted) {
+        const entries = [...(await store.readEntries(session.id, cursor))].sort(
+          (a, b) => a.seq - b.seq,
+        );
+        for (const entry of entries) {
+          await stream.writeSSE({ id: String(entry.seq), data: JSON.stringify(entry) });
+          cursor = entry.seq;
+          quietSince = Date.now();
+        }
+        if (Date.now() - quietSince >= pacing.heartbeatMs) {
+          await stream.write(": ping\n\n");
+          quietSince = Date.now();
+        }
+        await stream.sleep(pacing.pollMs);
+      }
+    });
   });
 
   /** The one ownership check: undefined for unknown AND foreign rows. */

@@ -18,13 +18,25 @@ const ddl = readFileSync(
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
 let scoped: ReturnType<typeof buildApp>; // namespaceSource "header" over the SAME store
+let heartbeatApp: ReturnType<typeof buildApp>; // heartbeat fires within a test's patience
+
+// Fast enough that stream tests never wait on the poll; a heartbeat
+// would mark the test hung, so it is effectively off everywhere but
+// heartbeatApp.
+const PACING = { pollMs: 10, heartbeatMs: 60_000 };
 
 beforeAll(async () => {
   client = new PGlite();
   await client.exec(ddl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-  app = buildApp({ store, authToken: null, namespaceSource: "static", ping: async () => ({}) });
-  scoped = buildApp({ store, authToken: null, namespaceSource: "header", ping: async () => ({}) });
+  const base = { store, authToken: null, ping: async () => ({}) };
+  app = buildApp({ ...base, namespaceSource: "static", stream: PACING });
+  scoped = buildApp({ ...base, namespaceSource: "header", stream: PACING });
+  heartbeatApp = buildApp({
+    ...base,
+    namespaceSource: "static",
+    stream: { pollMs: 10, heartbeatMs: 25 },
+  });
 });
 
 afterAll(async () => {
@@ -180,5 +192,118 @@ describe("POST /v1/sessions/:id/cancel", () => {
       asTenant("tenant-b"),
     );
     expect(res.status).toBe(404);
+  });
+});
+
+/** Incremental SSE consumer over a fetch Response. Always cancel() —
+ *  the server loop only stops when the client hangs up. */
+function sseReader(res: Response) {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const nextFrame = async (): Promise<string> => {
+    while (true) {
+      const cut = buffer.indexOf("\n\n");
+      if (cut !== -1) {
+        const frame = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        return frame;
+      }
+      const { done, value } = await reader.read();
+      if (done) throw new Error("stream ended before an event arrived");
+      buffer += decoder.decode(value, { stream: true });
+    }
+  };
+  return {
+    /** raw frame, comments included */
+    nextFrame,
+    /** next data event, comments skipped */
+    async next(): Promise<{ id?: string; data: string }> {
+      while (true) {
+        const event: { id?: string; data: string } = { data: "" };
+        for (const line of (await nextFrame()).split("\n")) {
+          if (line.startsWith("id:")) event.id = line.slice(3).trim();
+          else if (line.startsWith("data:")) event.data += line.slice(5).trim();
+        }
+        if (event.data !== "") return event;
+      }
+    },
+    cancel: () => reader.cancel(),
+  };
+}
+
+describe("GET /v1/sessions/:id/stream", () => {
+  it("replays committed entries, then tails ones landing while open", async () => {
+    const sessionId = await seedSession(app);
+    await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
+    const expected = await (await get(app, `/v1/sessions/${sessionId}/entries`)).json();
+
+    const res = await get(app, `/v1/sessions/${sessionId}/stream`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const reader = sseReader(res);
+    try {
+      const replayed = await reader.next();
+      expect(replayed.id).toBe(String(expected[0].seq));
+      expect(JSON.parse(replayed.data)).toEqual(expected[0]);
+
+      // Cancel is the one entry writer these worker-less tests have; its
+      // control entry landing mid-stream is the live-tail proof.
+      await post(app, `/v1/sessions/${sessionId}/cancel`);
+      const tailed = await reader.next();
+      expect(JSON.parse(tailed.data).type).toBe("control");
+      expect(Number(tailed.id)).toBeGreaterThan(expected[0].seq);
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("resumes from ?after=, and Last-Event-ID wins over it", async () => {
+    // Three entries: the message, then two cancels (re-cancelling is legal).
+    const sessionId = await seedSession(app);
+    await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
+    await post(app, `/v1/sessions/${sessionId}/cancel`);
+    await post(app, `/v1/sessions/${sessionId}/cancel`);
+    const entries = await (await get(app, `/v1/sessions/${sessionId}/entries`)).json();
+    expect(entries).toHaveLength(3);
+
+    // ?after= alone would skip everything; the header rewinds to the
+    // first entry and must win: the stream resumes at the second.
+    const res = await get(app, `/v1/sessions/${sessionId}/stream?after=${entries[2].seq}`, {
+      "Last-Event-ID": String(entries[0].seq),
+    });
+    const reader = sseReader(res);
+    try {
+      expect((await reader.next()).id).toBe(String(entries[1].seq));
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("400s a malformed Last-Event-ID", async () => {
+    const sessionId = await seedSession(app);
+    const res = await get(app, `/v1/sessions/${sessionId}/stream`, { "Last-Event-ID": "abc" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.type).toBe("invalid_request_error");
+  });
+
+  it("404s a foreign session before any byte streams", async () => {
+    const sessionId = await seedSession(scoped, asTenant("tenant-a"));
+    const res = await get(scoped, `/v1/sessions/${sessionId}/stream`, asTenant("tenant-b"));
+    expect(res.status).toBe(404);
+  });
+
+  it("keeps a quiet stream alive with heartbeat comments", async () => {
+    // No entries at all: nothing will ever be emitted but the heartbeat.
+    const sessionId = await seedSession(heartbeatApp);
+    const res = await get(heartbeatApp, `/v1/sessions/${sessionId}/stream`);
+    const reader = sseReader(res);
+    try {
+      let frame = "";
+      while (!frame.includes(": ping")) frame = await reader.nextFrame();
+      expect(frame).toContain(": ping");
+    } finally {
+      await reader.cancel();
+    }
   });
 });
