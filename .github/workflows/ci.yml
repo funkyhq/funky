@@ -23,20 +23,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm typecheck
-      - run: pnpm -F chaos-tests typecheck
 
   unit:
-    # Everything except the chaos suite. These still use testcontainers Postgres, which the
-    # ubuntu runner provides via its preinstalled Docker.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The Store conformance suite runs on two bindings: PGlite (always) and a
     # network postgres — the binding that exercises true concurrency (contended
     # claims, lease races) that single-connection PGlite serializes away. This
     # service is what un-skips packages/adapters/test/pg-postgres.test.ts.
+    # The key-gated live suites (worker e2e, e2b) stay skipped: CI sets no keys.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -54,35 +52,33 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter '!chaos-tests' -r --if-present test
+      # The boot path compose runs on every `up`: the drizzle migrator over
+      # packages/adapters/migrations. Tests apply the SQL file directly, so
+      # this step is the only thing that would catch a layout the migrator
+      # can't consume.
+      - run: pnpm -F @funky/adapters migrate
+        env:
+          DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres
+      - run: pnpm test
         env:
           STORE_TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres
           # The crash-resume randomized sweep scales with iterations; CI
           # affords a wider net than the local default of 6.
           CRASH_SWEEP_ITERATIONS: "24"
 
-  chaos:
-    # The product's warranty — durable agent execution proven at every crash point, under
-    # duplicate delivery, under lease expiry, with no double execution (tests/chaos).
-    #
-    # This job is REQUIRED for merge on `main`: add it as a required status check in the
-    # repository's branch-protection rules. A red chaos run is a release blocker, not a flake.
-    #
-    # It is slower than the unit job (it starts real Postgres containers and runs turns
-    # end-to-end) but is designed to land in well under 5 minutes.
+  # The deployable artifacts. The Dockerfile hard-codes the workspace's
+  # manifest list in its COPY block, so `docker build` is what catches a
+  # package added or renamed without updating it; `compose config` lints
+  # the service wiring (the `:?` credentials get dummies — this parses,
+  # it does not boot).
+  docker:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # testcontainers needs Docker; ubuntu-latest ships with it running. Ryuk (the reaper)
-      # pulls its own image over the network — the suite disables it and stops containers
-      # explicitly, so keep it off here too.
-      - run: pnpm -F chaos-tests test
+      - run: docker build .
+      - run: docker compose config -q
         env:
-          TESTCONTAINERS_RYUK_DISABLED: "true"
+          FUNKY_AUTH_TOKEN: ci-lint-token-0123456789
+          ANTHROPIC_API_KEY: ci-lint
+          E2B_API_KEY: ci-lint
