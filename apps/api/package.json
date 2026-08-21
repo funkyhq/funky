@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
+    "build": "tsdown",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -14,7 +15,9 @@
     "@funky/core": "workspace:*",
     "@hono/node-server": "^2.0.8",
     "@hono/zod-validator": "^0.7.4",
+    "ai": "^7.0.22",
     "drizzle-orm": "^1.0.0-beta.2",
+    "e2b": "^2.33.0",
     "hono": "^4.12.27",
     "pg": "^8.22.0",
     "uuid": "^13.0.0",
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@types/pg": "^8.20.0",
+    "tsdown": "^0.22.14",
     "tsx": "^4.23.0",
     "vitest": "^4.1.10"
   }
