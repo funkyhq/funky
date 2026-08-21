@@ -2,230 +2,145 @@
 
 # Funky
 
-The durable runtime for agent swarms.
+The durable runtime for agents.
 
-Define an agent, give it a sandboxed environment, send it work. Funky handles the durability and the infrastructure.
+Define an agent, give it a sandboxed environment, send it work. Funky records every session
+as an append-only log in Postgres and runs the agent loop on stateless workers — a worker
+can die mid-run (SIGKILL, OOM, a deploy) and a fresh one resumes from the log with nothing
+lost and no side effect run twice.
 
 ## Quickstart
 
-Requires Docker. No API key needed.
+Requires Docker, an [Anthropic API key](https://console.anthropic.com), and an
+[E2B](https://e2b.dev) API key. (Anthropic is what the shipped stack wires — the inference
+port itself takes any [Vercel AI SDK](https://ai-sdk.dev) provider; see
+[Other model providers](#other-model-providers).)
 
 ```bash
 git clone https://github.com/funkyhq/funky && cd funky
-cp .env.example .env        # set FUNKY_AUTH_TOKEN to any long random string
+cp .env.example .env        # fill in the three values
 docker compose up --build
 ```
 
-The stack is up when the `worker` and `api` services are healthy. Then:
+The stack is postgres → a one-shot migration → the api (`:3000`) + a worker; it's up when
+the `api` service reports healthy. Then:
 
 ```bash
 export TOKEN=<your FUNKY_AUTH_TOKEN>
 export H="Authorization: Bearer $TOKEN"
 export J="content-type: application/json"
 
-# 1. an agent: who it is and what model it uses
-AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
-  "name": "Funky Assistant",
-  "system_prompt": "You are an autonomous research and coding agent.",
-  "model": { "provider": "anthropic", "model": "claude-sonnet-5" }
+# 1. an agent config: the model and the system prompt (write-once)
+AID=$(curl -s localhost:3000/v1/agent-configs -H "$H" -H "$J" -d '{
+  "inference": { "provider": "anthropic", "model": "claude-sonnet-5", "maxTokens": 2048 },
+  "systemPrompt": "You are an autonomous agent in a fresh Linux sandbox."
 }' | jq -r .id)
 
-# 2. an environment: where its commands run
-EID=$(curl -s -X POST localhost:3000/v1/environments -H "$H" -H "$J" -d '{
-  "name": "basic",
-  "network": { "type": "unrestricted" }
-}' | jq -r .id)
+# 2. an env config: the sandbox recipe (the defaults are fine)
+EID=$(curl -s localhost:3000/v1/env-configs -H "$H" -H "$J" -d '{}' | jq -r .id)
 
-# 3. a session: an agent + an environment, with a sandbox and a durable event log
-SID=$(curl -s -X POST localhost:3000/v1/sessions -H "$H" -H "$J" \
-  -d "{\"agent\":\"$AID\",\"environment_id\":\"$EID\"}" | jq -r .id)
+# 3. a session: one agent config + one env config + a durable entry log
+SID=$(curl -s localhost:3000/v1/sessions -H "$H" -H "$J" \
+  -d "{\"agentConfigId\":\"$AID\",\"envConfigId\":\"$EID\"}" | jq -r .id)
 
-# 4. watch it think (leave this running)
-curl -N -H "$H" localhost:3000/v1/sessions/$SID/events/stream &
+# 4. watch the log stream live (leave this running)
+curl -N -H "$H" localhost:3000/v1/sessions/$SID/stream &
 
 # 5. give it work
-curl -s -X POST localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
-  -d '{"content":"What is the top 3 trending project on Github?"}'
+curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
+  -d '{"content":"Run uname -a in your sandbox and tell me what you see."}'
 ```
 
-You'll see the agent provision a sandbox, decide to run a command, execute it, and report
-back:
+The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
+run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
+never pays for one), and every committed step lands on the stream as one SSE event — `id:`
+is the entry's `seq`, `data:` is the same JSON `GET /entries` returns:
 
 ```
-event: session_provisioned
-event: assistant_message      { "tool_calls": [{ "kind": "exec", "cmd": "curl -s https://github.com/trending …" }] }
-event: tool_result            { "output": "…", "exit_code": 0 }
-event: assistant_message      { "content": [{"type":"text","text":"The top 3 trending projects are…"}] }
-event: turn_completed
+id: 0
+data: {"seq":0,"type":"message","message":{"role":"user","content":[...]}}
+
+id: 1
+data: {"seq":1,"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash",...}],"stopReason":"tool_use"}}
+
+id: 2
+data: {"seq":2,"type":"message","message":{"role":"toolResult","toolCallId":"...","content":[...]}}
+
+id: 3
+data: {"seq":3,"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"It's a Linux system..."}],"stopReason":"end_turn"}}
 ```
 
-> **Prefer a UI?** The `curl` flow above is also a few clicks in the **Funky Console** — the
-> browser dev console that ships with the stack. `docker compose up` serves it at
-> http://localhost:5173: create an agent, environment, and session, then chat with the agent
-> and watch it run commands in its sandbox — with the equivalent `curl` shown alongside. It's
-> a thin client over the same REST API (see [`apps/web`](apps/web)).
+Disconnect and reconnect any time: the stream replays from a cursor (`?after=`, or the
+SSE-native `Last-Event-ID` an auto-reconnecting EventSource sends), so a dropped client
+misses nothing. Ctrl-C the stream when done; `docker compose down` stops the stack (`-v`
+also wipes the database).
 
-<img width="1462" height="753" alt="Screenshot 2026-07-16 at 10 22 12 AM" src="https://github.com/user-attachments/assets/46dd31b9-0388-46bf-a12d-f28abdb6a263" />
+Scale workers with `docker compose up -d --scale worker=3` — claiming is the only
+scheduler; nothing else changes.
 
-### Using a real model
+### Other model providers
 
-```bash
-# in .env
-FUNKY_LLM=ai-sdk
-# set the key matching the provider in your agent's model config
-ANTHROPIC_API_KEY=sk-ant-...
-# OPENAI_API_KEY=sk-...
-# TOGETHER_API_KEY=...
-```
-
-```bash
-docker compose up -d --build worker
-```
-
-Now the same curl commands drive a real model, writing and running its own shell commands.
-The native runtime supports Anthropic, OpenAI, and Together AI through their direct AI SDK
-providers. For example, a Together AI agent uses:
-
-```json
-{
-  "model": {
-    "provider": "togetherai",
-    "model": "openai/gpt-oss-20b"
-  }
-}
-```
-
-Use a current Together model with function-calling support, since Funky's native agent loop
-exposes its sandbox through an `exec` tool. See Together's
-[serverless model catalog](https://docs.together.ai/docs/serverless/models).
-
-### Using a remote sandbox (e.g. E2B)
-
-```bash
-# in .env
-FUNKY_SANDBOX=e2b
-E2B_API_KEY=e2b_...         # from https://e2b.dev
-```
-
-```bash
-docker compose up -d --build worker
-```
-
-Now every session provisions an isolated [E2B](https://e2b.dev) sandbox, through
-[ComputeSDK](https://computesdk.com) so further providers can slot in behind the same
-driver.
-
-### Running an agent on the Claude Code harness
-
-Agents can run their turns inside [Claude Code](https://code.claude.com/docs/en/agent-sdk)
-(the Agent SDK) instead of Funky's native loop — same sessions, same sandboxes, same
-durable event log. This is a self-contained walkthrough; no need to run the Quickstart first.
-
-**1. Add your key to `.env`** (independent of `FUNKY_LLM`) and bring up the stack:
-
-```bash
-# .env
-FUNKY_AUTH_TOKEN=<any long random string>
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-```bash
-docker compose up --build -d
-# already running from the Quickstart? pick up the new key with: docker compose up -d --build worker
-```
-
-The stack is ready when the `worker` and `api` services report healthy (`docker compose ps`).
-
-**2. Create a harness agent, an environment, a session, and send it work.** The only
-difference from a native agent is the `"runtime"` field on the agent:
-
-```bash
-export TOKEN=<your FUNKY_AUTH_TOKEN>
-export H="Authorization: Bearer $TOKEN"
-export J="content-type: application/json"
-
-# an agent that runs its turns on the Claude Code harness (requires an anthropic model)
-AID=$(curl -s -X POST localhost:3000/v1/agents -H "$H" -H "$J" -d '{
-  "name": "Claude Code Agent",
-  "system_prompt": "You are an autonomous research and coding agent.",
-  "model":   { "provider": "anthropic", "model": "claude-sonnet-5" },
-  "runtime": { "type": "claude-code" }
-}' | jq -r .id)
-
-# an environment, then a session on it
-EID=$(curl -s -X POST localhost:3000/v1/environments -H "$H" -H "$J" \
-  -d '{"name":"basic","network":{"type":"unrestricted"}}' | jq -r .id)
-SID=$(curl -s -X POST localhost:3000/v1/sessions -H "$H" -H "$J" \
-  -d "{\"agent\":\"$AID\",\"environment_id\":\"$EID\"}" | jq -r .id)
-
-# watch it think (leave running), then give it work
-curl -N -H "$H" localhost:3000/v1/sessions/$SID/events/stream &
-curl -s -X POST localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
-  -d '{"content":"create a file hello.txt containing hi, then read it back to me"}'
-```
-
-You'll see a `harness_attempt_started` event, then the agent run commands in its sandbox
-(`assistant_message` → `tool_result`) and answer — the same event stream as a native turn.
-
-> The **Console** at http://localhost:5173 can _view_ a harness session, but can't yet
-> _create_ one — use the `curl` above to create the agent with `runtime`.
-
-The harness's commands execute in the session's Funky sandbox (exactly-once, crash-safe),
-and the Claude Code transcript is stored in Funky's Postgres — so a session survives worker
-crashes and can be resumed by any worker, keeping turns fully stateless. Design and
-guarantees: [`packages/ports/harness/DESIGN.md`](packages/ports/harness/DESIGN.md).
-
-### Worker metrics (Prometheus scrape or OpenTelemetry push)
-
-The worker is instrumented with the OpenTelemetry metrics API; `FUNKY_METRICS` picks the
-export mechanism (comma-separated to combine):
-
-```bash
-# in .env
-FUNKY_METRICS=prometheus       # default: serve GET /metrics on the health port (:9090)
-FUNKY_METRICS=otlp             # push OTLP/HTTP to any receiver — configure with the
-                               # standard OTel env vars (OTEL_EXPORTER_OTLP_ENDPOINT,
-                               # OTEL_EXPORTER_OTLP_HEADERS, OTEL_METRIC_EXPORT_INTERVAL,
-                               # OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES)
-FUNKY_METRICS=gcm              # push directly to Google Cloud Monitoring
-FUNKY_METRICS=prometheus,otlp  # both at once
-```
-
-The default is unchanged from previous releases: self-hosted Prometheus keeps scraping
-`:9090/metrics`, and `/healthz` is untouched. `otlp` is the vendor-neutral push path for
-runtimes with no scraper (serverless workers) — it works with an otel-collector, Grafana,
-Datadog, Honeycomb, Google's OTLP ingest, or anything else that speaks OTLP.
-
-The metric names and label sets are a **stable contract** across all exporters — dashboards
-and alerts can key on them: `funky_queue_depth{state}`, `funky_worker_turns_inflight`,
-`funky_worker_jobs_total{outcome}`, `funky_worker_append_conflicts_total`.
-
-### Tear down
-
-```bash
-docker compose down       # stop and remove the containers
-docker compose down -v    # ...and also delete the database volume
-```
+Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
+port — one adapter, any AI SDK provider. The shipped stack wires Anthropic; to run on
+another vendor, swap the provider factory in the worker's composition root
+([`apps/worker/src/main.ts`](apps/worker/src/main.ts)) — `createOpenAI` fits exactly where
+`createAnthropic` sits — and supply that vendor's key instead.
 
 ## Why Funky?
 
-Most runtimes put the agent _inside_ the sandbox: its reasoning loop, memory, and state all
-live in one box. When that box goes down, the agent and its in-flight work go with it. Funky
-decouples the agent from the box it runs in.
+Most runtimes keep the agent's loop, memory, and state in one process; when it dies,
+in-flight work dies with it. Funky decouples them:
 
-Agents don't die when the server goes down. Funky records every session as an append-only
-event log, then safely resumes interrupted work when the runtime comes back online: a fresh,
-stateless worker replays the log and re-attaches to the still-running sandbox command, with
-nothing lost and nothing run twice. Run one agent or a multi-agent swarm on the same durable
-foundation.
+- **The log is the agent.** Every session is an append-only entry log in Postgres. Workers
+  are stateless: each step is claim → step → commit in one transaction, and an interrupted
+  step is never committed.
+- **Crash-safe by construction, not by drain.** Workers have no shutdown path — SIGKILL is
+  the shutdown story, so crash-safety is exercised on every shutdown. A dying worker's
+  lease expires and any worker resumes from the unchanged log. Tool executions are
+  at-most-once across crashes: a killed batch settles as interrupted results the model can
+  see and retry — never a silently duplicated side effect.
+- **One rendezvous.** The api and the workers never talk to each other; Postgres is the
+  only coordination point. The SSE stream is the same log, delivered incrementally.
+- **Sandboxes outlive workers.** Commands run in a per-session [E2B](https://e2b.dev)
+  sandbox, bound to the session in the store — any worker reconnects to the same box.
 
 ## Architecture Diagram
 
 <img src="architecture_diagram.svg" alt="Architecture diagram" width="700">
 
+## Layout
+
+| Path                | What it is                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| `packages/core`     | The vocabulary: zod schemas for messages, entries, configs, and tool specs                       |
+| `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports |
+| `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes              |
+| `apps/api`          | The HTTP surface (Hono): configs, sessions, intake, cancel, inspection, the SSE stream           |
+| `apps/worker`       | The runDriver host — the process a container runs                                                |
+
+## Development
+
+```bash
+pnpm install
+pnpm test            # unit + PGlite-backed suites; no network, no keys
+pnpm typecheck
+pnpm format:check
+```
+
+The store conformance suite also runs against a real Postgres when
+`STORE_TEST_DATABASE_URL` is set (CI provisions one). An opt-in end-to-end suite — real
+model, real sandbox, `kill -9` recovery, and a two-process api+worker run observed entirely
+over HTTP — is gated on `E2E_DATABASE_URL` (a scratch database), `ANTHROPIC_API_KEY`, and
+`E2B_API_KEY`:
+
+```bash
+E2E_DATABASE_URL=postgres://... pnpm -F worker test   # with the keys in the environment
+```
+
 ## Contributing
 
-This is an early-stage project. The best contribution right now is feedback on the interfaces. Open an issue to discuss the protocol, a missing method, or a backend you'd want to plug in.
+Early-stage. The best contribution right now is feedback on the interfaces — open an issue
+to discuss the protocol, a missing method, or a backend you'd want to plug in.
 
 ## License
 
