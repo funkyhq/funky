@@ -26,7 +26,7 @@ services:
   # __drizzle_migrations, so re-running on every `up` is a no-op.
   migrate:
     build: .
-    command: ["pnpm", "-F", "@funky/adapters", "migrate"]
+    command: ["node", "packages/adapters/dist/store/migrate.js"]
     environment:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky # ← service name, not localhost
     depends_on:
@@ -64,7 +64,7 @@ services:
   # lifecycle management.
   worker:
     build: .
-    command: ["pnpm", "-F", "worker", "start"]
+    command: ["node", "apps/worker/dist/main.js"]
     environment:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}

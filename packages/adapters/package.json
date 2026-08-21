@@ -7,6 +7,7 @@
   },
   "scripts": {
     "migrate": "tsx src/store/migrate.ts",
+    "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@types/pg": "^8.20.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.23.0",
     "vitest": "^4.1.10"
   }
