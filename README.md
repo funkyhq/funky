@@ -12,7 +12,9 @@ lost and no side effect run twice.
 ## Quickstart
 
 Requires Docker, an [Anthropic API key](https://console.anthropic.com), and an
-[E2B](https://e2b.dev) API key.
+[E2B](https://e2b.dev) API key. (Anthropic is what the shipped stack wires — the inference
+port itself takes any [Vercel AI SDK](https://ai-sdk.dev) provider; see
+[Other model providers](#other-model-providers).)
 
 ```bash
 git clone https://github.com/funkyhq/funky && cd funky
@@ -75,6 +77,14 @@ also wipes the database).
 
 Scale workers with `docker compose up -d --scale worker=3` — claiming is the only
 scheduler; nothing else changes.
+
+### Other model providers
+
+Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
+port — one adapter, any AI SDK provider. The shipped stack wires Anthropic; to run on
+another vendor, swap the provider factory in the worker's composition root
+([`apps/worker/src/main.ts`](apps/worker/src/main.ts)) — `createOpenAI` fits exactly where
+`createAnthropic` sits — and supply that vendor's key instead.
 
 ## Why Funky?
 
