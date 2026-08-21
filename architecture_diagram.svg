@@ -1,0 +1,115 @@
+<svg viewBox="0 0 780 790" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <title>Funky Service architecture diagram</title>
+  <desc>Clients (SDK, CLI, Web UI) call an API Server inside the Funky Service, which writes to a Config Store and a Job Queue. Stateless Agent Runtime workers read configs and session events, and call external Inference and Sandbox providers below.</desc>
+  <style>
+    .box  { fill:#E8F0FE; stroke:#4A78D0; }
+    .store{ fill:#DCE7FB; stroke:#4A78D0; }
+    .lid  { fill:#C9DAF8; stroke:#4A78D0; }
+    .ext  { fill:#FCEFD9; stroke:#D98A2B; }
+    .frame{ fill:none; stroke:#9AA5B1; }
+    .ttl  { fill:#1A2233; font-weight:600; }
+    .grp  { fill:#5A6472; font-weight:600; }
+    .edge { fill:none; stroke:#8A93A0; stroke-width:1.6; }
+    .elbl { fill:#5A6472; }
+    text  { font-size:15px; }
+    @media (prefers-color-scheme: dark) {
+      .box  { fill:#1E2A44; stroke:#5B8DEF; }
+      .store{ fill:#22304d; stroke:#5B8DEF; }
+      .lid  { fill:#2c3d5f; stroke:#5B8DEF; }
+      .ext  { fill:#3A2E1B; stroke:#D99A4A; }
+      .frame{ stroke:#5A6472; }
+      .ttl  { fill:#EAEEF6; }
+      .grp  { fill:#AEB7C6; }
+      .edge { stroke:#7C8593; }
+      .elbl { fill:#AEB7C6; }
+    }
+  </style>
+
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8A93A0"/>
+    </marker>
+  </defs>
+
+  <!-- Service boundary (center axis x=390) -->
+  <rect class="frame" x="40" y="100" width="700" height="548" rx="14" stroke-dasharray="7 6" stroke-width="1.6"/>
+  <text class="grp" x="728" y="124" text-anchor="end" font-size="16">Funky Service</text>
+
+  <!-- Clients (centered on 390) -->
+  <g>
+    <rect class="box" x="229" y="28" width="94" height="46" rx="9" stroke-width="1.6"/>
+    <text class="ttl" x="276" y="56" text-anchor="middle">SDK</text>
+    <rect class="box" x="343" y="28" width="94" height="46" rx="9" stroke-width="1.6"/>
+    <text class="ttl" x="390" y="56" text-anchor="middle">CLI</text>
+    <rect class="box" x="457" y="28" width="94" height="46" rx="9" stroke-width="1.6"/>
+    <text class="ttl" x="504" y="56" text-anchor="middle">Web UI</text>
+  </g>
+  <path class="edge" d="M276,74 V128" marker-end="url(#arw)"/>
+  <path class="edge" d="M390,74 V128" marker-end="url(#arw)"/>
+  <path class="edge" d="M504,74 V128" marker-end="url(#arw)"/>
+
+  <!-- API Server (centered on 390) -->
+  <rect class="box" x="180" y="130" width="420" height="70" rx="11" stroke-width="1.8"/>
+  <text class="ttl" x="390" y="171" text-anchor="middle" font-size="17">API Server</text>
+
+  <!-- API -> Config Store -->
+  <path class="edge" d="M300,200 V226 H220 V248" marker-end="url(#arw)"/>
+  <text class="elbl" x="258" y="219" text-anchor="end" font-size="12.5">Agent Config, Env Config</text>
+  <!-- API -> Job Queue -->
+  <path class="edge" d="M480,200 V226 H560 V248" marker-end="url(#arw)"/>
+  <text class="elbl" x="522" y="219" text-anchor="start" font-size="12.5">Inference, tool call, etc.</text>
+
+  <!-- Config Store (center 220) -->
+  <path class="store" stroke-width="1.6" d="M155,262 a65,12 0 0 0 130,0 v76 a65,12 0 0 1 -130,0 z"/>
+  <ellipse class="lid" cx="220" cy="262" rx="65" ry="12" stroke-width="1.6"/>
+  <text class="ttl" x="220" y="308" text-anchor="middle" font-size="14">Config Store</text>
+
+  <!-- Session Store (center 390) -->
+  <path class="store" stroke-width="1.6" d="M325,262 a65,12 0 0 0 130,0 v76 a65,12 0 0 1 -130,0 z"/>
+  <ellipse class="lid" cx="390" cy="262" rx="65" ry="12" stroke-width="1.6"/>
+  <text class="ttl" x="390" y="302" text-anchor="middle" font-size="13.5">Append-Only</text>
+  <text class="ttl" x="390" y="320" text-anchor="middle" font-size="13.5">Session Store</text>
+
+  <!-- Job Queue (center 560) -->
+  <path class="store" stroke-width="1.6" d="M495,262 a65,12 0 0 0 130,0 v76 a65,12 0 0 1 -130,0 z"/>
+  <ellipse class="lid" cx="560" cy="262" rx="65" ry="12" stroke-width="1.6"/>
+  <text class="ttl" x="560" y="308" text-anchor="middle" font-size="14">Job Queue</text>
+
+  <!-- Config Store -> Worker -->
+  <path class="edge" d="M220,350 V545 H288" marker-end="url(#arw)"/>
+  <text class="elbl" x="185" y="440" text-anchor="middle" font-size="12.5">Configs</text>
+
+  <!-- Session Store <-> Worker -->
+  <path class="edge" d="M379,352 V480" marker-end="url(#arw)"/>
+  <path class="edge" d="M401,480 V352" marker-end="url(#arw)"/>
+  <text class="elbl" x="360" y="440" text-anchor="end" font-size="12">Previous events</text>
+  <text class="elbl" x="420" y="440" text-anchor="start" font-size="12">New events</text>
+
+  <!-- Job Queue -> Worker -->
+  <path class="edge" d="M560,350 V545 H510" marker-end="url(#arw)"/>
+  <text class="elbl" x="570" y="440" text-anchor="start" font-size="12.5">job</text>
+
+  <!-- Worker (stacked, centered on 390) -->
+  <rect class="box" x="306" y="484" width="200" height="90" rx="11" stroke-width="1.6"/>
+  <rect class="box" x="298" y="492" width="200" height="90" rx="11" stroke-width="1.6"/>
+  <rect class="box" x="290" y="500" width="200" height="90" rx="11" stroke-width="1.8"/>
+  <text class="ttl" x="390" y="539" text-anchor="middle" font-size="14.5">Stateless Agent</text>
+  <text class="ttl" x="390" y="559" text-anchor="middle" font-size="14.5">Runtime worker</text>
+
+  <!-- Worker -> Inference Provider (straight down) -->
+  <path class="edge" d="M350,590 V636 H295 V676" marker-end="url(#arw)"/>
+  <text class="elbl" x="344" y="616" text-anchor="end" font-size="12.5">LLM Inference</text>
+
+  <!-- Worker -> Sandbox Provider (straight down) -->
+  <path class="edge" d="M430,590 V636 H485 V676" marker-end="url(#arw)"/>
+  <text class="elbl" x="436" y="616" text-anchor="start" font-size="12.5">Shell cmd</text>
+
+  <!-- External providers (bottom) -->
+  <rect class="ext" x="220" y="678" width="150" height="70" rx="11" stroke-width="1.8"/>
+  <text class="ttl" x="295" y="709" text-anchor="middle" font-size="14.5">Inference</text>
+  <text class="ttl" x="295" y="728" text-anchor="middle" font-size="14.5">Provider</text>
+
+  <rect class="ext" x="410" y="678" width="150" height="70" rx="11" stroke-width="1.8"/>
+  <text class="ttl" x="485" y="709" text-anchor="middle" font-size="14.5">Sandbox</text>
+  <text class="ttl" x="485" y="728" text-anchor="middle" font-size="14.5">Provider</text>
+</svg>

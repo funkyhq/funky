@@ -104,6 +104,10 @@ in-flight work dies with it. Funky decouples them:
 - **Sandboxes outlive workers.** Commands run in a per-session [E2B](https://e2b.dev)
   sandbox, bound to the session in the store — any worker reconnects to the same box.
 
+## Architecture Diagram
+
+<img src="architecture_diagram.svg" alt="Architecture diagram" width="700">
+
 ## Layout
 
 | Path                | What it is                                                                                       |
