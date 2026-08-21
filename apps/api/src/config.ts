@@ -32,6 +32,13 @@ const EnvSchema = z
   .refine((e) => e.FUNKY_AUTH !== "disabled" || e.FUNKY_NAMESPACE_SOURCE !== "header", {
     path: ["FUNKY_NAMESPACE_SOURCE"],
     message: "FUNKY_NAMESPACE_SOURCE=header requires FUNKY_AUTH=enabled",
+  })
+  // The stream loop checks the heartbeat once per poll, so a poll slower
+  // than the heartbeat would silently stretch the keepalive past its
+  // schedule. Refuse the combination rather than complicate the loop.
+  .refine((e) => e.FUNKY_STREAM_POLL_MS <= e.FUNKY_STREAM_HEARTBEAT_MS, {
+    path: ["FUNKY_STREAM_POLL_MS"],
+    message: "FUNKY_STREAM_POLL_MS must not exceed FUNKY_STREAM_HEARTBEAT_MS",
   });
 
 export type Config = {

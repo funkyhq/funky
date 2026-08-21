@@ -141,6 +141,9 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
           cursor = entry.seq;
           quietSince = Date.now();
         }
+        // Checked once per poll, so the heartbeat can run late by up to one
+        // poll interval — config forbids a poll slower than the heartbeat,
+        // which keeps that slack shorter than the schedule it pads.
         if (Date.now() - quietSince >= pacing.heartbeatMs) {
           await stream.write(": ping\n\n");
           quietSince = Date.now();
