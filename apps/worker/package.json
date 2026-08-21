@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/main.ts",
-    "build": "tsup",
+    "build": "tsdown",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.14",
     "tsx": "^4.23.0",
     "vitest": "^4.1.10"
   }

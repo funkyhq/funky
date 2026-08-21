@@ -1,4 +1,4 @@
-import { defineConfig } from "tsup";
+import { defineConfig } from "tsdown";
 
 // Same shape as apps/api: @funky/* bundles in, npm deps stay external.
 export default defineConfig({
@@ -7,7 +7,5 @@ export default defineConfig({
   platform: "node",
   target: "node22",
   sourcemap: true,
-  clean: true,
-  noExternal: [/^@funky\//],
-  skipNodeModulesBundle: true,
+  deps: { alwaysBundle: ["@funky/core", "@funky/agent", "@funky/adapters"] },
 });

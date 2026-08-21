@@ -52,4 +52,4 @@ COPY packages/adapters/migrations packages/adapters/migrations
 EXPOSE 3000
 
 # Default command = api. Compose overrides this for migrate and the worker.
-CMD ["node", "apps/api/dist/main.js"]
+CMD ["node", "apps/api/dist/main.mjs"]

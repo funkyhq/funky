@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "build": "tsup",
+    "build": "tsdown",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -26,7 +26,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@types/pg": "^8.20.0",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.14",
     "tsx": "^4.23.0",
     "vitest": "^4.1.10"
   }
