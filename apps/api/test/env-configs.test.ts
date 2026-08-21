@@ -10,7 +10,10 @@ import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
 const ddl = readFileSync(
-  new URL("../../../packages/adapters/migrations/0000_init.sql", import.meta.url),
+  new URL(
+    "../../../packages/adapters/migrations/20260820000000_init/migration.sql",
+    import.meta.url,
+  ),
   "utf8",
 );
 

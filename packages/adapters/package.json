@@ -6,6 +6,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "migrate": "tsx src/store/migrate.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -15,12 +16,12 @@
     "ai": "^7.0.0",
     "drizzle-orm": "^1.0.0-beta.2",
     "e2b": "^2.33.0",
+    "pg": "^8.22.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@types/pg": "^8.20.0",
-    "pg": "^8.22.0",
     "tsx": "^4.23.0",
     "vitest": "^4.1.10"
   }

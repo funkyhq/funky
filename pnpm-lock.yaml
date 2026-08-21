@@ -115,6 +115,9 @@ importers:
       e2b:
         specifier: ^2.33.0
         version: 2.33.0
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -125,9 +128,6 @@ importers:
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
-      pg:
-        specifier: ^8.22.0
-        version: 8.22.0
       tsx:
         specifier: ^4.23.0
         version: 4.23.0
