@@ -30,7 +30,19 @@ describe("loadConfig — valid input", () => {
       dbPoolMax: 10,
       authToken: BASE.FUNKY_AUTH_TOKEN,
       namespaceSource: "static",
+      streamPollMs: 1000,
+      streamHeartbeatMs: 15_000,
     });
+  });
+
+  it("coerces the stream pacing overrides", () => {
+    const cfg = loadConfig({
+      ...BASE,
+      FUNKY_STREAM_POLL_MS: "250",
+      FUNKY_STREAM_HEARTBEAT_MS: "5000",
+    });
+    expect(cfg.streamPollMs).toBe(250);
+    expect(cfg.streamHeartbeatMs).toBe(5000);
   });
 
   it("FUNKY_AUTH=disabled yields a null token (and no token required)", () => {

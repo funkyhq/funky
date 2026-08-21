@@ -20,6 +20,7 @@ const app = buildApp({
   authToken: cfg.authToken,
   namespaceSource: cfg.namespaceSource,
   ping: () => pool.query("SELECT 1"),
+  stream: { pollMs: cfg.streamPollMs, heartbeatMs: cfg.streamHeartbeatMs },
 });
 
 serve({ fetch: app.fetch, port: cfg.port }, (info) => {
