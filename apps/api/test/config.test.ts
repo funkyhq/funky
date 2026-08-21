@@ -74,6 +74,16 @@ describe("loadConfig — invalid input", () => {
     expect(() => loadConfig({ ...BASE, FUNKY_AUTH_TOKEN: "short" })).toThrow("process.exit(1)");
   });
 
+  it("exits when the stream poll is slower than the heartbeat", () => {
+    expect(() =>
+      loadConfig({
+        ...BASE,
+        FUNKY_STREAM_POLL_MS: "60000",
+        FUNKY_STREAM_HEARTBEAT_MS: "15000",
+      }),
+    ).toThrow("process.exit(1)");
+  });
+
   it("exits when the header source is combined with disabled auth", () => {
     expect(() =>
       loadConfig({
