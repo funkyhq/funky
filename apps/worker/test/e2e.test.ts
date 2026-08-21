@@ -1,16 +1,22 @@
-// The opt-in end-to-end proof — the P2 exit artifact: a real model, a
-// real sandbox, a real postgres, and the real worker. The child process
-// is apps/worker/src/main.ts itself — the same entry a container
-// runs — so what passes here is the deployable artifact, not a fixture
-// that mirrors it. Assertions are invariants over the store and the
-// workspace, never transcripts: the model's words are its own; what must
-// hold is the log's shape (every call resolved exactly once, terminal
-// assistant tail), the registered sandbox binding, and the file the task
-// asked for actually existing in the sandbox.
+// The opt-in end-to-end proofs. "worker e2e" is the P2 exit artifact: a
+// real model, a real sandbox, a real postgres, and the real worker. The
+// child process is apps/worker/src/main.ts itself — the same entry a
+// container runs — so what passes here is the deployable artifact, not a
+// fixture that mirrors it. "stack e2e" is the P3 exit artifact: the real
+// api forked beside the real worker, seeded and observed exclusively
+// over HTTP — postgres the only rendezvous — with a SIGKILL mid-run and
+// an SSE reconnect-with-cursor across it. Assertions are invariants over
+// the log and the workspace, never transcripts: the model's words are
+// its own; what must hold is the log's shape (every call resolved
+// exactly once, terminal assistant tail), the registered sandbox
+// binding, and the file the task asked for actually existing in the
+// sandbox.
 //
 // Opt-in: set E2E_DATABASE_URL (a SCRATCH database — its public schema
 // is dropped and recreated per run), ANTHROPIC_API_KEY and E2B_API_KEY.
-// Cost per run: two short claude-haiku runs and two E2B sandboxes.
+// Cost per run: three short claude-haiku runs and three E2B sandboxes.
+// The describes share one schema and claims have no session filter, so
+// every test SIGKILLs its own workers before the next begins.
 
 import { type ChildProcess, fork } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -38,6 +44,7 @@ if (!url || !anthropicKey || !e2bKey) {
     "utf8",
   );
   const mainPath = fileURLToPath(new URL("../src/main.ts", import.meta.url));
+  const apiMainPath = fileURLToPath(new URL("../../api/src/main.ts", import.meta.url));
   const pool = new Pool({ connectionString: url, max: 5 });
   const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb);
   const sandboxes = createE2bProvider({ apiKey: e2bKey });
@@ -246,6 +253,223 @@ if (!url || !anthropicKey || !e2bKey) {
         const tail = msgs[msgs.length - 1];
         if (tail?.role !== "assistant") throw new Error("run did not end on an assistant message");
         expect(tail.stopReason).toBe("end_turn");
+      },
+    );
+  });
+
+  // --- stack e2e: the real api beside the real worker, HTTP-only ---
+
+  const API_PORT = 3891;
+  const API_URL = `http://127.0.0.1:${API_PORT}`;
+  const API_TOKEN = "e2e-stack-bearer-0123456789abcdef";
+
+  function forkApi(): ChildProcess {
+    const api = fork(apiMainPath, [], {
+      execArgv: ["--import", "tsx"],
+      env: {
+        ...process.env,
+        DATABASE_URL: url,
+        PORT: String(API_PORT),
+        FUNKY_AUTH_TOKEN: API_TOKEN,
+        FUNKY_STREAM_POLL_MS: "100",
+      },
+    });
+    workers.push(api);
+    return api;
+  }
+
+  async function apiJson(method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
+    const res = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);
+    return res.json();
+  }
+
+  /** Read the session's SSE stream until `until` holds over the entries
+   *  received so far. `after` resumes via Last-Event-ID, exactly as a
+   *  reconnecting EventSource would; heartbeat comments are skipped. */
+  async function readStream(
+    sessionId: string,
+    opts: { after?: number; until: (entries: SessionEntry[]) => boolean; timeoutMs: number },
+  ): Promise<SessionEntry[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+    const headers: Record<string, string> = { Authorization: `Bearer ${API_TOKEN}` };
+    if (opts.after !== undefined) headers["Last-Event-ID"] = String(opts.after);
+    const collected: SessionEntry[] = [];
+    try {
+      const res = await fetch(`${API_URL}/v1/sessions/${sessionId}/stream`, {
+        headers,
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`stream -> ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!opts.until(collected)) {
+        const { done, value } = await reader.read();
+        if (done) throw new Error("stream ended before the condition was met");
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          const data = frame
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trim())
+            .join("");
+          if (data !== "") collected.push(JSON.parse(data) as SessionEntry);
+        }
+      }
+      return collected;
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(`timed out streaming after ${opts.timeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      // Hanging up is the stream's only end — the abort stops the route's loop.
+      controller.abort();
+    }
+  }
+
+  describe("stack e2e (two processes: the real api + the real worker)", () => {
+    it(
+      "seeds over HTTP, streams live, survives kill -9, reconnects with the cursor",
+      { timeout: 300_000 },
+      async () => {
+        const api = forkApi();
+        let first: ChildProcess | undefined;
+        let resume: ChildProcess | undefined;
+        try {
+          await waitFor(
+            async () => (await fetch(`${API_URL}/health`).catch(() => null))?.ok === true,
+            30_000,
+            "the api to come up",
+          );
+
+          // Seed exclusively over HTTP — the api is the only writer here.
+          const agent = await apiJson("POST", "/v1/agent-configs", {
+            inference: {
+              provider: "anthropic",
+              model: "claude-haiku-4-5-20251001",
+              maxTokens: 2048,
+            },
+            systemPrompt:
+              "You are an agent in a fresh Linux sandbox. Complete the task with the " +
+              "tools, then reply with a one-sentence summary. If a tool result says " +
+              "the execution was interrupted, issue that call again.",
+          });
+          const env = await apiJson("POST", "/v1/env-configs", {});
+          const session = await apiJson("POST", "/v1/sessions", {
+            agentConfigId: agent.id,
+            envConfigId: env.id,
+          });
+          sessions.push(session.id);
+          const started = await apiJson("POST", `/v1/sessions/${session.id}/messages`, {
+            content:
+              "First run the bash command `sleep 15`. Then create a file at " +
+              "/home/user/answer.txt containing exactly: streamed",
+          });
+          expect(started.kind).toBe("started");
+
+          // Watch the run open on the live stream: the replayed user
+          // message, then the assistant's tool call landing in real time.
+          first = forkWorker();
+          const opening = await readStream(session.id, {
+            until: (entries) => entries.length >= 2,
+            timeoutMs: 120_000,
+          });
+          const lastSeen = opening[opening.length - 1]!.seq;
+
+          // The sleep is the kill window (see the worker e2e kill test).
+          await waitFor(
+            async () => {
+              const items = await apiJson("GET", `/v1/sessions/${session.id}/items`);
+              return items.some(
+                (item: { type: string; status: string }) =>
+                  item.type === "execute_tools" && item.status === "leased",
+              );
+            },
+            120_000,
+            "an execute_tools claim",
+          );
+          await killWorker(first);
+          resume = forkWorker();
+
+          // Reconnect exactly as an EventSource would: Last-Event-ID is
+          // the seq of the last entry seen before the disconnect.
+          const rest = await readStream(session.id, {
+            after: lastSeen,
+            until: (entries) =>
+              entries.some(
+                (entry) =>
+                  entry.type === "message" &&
+                  entry.message.role === "assistant" &&
+                  entry.message.stopReason === "end_turn",
+              ),
+            timeoutMs: 240_000,
+          });
+
+          await waitFor(
+            async () => {
+              const items = await apiJson("GET", `/v1/sessions/${session.id}/items`);
+              return (
+                items.length > 0 &&
+                items.every((item: { status: string }) => item.status === "done")
+              );
+            },
+            30_000,
+            "all items done",
+          );
+
+          // Continuity across the reconnect: the two stream segments,
+          // concatenated, are the durable log — no gap, no duplicate.
+          const streamed = [...opening, ...rest].map((entry) => entry.seq);
+          const durable = (await apiJson(
+            "GET",
+            `/v1/sessions/${session.id}/entries`,
+          )) as SessionEntry[];
+          expect(streamed).toEqual(durable.map((entry) => entry.seq).sort((a, b) => a - b));
+
+          // The same invariants as the worker e2e, read over HTTP.
+          assertEveryCallResolvedOnce(durable);
+          const items = await apiJson("GET", `/v1/sessions/${session.id}/items`);
+          expect(
+            items.some(
+              (item: { type: string; attempt: number }) =>
+                item.type === "execute_tools" && item.attempt > 1,
+            ),
+          ).toBe(true);
+          const msgs = messages(durable);
+          expect(
+            msgs.some(
+              (m) =>
+                m.role === "toolResult" &&
+                m.isError &&
+                m.content.some((part) => part.type === "text" && part.text.includes("interrupted")),
+            ),
+          ).toBe(true);
+
+          // The workspace really changed, via the binding the wire reports.
+          const bound = await apiJson("GET", `/v1/sessions/${session.id}`);
+          if (!bound.sandboxId) throw new Error("no sandbox bound to the session");
+          const sandbox = await sandboxes.connect(bound.sandboxId);
+          const bytes = await sandbox.readFile("/home/user/answer.txt");
+          expect(new TextDecoder().decode(bytes).trim()).toBe("streamed");
+        } finally {
+          if (first) await killWorker(first).catch(() => {});
+          if (resume) await killWorker(resume);
+          await killWorker(api); // SIGKILL is the api's shutdown story too
+        }
       },
     );
   });
