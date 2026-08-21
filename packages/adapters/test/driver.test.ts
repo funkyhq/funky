@@ -25,7 +25,10 @@ import {
 } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
 
-const ddl = readFileSync(new URL("../migrations/0000_init.sql", import.meta.url), "utf8");
+const ddl = readFileSync(
+  new URL("../migrations/20260820000000_init/migration.sql", import.meta.url),
+  "utf8",
+);
 
 let client: PGlite;
 let store: Store;

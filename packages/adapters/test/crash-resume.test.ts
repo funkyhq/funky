@@ -50,7 +50,10 @@ import {
   user,
 } from "./fixtures/crash-script";
 
-const ddl = readFileSync(new URL("../migrations/0000_init.sql", import.meta.url), "utf8");
+const ddl = readFileSync(
+  new URL("../migrations/20260820000000_init/migration.sql", import.meta.url),
+  "utf8",
+);
 const driverPath = fileURLToPath(new URL("./fixtures/crash-driver.ts", import.meta.url));
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 

@@ -1,46 +1,37 @@
-# docker-compose.yml (repo root) — the quickstart stack: postgres + migrate + api + worker + web.
-# Bring up:   docker compose up --build          (console at http://localhost:5173)
+# docker-compose.yml (repo root) — the funky stack: postgres + migrate +
+# api + worker, all four from the topology the harness was designed around.
+#
+# Bring up:   FUNKY_AUTH_TOKEN=... ANTHROPIC_API_KEY=... E2B_API_KEY=... \
+#             docker compose up --build           (or put them in .env)
 # Scale out:  docker compose up --build --scale worker=3
-# Tear down:  docker compose down          (-v to also wipe the database)
+# Tear down:  docker compose down                 (-v to also wipe the database)
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:17
     environment:
       POSTGRES_USER: funky
       POSTGRES_PASSWORD: funky
       POSTGRES_DB: funky
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432" # host access for psql/drizzle studio; stop any standalone funky-pg first
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U funky -d funky"]
       interval: 2s
       timeout: 2s
       retries: 15
 
-  # One-shot: applies migrations, exits. The api waits for it to succeed —
-  # this is "migrate on boot" done compose-natively.
+  # One-shot: applies migrations, exits; api and worker wait for it to
+  # succeed. Drizzle's journaled migrator tracks applied migrations in
+  # __drizzle_migrations, so re-running on every `up` is a no-op.
   migrate:
     build: .
-    command: ["pnpm", "-F", "@funky/db", "migrate"]
+    command: ["pnpm", "-F", "@funky/adapters", "migrate"]
     environment:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky # ← service name, not localhost
     depends_on:
       postgres:
         condition: service_healthy
-
-  # One-shot: builds the base image the `docker` sandbox driver starts each session from,
-  # tagging it on the SAME daemon the worker reaches through the mounted socket below. It
-  # only builds+tags, so it runs `true` and exits; the worker waits for it to complete.
-  sandbox-image:
-    build:
-      context: docker
-      dockerfile: sandbox.Dockerfile
-    image: ${FUNKY_DOCKER_IMAGE:-funky-sandbox:trixie}
-    command: ["true"]
-    restart: "no"
 
   api:
     build: .
@@ -48,17 +39,12 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky
-      # No default credential, ever: `:?` fails the boot with a message if it's unset.
-      FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any long random string}
-      # The api doesn't call the LLM today, but keeping its env in sync with the worker
-      # avoids "why does the worker behave differently" confusion.
-      FUNKY_LLM: ${FUNKY_LLM:-fake}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # empty unless the user sets it
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      # No default credential, ever: `:?` fails the boot with a message if unset.
+      FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any random string, ≥16 chars}
     depends_on:
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
     healthcheck:
       test:
         [
@@ -71,95 +57,22 @@ services:
       timeout: 3s
       retries: 10
 
-  # The agent runtime. SAME image as the api, different command (one image, two
-  # deployments). No published ports — nothing routes to a worker; 9090 is internal-only
-  # for the healthcheck. `docker compose up --scale worker=3` works with no changes: the
-  # queue hands each job to exactly one worker.
+  # The runDriver host. No ports — nothing routes to a worker; claiming is
+  # the only scheduler, so `--scale worker=N` needs no other change. There
+  # is deliberately no drain path: SIGKILL is the shutdown story and an
+  # interrupted step is never committed, so `restart` IS the worker's
+  # lifecycle management.
   worker:
     build: .
-    command: ["pnpm", "-F", "worker", "start:src"]
-    # The default `docker` sandbox driver spawns each session's container as a SIBLING on the
-    # host daemon (docker-out-of-docker) via this socket — the worker's `docker` CLI (baked
-    # into the image) talks to it. NOTE: this grants the worker host-daemon access, and
-    # sandbox containers share the host kernel — fine for local/trusted use; for untrusted
-    # workloads prefer FUNKY_SANDBOX=e2b (remote) or run the containers under gVisor/Kata.
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    # RAM-backed scratch for the claude-code harness: each in-flight harness turn keeps
-    # its DISPOSABLE local session copy here (the durable transcript is in Postgres).
-    # tmpfs means a dead worker leaves nothing behind — statelessness by construction.
-    tmpfs:
-      - /dev/shm/funky-harness
+    command: ["pnpm", "-F", "worker", "start"]
     environment:
-      DATABASE_URL: postgres://funky:funky@postgres:5432/funky # ← service name, not localhost
-      FUNKY_LLM: ${FUNKY_LLM:-fake}
-      FUNKY_SANDBOX: ${FUNKY_SANDBOX:-docker}
-      FUNKY_DOCKER_IMAGE: ${FUNKY_DOCKER_IMAGE:-funky-sandbox:trixie} # built by the sandbox-image service
-      FUNKY_WORKER_CONCURRENCY: ${FUNKY_WORKER_CONCURRENCY:-10}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # empty unless the user sets it
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
-      E2B_API_KEY: ${E2B_API_KEY:-} # empty unless the user sets it
-      FUNKY_E2B_SANDBOX_TIMEOUT_MS: ${FUNKY_E2B_SANDBOX_TIMEOUT_MS:-1800000}
-      # Metric exporters: "prometheus" (default, scrape :9090/metrics), "otlp" (push via
-      # the standard OTEL_* env vars below), "gcm", or a comma-separated combination.
-      FUNKY_METRICS: ${FUNKY_METRICS:-}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
-      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-}
-      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
-      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
-      # Harness (agents with runtime=claude-code). CWD_ROOT must be identical across
-      # every worker replica — the transcript store's key derives from it.
-      FUNKY_HARNESS_SCRATCH_ROOT: /dev/shm/funky-harness
-      FUNKY_HARNESS_CWD_ROOT: /tmp/funky-harness-cwd
+      DATABASE_URL: postgres://funky:funky@postgres:5432/funky
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY in .env}
     depends_on:
       migrate:
         condition: service_completed_successfully
-      sandbox-image: # the base image must exist on the daemon before the first session runs
-        condition: service_completed_successfully
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://localhost:9090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  # The developer console (apps/web) — a Vite + React browser UI over the API. SAME image as
-  # the api/worker, different command. It serves same-origin: the Vite server proxies `/v1`
-  # and `/health` to the api and injects the bearer token, so the token never reaches the
-  # browser and the api needs no CORS (it stays untouched). Quickstart-grade — this is the
-  # Vite dev server, matching the rest of the stack running from source. Open :5173 after boot.
-  web:
-    build: .
-    command: ["pnpm", "-F", "web", "dev", "--host", "--port", "5173"]
-    ports:
-      - "5173:5173"
-    environment:
-      NODE_ENV: development # the image defaults to production; the Vite dev server wants development
-      FUNKY_API_URL: http://api:3000 # ← service name, not localhost (proxy target on the compose network)
-      FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any long random string}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # presence flips the console's Claude model option on
-      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-} # presence flips the console's Together model options on
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://localhost:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+    restart: unless-stopped
 
 volumes:
   pgdata:
