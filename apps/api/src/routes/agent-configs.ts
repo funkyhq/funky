@@ -1,16 +1,19 @@
 // apps/api/src/routes/agent-configs.ts
 // The agent-config resource — write-once behavior recipes (inference +
 // system prompt), tenant-private like every config. Same shape as
-// env-configs.ts: two verbs, core schemas as the wire format, the
-// middleware's namespace stamped on create and checked on read.
+// env-configs.ts: create, get, list, core schemas as the wire format,
+// the middleware's namespace stamped on create and checked on read.
 import { Hono } from "hono";
 import { CreateAgentConfigRequest } from "@funky/core";
 import type { Store } from "@funky/agent";
 import { errorResponse } from "../http";
-import { validate } from "./common";
+import { ListQuery, page, validate } from "./common";
 
 /** The slice of the harness Store this resource needs. */
-export type AgentConfigStore = Pick<Store, "createAgentConfig" | "getAgentConfig">;
+export type AgentConfigStore = Pick<
+  Store,
+  "createAgentConfig" | "getAgentConfig" | "listAgentConfigs"
+>;
 
 type Env = { Variables: { requestId: string; namespace: string } };
 
@@ -27,6 +30,27 @@ export function agentConfigRoutes(store: AgentConfigStore) {
     const config = await store.getAgentConfig(id);
     if (!config) throw new Error(`agent config ${id} missing after create`);
     return c.json(config, 201);
+  });
+
+  // list → one page of this namespace's rows, newest first. The store
+  // is asked for limit + 1: the extra row is hasMore (see page()).
+  r.get("/", validate("query", ListQuery), async (c) => {
+    const { limit, after } = c.req.valid("query");
+    try {
+      const rows = await store.listAgentConfigs({
+        namespace: c.get("namespace"),
+        limit: limit + 1,
+        after,
+      });
+      return c.json(page(rows, limit));
+    } catch (err) {
+      // A cursor the store can't resolve — foreign or made-up, the same
+      // "unknown" either way — is the client's mistake, so 400 not 500.
+      if (err instanceof Error && err.message.startsWith("unknown cursor")) {
+        return errorResponse(c, 400, "invalid_request_error", err.message);
+      }
+      throw err;
+    }
   });
 
   r.get("/:id", async (c) => {
