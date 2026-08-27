@@ -39,6 +39,7 @@ import {
   PendingInput,
   Session,
   SessionEntry,
+  UpdateAgentConfigRequest,
   UserMessage,
   WorkItem,
 } from "@funky/core";
@@ -47,9 +48,11 @@ import {
   FencedError,
   type ListConfigsRequest,
   type Store,
+  VersionConflictError,
 } from "@funky/agent";
 import {
   agentConfigs,
+  agentConfigVersions,
   envConfigs,
   pendingInputs,
   sessionEntries,
@@ -81,7 +84,27 @@ const toAgentConfig = (row: typeof agentConfigs.$inferSelect): AgentConfig =>
     systemPrompt: row.systemPrompt,
     namespace: row.namespace,
     ...unwrapped(row.metadata),
+    version: row.version,
     createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  });
+
+type AgentConfigVersionRow = typeof agentConfigVersions.$inferSelect & {
+  id: string;
+  namespace: string;
+  createdAt: Date;
+};
+
+const toAgentConfigVersion = (row: AgentConfigVersionRow): AgentConfig =>
+  AgentConfig.parse({
+    id: row.id,
+    inference: row.inference,
+    systemPrompt: row.systemPrompt,
+    namespace: row.namespace,
+    ...unwrapped(row.metadata),
+    version: row.version,
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
   });
 
 const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
@@ -155,13 +178,27 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async createAgentConfig(req) {
       const parsed = CreateAgentConfigRequest.parse(req);
       const id = randomUUID();
-      await db.insert(agentConfigs).values({
-        id,
-        inference: parsed.inference,
-        systemPrompt: parsed.systemPrompt,
-        namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
-        metadata: wrap(parsed.metadata),
-        createdAt: now(),
+      const timestamp = now();
+      await db.transaction(async (tx) => {
+        const metadata = wrap(parsed.metadata);
+        await tx.insert(agentConfigs).values({
+          id,
+          inference: parsed.inference,
+          systemPrompt: parsed.systemPrompt,
+          namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
+          metadata,
+          version: 1,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        await tx.insert(agentConfigVersions).values({
+          agentConfigId: id,
+          version: 1,
+          inference: parsed.inference,
+          systemPrompt: parsed.systemPrompt,
+          metadata,
+          updatedAt: timestamp,
+        });
       });
       return id;
     },
@@ -169,6 +206,84 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async getAgentConfig(id) {
       const [row] = await db.select().from(agentConfigs).where(eq(agentConfigs.id, id));
       return row === undefined ? undefined : toAgentConfig(row);
+    },
+
+    async getAgentConfigVersion(id, version) {
+      const [row] = await db
+        .select({
+          agentConfigId: agentConfigVersions.agentConfigId,
+          version: agentConfigVersions.version,
+          inference: agentConfigVersions.inference,
+          systemPrompt: agentConfigVersions.systemPrompt,
+          metadata: agentConfigVersions.metadata,
+          updatedAt: agentConfigVersions.updatedAt,
+          id: agentConfigs.id,
+          namespace: agentConfigs.namespace,
+          createdAt: agentConfigs.createdAt,
+        })
+        .from(agentConfigVersions)
+        .innerJoin(agentConfigs, eq(agentConfigVersions.agentConfigId, agentConfigs.id))
+        .where(
+          and(eq(agentConfigVersions.agentConfigId, id), eq(agentConfigVersions.version, version)),
+        );
+      return row === undefined ? undefined : toAgentConfigVersion(row);
+    },
+
+    async updateAgentConfig(id, req) {
+      const parsed = UpdateAgentConfigRequest.parse(req);
+      const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
+      const target = and(
+        eq(agentConfigs.id, id),
+        eq(agentConfigs.namespace, namespace),
+        parsed.version === undefined ? undefined : eq(agentConfigs.version, parsed.version),
+      );
+      const hasMutation =
+        parsed.inference !== undefined ||
+        parsed.systemPrompt !== undefined ||
+        parsed.metadata !== undefined;
+
+      return db.transaction(async (tx) => {
+        if (hasMutation) {
+          const timestamp = now();
+          const [row] = await tx
+            .update(agentConfigs)
+            .set({
+              ...(parsed.inference === undefined ? {} : { inference: parsed.inference }),
+              ...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
+              ...(parsed.metadata === undefined ? {} : { metadata: wrap(parsed.metadata) }),
+              version: sql`${agentConfigs.version} + 1`,
+              updatedAt: timestamp,
+            })
+            .where(target)
+            .returning();
+          if (row !== undefined) {
+            await tx.insert(agentConfigVersions).values({
+              agentConfigId: row.id,
+              version: row.version,
+              inference: row.inference,
+              systemPrompt: row.systemPrompt,
+              metadata: row.metadata,
+              updatedAt: timestamp,
+            });
+            return toAgentConfig(row);
+          }
+        } else {
+          const [row] = await tx.select().from(agentConfigs).where(target);
+          if (row !== undefined) return toAgentConfig(row);
+        }
+
+        // No updated row means unknown/foreign, or a failed version precondition.
+        // Resolve under the same namespace so a foreign id never leaks existence.
+        const [current] = await tx
+          .select({ version: agentConfigs.version })
+          .from(agentConfigs)
+          .where(and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace)));
+        if (current === undefined) return undefined;
+        if (parsed.version !== undefined) {
+          throw new VersionConflictError(parsed.version, current.version);
+        }
+        throw new Error(`agent config ${id} was not updated`);
+      });
     },
 
     async listAgentConfigs(req: ListConfigsRequest) {
@@ -218,13 +333,14 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async createSession(req) {
       const parsed = CreateSessionRequest.parse(req);
       const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
-      // Configs are write-once and never deleted, so this pre-check cannot
-      // go stale; the FK constraints remain as the structural backstop.
+      // Config ids and namespaces are immutable and configs are never deleted,
+      // so this existence/ownership pre-check cannot go stale; the FK
+      // constraints remain as the structural backstop.
       // The checks are namespace-scoped: a session and its configs always
       // share one namespace, and a foreign config is "unknown" —
       // indistinguishable from nonexistent, so nothing leaks.
       const [agent] = await db
-        .select({ id: agentConfigs.id })
+        .select({ id: agentConfigs.id, version: agentConfigs.version })
         .from(agentConfigs)
         .where(
           and(eq(agentConfigs.id, parsed.agentConfigId), eq(agentConfigs.namespace, namespace)),
@@ -239,6 +355,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       await db.insert(sessions).values({
         id,
         agentConfigId: parsed.agentConfigId,
+        agentConfigVersion: agent.version,
         envConfigId: parsed.envConfigId,
         namespace,
         metadata: wrap(parsed.metadata),
@@ -253,6 +370,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       return Session.parse({
         id: row.id,
         agentConfigId: row.agentConfigId,
+        agentConfigVersion: row.agentConfigVersion,
         envConfigId: row.envConfigId,
         namespace: row.namespace,
         ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),

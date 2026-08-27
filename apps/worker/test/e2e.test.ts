@@ -36,13 +36,14 @@ if (!url || !anthropicKey || !e2bKey) {
     it("skipped — set E2E_DATABASE_URL, ANTHROPIC_API_KEY and E2B_API_KEY to run", () => {});
   });
 } else {
-  const ddl = readFileSync(
-    new URL(
-      "../../../packages/adapters/migrations/20260820000000_init/migration.sql",
-      import.meta.url,
-    ),
-    "utf8",
-  );
+  const ddl = ["20260820000000_init", "20260827000000_agent_config_versions"]
+    .map((name) =>
+      readFileSync(
+        new URL(`../../../packages/adapters/migrations/${name}/migration.sql`, import.meta.url),
+        "utf8",
+      ),
+    )
+    .join("\n");
   const mainPath = fileURLToPath(new URL("../src/main.ts", import.meta.url));
   const apiMainPath = fileURLToPath(new URL("../../api/src/main.ts", import.meta.url));
   const pool = new Pool({ connectionString: url, max: 5 });

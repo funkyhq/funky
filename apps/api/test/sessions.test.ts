@@ -10,13 +10,14 @@ import { createPgStore, type StoreDb } from "@funky/adapters";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
-const ddl = readFileSync(
-  new URL(
-    "../../../packages/adapters/migrations/20260820000000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+const ddl = ["20260820000000_init", "20260827000000_agent_config_versions"]
+  .map((name) =>
+    readFileSync(
+      new URL(`../../../packages/adapters/migrations/${name}/migration.sql`, import.meta.url),
+      "utf8",
+    ),
+  )
+  .join("\n");
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
@@ -82,6 +83,7 @@ describe("POST /v1/sessions", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.agentConfigId).toBe(configs.agentConfigId);
+    expect(body.agentConfigVersion).toBe(1);
     expect(body.envConfigId).toBe(configs.envConfigId);
     expect(body.namespace).toBe("default");
     expect(typeof body.id).toBe("string");

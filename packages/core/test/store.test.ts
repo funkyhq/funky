@@ -8,6 +8,7 @@ import {
   IntakeResult,
   PendingInput,
   Session,
+  UpdateAgentConfigRequest,
   WorkItem,
 } from "../src/store";
 
@@ -27,7 +28,9 @@ describe("configs", () => {
       systemPrompt: "You are helpful.",
       namespace: "tenant-a",
       metadata: { team: "growth" },
+      version: 3,
       createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-12T12:00:00Z",
     };
     expect(roundTrip(AgentConfig, config)).toEqual(config);
   });
@@ -46,7 +49,9 @@ describe("configs", () => {
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
       namespace: "default",
+      version: 1,
       createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-11T12:00:00Z",
     };
     expect(roundTrip(AgentConfig, config)).toEqual(config);
   });
@@ -67,6 +72,18 @@ describe("configs", () => {
       systemPrompt: "s",
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a partial update and an optional positive version precondition", () => {
+    expect(UpdateAgentConfigRequest.safeParse({ systemPrompt: "new", version: 2 }).success).toBe(
+      true,
+    );
+    expect(UpdateAgentConfigRequest.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects an invalid update version or inference config", () => {
+    expect(UpdateAgentConfigRequest.safeParse({ version: 0 }).success).toBe(false);
+    expect(UpdateAgentConfigRequest.safeParse({ inference: "model-only" }).success).toBe(false);
   });
 });
 
@@ -113,6 +130,7 @@ describe("sessions", () => {
     const session = {
       id: "s1",
       agentConfigId: "ac1",
+      agentConfigVersion: 2,
       envConfigId: "ec1",
       namespace: "default",
       createdAt: "2026-08-11T12:00:00Z",
@@ -124,6 +142,7 @@ describe("sessions", () => {
     const result = Session.safeParse({
       id: "s1",
       agentConfigId: "ac1",
+      agentConfigVersion: 1,
       envConfigId: "ec1",
       createdAt: "2026-08-11T12:00:00Z",
     });

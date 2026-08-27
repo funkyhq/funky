@@ -11,13 +11,14 @@ import { createPgStore, type StoreDb } from "@funky/adapters";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
-const ddl = readFileSync(
-  new URL(
-    "../../../packages/adapters/migrations/20260820000000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+const ddl = ["20260820000000_init", "20260827000000_agent_config_versions"]
+  .map((name) =>
+    readFileSync(
+      new URL(`../../../packages/adapters/migrations/${name}/migration.sql`, import.meta.url),
+      "utf8",
+    ),
+  )
+  .join("\n");
 
 const RECIPE = {
   inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
@@ -50,8 +51,10 @@ describe("POST /v1/agent-configs", () => {
     expect(body.inference).toEqual(RECIPE.inference);
     expect(body.systemPrompt).toBe(RECIPE.systemPrompt);
     expect(body.namespace).toBe("default");
+    expect(body.version).toBe(1);
     expect(typeof body.id).toBe("string");
     expect(typeof body.createdAt).toBe("string");
+    expect(body.updatedAt).toBe(body.createdAt);
 
     const fetched = await get(app, `/v1/agent-configs/${body.id}`);
     expect(fetched.status).toBe(200);

@@ -173,7 +173,10 @@ export async function runStep(
     if (item.type === "inference") {
       const session = await store.getSession(item.sessionId);
       if (!session) throw new Error(`driver: claimed item for unknown session ${item.sessionId}`);
-      const config = await store.getAgentConfig(session.agentConfigId);
+      const config = await store.getAgentConfigVersion(
+        session.agentConfigId,
+        session.agentConfigVersion,
+      );
       if (!config) throw new Error(`driver: session ${item.sessionId} has no agent config`);
       // Drain-at-inference-prep is what makes these inputs steering: they
       // shape this context, ride in this commit before the step's output,

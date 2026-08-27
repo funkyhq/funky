@@ -44,6 +44,7 @@ function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
   const session: Session = {
     id: "s1",
     agentConfigId: "a1",
+    agentConfigVersion: 1,
     envConfigId: "e1",
     namespace: "default",
     createdAt: "2026-08-18T00:00:00.000Z",
