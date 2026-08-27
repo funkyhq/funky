@@ -73,6 +73,89 @@ describe("POST /v1/agent-configs", () => {
   });
 });
 
+describe("GET /v1/agent-configs", () => {
+  // Every list test gets its own tenant, so the page it reads contains
+  // exactly the rows it created — the store's namespace scoping IS the
+  // isolation. Order is asserted against the list itself, never against
+  // creation order: the store's clock is real wall time here, so rows
+  // created back to back can share a timestamp. That the order is
+  // newest-first is pinned in the store conformance suite, which owns
+  // an injected clock.
+  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
+
+  async function seed(tenant: string, n: number): Promise<string[]> {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const res = await post(scoped, "/v1/agent-configs", RECIPE, asTenant(tenant));
+      expect(res.status).toBe(201);
+      ids.push((await res.json()).id);
+    }
+    return ids;
+  }
+
+  it("returns the namespace's rows in one page, whole rows, hasMore false", async () => {
+    const ids = await seed("list-one", 3);
+    const res = await get(scoped, "/v1/agent-configs", asTenant("list-one"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.map((c: { id: string }) => c.id).sort()).toEqual([...ids].sort());
+    expect(body.hasMore).toBe(false);
+    expect(body.lastId).toBe(body.data[2].id);
+    // A listed row is the same row a get returns.
+    const one = await get(scoped, `/v1/agent-configs/${ids[0]}`, asTenant("list-one"));
+    expect(body.data).toContainEqual(await one.json());
+  });
+
+  it("pages with limit and after: the walk equals the whole list", async () => {
+    await seed("list-page", 3);
+    const whole = await (await get(scoped, "/v1/agent-configs", asTenant("list-page"))).json();
+
+    const first = await (
+      await get(scoped, "/v1/agent-configs?limit=2", asTenant("list-page"))
+    ).json();
+    expect(first.data).toHaveLength(2);
+    expect(first.hasMore).toBe(true); // the over-fetched row, not a guess
+    expect(first.lastId).toBe(first.data[1].id);
+
+    const second = await (
+      await get(scoped, `/v1/agent-configs?limit=2&after=${first.lastId}`, asTenant("list-page"))
+    ).json();
+    expect(second.data).toHaveLength(1);
+    expect(second.hasMore).toBe(false);
+
+    expect([...first.data, ...second.data]).toEqual(whole.data);
+  });
+
+  it("answers an empty namespace with an empty page and no cursor", async () => {
+    const body = await (await get(scoped, "/v1/agent-configs", asTenant("list-empty"))).json();
+    expect(body).toEqual({ data: [], hasMore: false });
+  });
+
+  it("never crosses the namespace boundary", async () => {
+    const mine = await seed("list-mine", 2);
+    await seed("list-theirs", 1);
+    const body = await (await get(scoped, "/v1/agent-configs", asTenant("list-mine"))).json();
+    expect(body.data.map((c: { id: string }) => c.id).sort()).toEqual([...mine].sort());
+  });
+
+  it("400s a limit outside the bounds and a non-numeric one", async () => {
+    for (const q of ["limit=0", "limit=101", "limit=abc", "limit=1.5"]) {
+      const res = await get(scoped, `/v1/agent-configs?${q}`, asTenant("list-one"));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
+  });
+
+  it("400s a cursor the store can't resolve — foreign like made-up", async () => {
+    const [foreign] = await seed("list-cursor-b", 1);
+    for (const after of ["nope", foreign]) {
+      const res = await get(scoped, `/v1/agent-configs?after=${after}`, asTenant("list-cursor-a"));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
+  });
+});
+
 describe("GET /v1/agent-configs/:id", () => {
   it("404s an unknown id with the error envelope", async () => {
     const res = await get(app, "/v1/agent-configs/nope");
