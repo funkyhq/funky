@@ -150,6 +150,105 @@ describe("GET /v1/agent-configs", () => {
   });
 });
 
+describe("POST /v1/agent-configs/:id", () => {
+  it("partially updates the config and increments its version", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const res = await post(app, `/v1/agent-configs/${created.id}`, {
+      systemPrompt: "You are a research analyst.",
+      version: 1,
+    });
+    expect(res.status).toBe(200);
+    const updated = await res.json();
+    expect(updated).toMatchObject({
+      id: created.id,
+      inference: RECIPE.inference,
+      systemPrompt: "You are a research analyst.",
+      namespace: "default",
+      version: 2,
+      createdAt: created.createdAt,
+    });
+    expect(typeof updated.updatedAt).toBe("string");
+
+    const fetched = await get(app, `/v1/agent-configs/${created.id}`);
+    expect(await fetched.json()).toEqual(updated);
+  });
+
+  it("returns 409 for a stale version and leaves the winning update intact", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const winner = await post(app, `/v1/agent-configs/${created.id}`, {
+      systemPrompt: "winner",
+      version: 1,
+    });
+    expect(winner.status).toBe(200);
+
+    const stale = await post(app, `/v1/agent-configs/${created.id}`, {
+      systemPrompt: "stale",
+      version: 1,
+    });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.type).toBe("conflict_error");
+
+    const fetched = await (await get(app, `/v1/agent-configs/${created.id}`)).json();
+    expect(fetched).toMatchObject({ systemPrompt: "winner", version: 2 });
+  });
+
+  it("updates unconditionally when version is omitted", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    await post(app, `/v1/agent-configs/${created.id}`, { systemPrompt: "first", version: 1 });
+    const res = await post(app, `/v1/agent-configs/${created.id}`, {
+      inference: { provider: "anthropic", model: "claude-opus-5" },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      inference: { provider: "anthropic", model: "claude-opus-5" },
+      systemPrompt: "first",
+      version: 3,
+    });
+  });
+
+  it("accepts an empty update as a no-op", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const res = await post(app, `/v1/agent-configs/${created.id}`, {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(created);
+  });
+
+  it("validates the update body", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    for (const body of [{ version: 0 }, { inference: "model-only" }]) {
+      const res = await post(app, `/v1/agent-configs/${created.id}`, body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
+  });
+
+  it("404s unknown and foreign ids without mutating the foreign config", async () => {
+    const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
+    const unknown = await post(
+      scoped,
+      "/v1/agent-configs/nope",
+      { systemPrompt: "x" },
+      asTenant("update-a"),
+    );
+    expect(unknown.status).toBe(404);
+
+    const created = await (
+      await post(scoped, "/v1/agent-configs", RECIPE, asTenant("update-a"))
+    ).json();
+    const foreign = await post(
+      scoped,
+      `/v1/agent-configs/${created.id}`,
+      { systemPrompt: "x", version: 1 },
+      asTenant("update-b"),
+    );
+    expect(foreign.status).toBe(404);
+    const own = await (
+      await get(scoped, `/v1/agent-configs/${created.id}`, asTenant("update-a"))
+    ).json();
+    expect(own).toMatchObject({ systemPrompt: RECIPE.systemPrompt, version: 1 });
+  });
+});
+
 describe("GET /v1/agent-configs/:id", () => {
   it("404s an unknown id with the error envelope", async () => {
     const res = await get(app, "/v1/agent-configs/nope");

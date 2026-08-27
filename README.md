@@ -30,7 +30,7 @@ export TOKEN=<your FUNKY_AUTH_TOKEN>
 export H="Authorization: Bearer $TOKEN"
 export J="content-type: application/json"
 
-# 1. an agent config: the model and the system prompt (write-once)
+# 1. an agent config: the model and the system prompt
 AID=$(curl -s localhost:3000/v1/agent-configs -H "$H" -H "$J" -d '{
   "inference": { "provider": "anthropic", "model": "claude-sonnet-5", "maxTokens": 2048 },
   "systemPrompt": "You are an autonomous agent in a fresh Linux sandbox."
@@ -50,6 +50,11 @@ curl -N -H "$H" localhost:3000/v1/sessions/$SID/stream &
 curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
   -d '{"content":"Run uname -a in your sandbox and tell me what you see."}'
 ```
+
+Agent configs can be updated with `POST /v1/agent-configs/$AID`. Send only the fields to
+replace; omitted fields are preserved. Responses include a monotonic `version`: include the
+current value in an update for optimistic concurrency (a stale value returns 409), or omit it
+for an unconditional last-write-wins update.
 
 The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
 run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
