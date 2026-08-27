@@ -131,6 +131,115 @@ export function describeStoreConformance(
       });
     });
 
+    describe("listing configs", () => {
+      /** n configs, each a tick newer than the last, oldest id first. */
+      async function agentConfigs(n: number, namespace?: string): Promise<string[]> {
+        const ids: string[] = [];
+        for (let i = 0; i < n; i++) {
+          ids.push(
+            await store.createAgentConfig({
+              inference: { provider: "fake", model: `m${i}` },
+              systemPrompt: "s",
+              ...(namespace === undefined ? {} : { namespace }),
+            }),
+          );
+          clock.advance(1_000);
+        }
+        return ids;
+      }
+
+      /** Walk the whole list one small page at a time. */
+      async function walk(namespace: string, limit: number): Promise<string[]> {
+        const ids: string[] = [];
+        let after: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page = await store.listAgentConfigs({ namespace, limit, after });
+          expect(page.length).toBeLessThanOrEqual(limit);
+          if (page.length === 0) return ids;
+          ids.push(...page.map((c) => c.id));
+          after = page[page.length - 1]?.id;
+        }
+        throw new Error("walk did not terminate");
+      }
+
+      it("lists a namespace's configs newest first, whole rows", async () => {
+        const [oldest, middle, newest] = await agentConfigs(3);
+        const configs = await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(configs.map((c) => c.id)).toEqual([newest, middle, oldest]);
+        // The same shape a get returns — one row mapping, not two.
+        expect(configs[0]).toEqual(await store.getAgentConfig(newest!));
+      });
+
+      it("bounds the page at limit and resumes strictly after the cursor", async () => {
+        const [oldest, middle, newest] = await agentConfigs(3);
+        const first = await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 2 });
+        expect(first.map((c) => c.id)).toEqual([newest, middle]);
+        const second = await store.listAgentConfigs({
+          namespace: DEFAULT_NAMESPACE,
+          limit: 2,
+          after: middle,
+        });
+        expect(second.map((c) => c.id)).toEqual([oldest]);
+        expect(
+          await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 2, after: oldest }),
+        ).toEqual([]);
+      });
+
+      it("pages an unadvanced clock without dropping or duplicating a row", async () => {
+        // No clock advance: created_at ties are likely, so this pins the
+        // (createdAt, id) key's total order — walking in pages must equal
+        // the whole list exactly.
+        for (let i = 0; i < 5; i++) {
+          await store.createEnvConfig({});
+        }
+        const whole = await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(whole).toHaveLength(5);
+
+        const walked: string[] = [];
+        let after: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page = await store.listEnvConfigs({
+            namespace: DEFAULT_NAMESPACE,
+            limit: 2,
+            after,
+          });
+          if (page.length === 0) break;
+          walked.push(...page.map((c) => c.id));
+          after = page[page.length - 1]?.id;
+        }
+        expect(walked).toEqual(whole.map((c) => c.id));
+      });
+
+      it("scopes the list to one namespace — a page walk never crosses the boundary", async () => {
+        const a = await agentConfigs(3, "tenant-a");
+        const b = await agentConfigs(2, "tenant-b");
+        expect(await walk("tenant-a", 2)).toEqual([...a].reverse());
+        expect(await walk("tenant-b", 2)).toEqual([...b].reverse());
+        expect(await store.listAgentConfigs({ namespace: "tenant-c", limit: 10 })).toEqual([]);
+      });
+
+      it("rejects a cursor it cannot resolve — a foreign one like a nonexistent one", async () => {
+        const [foreign] = await agentConfigs(1, "tenant-b");
+        await expect(
+          store.listAgentConfigs({ namespace: "tenant-a", limit: 10, after: "nope" }),
+        ).rejects.toThrow("unknown cursor");
+        await expect(
+          store.listAgentConfigs({ namespace: "tenant-a", limit: 10, after: foreign }),
+        ).rejects.toThrow("unknown cursor");
+      });
+
+      it("lists the two config kinds independently", async () => {
+        await agentConfigs(2);
+        const envId = await store.createEnvConfig({});
+        const envs = await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(envs.map((c) => c.id)).toEqual([envId]);
+        expect(envs[0]).toEqual(await store.getEnvConfig(envId));
+        expect(
+          await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 }),
+        ).toHaveLength(2);
+      });
+    });
+
     describe("sessions", () => {
       it("round-trips a session", async () => {
         const sessionId = await newSession();
