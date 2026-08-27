@@ -72,6 +72,45 @@ describe("POST /v1/env-configs", () => {
   });
 });
 
+describe("GET /v1/env-configs", () => {
+  // The pagination machinery itself (limit bounds, over-fetched
+  // hasMore, the page walk) is pinned in agent-configs.test.ts, which
+  // shares it; here we pin this resource's own wiring.
+  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
+
+  it("lists env configs only — the two config kinds are separate collections", async () => {
+    const created = await (
+      await post(scoped, "/v1/env-configs", { packages: { npm: ["zod@4"] } }, asTenant("list-env"))
+    ).json();
+    await post(
+      scoped,
+      "/v1/agent-configs",
+      { inference: { provider: "fake", model: "m" }, systemPrompt: "s" },
+      asTenant("list-env"),
+    );
+
+    const res = await get(scoped, "/v1/env-configs", asTenant("list-env"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: [created], hasMore: false, lastId: created.id });
+  });
+
+  it("is wired on the static namespace source too", async () => {
+    const created = await (await post(app, "/v1/env-configs", {})).json();
+    const body = await (await get(app, "/v1/env-configs?limit=100")).json();
+    expect(body.data).toContainEqual(created);
+    // The default page is bounded whether or not the caller asks.
+    const capped = await (await get(app, "/v1/env-configs?limit=1")).json();
+    expect(capped.data).toHaveLength(1);
+  });
+
+  it("400s a cursor from another namespace", async () => {
+    const foreign = await (await post(scoped, "/v1/env-configs", {}, asTenant("env-cur-b"))).json();
+    const res = await get(scoped, `/v1/env-configs?after=${foreign.id}`, asTenant("env-cur-a"));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.type).toBe("invalid_request_error");
+  });
+});
+
 describe("GET /v1/env-configs/:id", () => {
   it("404s an unknown id with the error envelope", async () => {
     const res = await get(app, "/v1/env-configs/nope");
