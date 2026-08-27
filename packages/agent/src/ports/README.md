@@ -8,7 +8,7 @@ what they are.
 | port                | one line                                                |
 | ------------------- | ------------------------------------------------------- |
 | `InferenceProvider` | one request in, one live stream of increments out       |
-| `Store`             | the single source of truth: 15 methods, two write paths |
+| `Store`             | the single source of truth: 17 methods, two write paths |
 
 Why the ports live here and not elsewhere:
 

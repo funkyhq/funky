@@ -24,7 +24,7 @@
 // comparisons use it — never SQL now().
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, type SQL, sql } from "drizzle-orm";
 import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   AgentConfig,
@@ -42,7 +42,12 @@ import {
   UserMessage,
   WorkItem,
 } from "@funky/core";
-import { type CommitStepRequest, FencedError, type Store } from "@funky/agent";
+import {
+  type CommitStepRequest,
+  FencedError,
+  type ListConfigsRequest,
+  type Store,
+} from "@funky/agent";
 import {
   agentConfigs,
   envConfigs,
@@ -67,6 +72,28 @@ const wrap = (v: JsonValue | undefined): WrappedJson | null => (v === undefined 
 const unwrapped = (w: WrappedJson | null): { metadata?: JsonValue } =>
   w === null ? {} : { metadata: w.v };
 
+// Row → domain, shared by each config's get and list so the two can
+// never disagree about how a stored row reads back.
+const toAgentConfig = (row: typeof agentConfigs.$inferSelect): AgentConfig =>
+  AgentConfig.parse({
+    id: row.id,
+    inference: row.inference,
+    systemPrompt: row.systemPrompt,
+    namespace: row.namespace,
+    ...unwrapped(row.metadata),
+    createdAt: iso(row.createdAt),
+  });
+
+const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
+  EnvConfig.parse({
+    id: row.id,
+    network: row.network,
+    packages: row.packages,
+    namespace: row.namespace,
+    ...unwrapped(row.metadata),
+    createdAt: iso(row.createdAt),
+  });
+
 export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
   const now = opts.now ?? (() => new Date());
 
@@ -77,6 +104,28 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       .where(eq(sessions.id, sessionId))
       .for("update");
     if (rows.length === 0) throw new Error(`unknown session: ${sessionId}`);
+  }
+
+  /**
+   * The config lists' page predicate: everything strictly older than the
+   * cursor row in (created_at, id) order — a row-value comparison, so the
+   * tie-break is one comparison, not a hand-unrolled OR. The cursor is
+   * looked up under the caller's `scope`, which makes a foreign id
+   * unknown exactly like a nonexistent one. undefined = start at the
+   * newest (and drizzle's and() drops it).
+   */
+  async function olderThanCursor(
+    table: typeof agentConfigs | typeof envConfigs,
+    scope: SQL,
+    after: string | undefined,
+  ): Promise<SQL | undefined> {
+    if (after === undefined) return undefined;
+    const [cursor] = await db
+      .select({ createdAt: table.createdAt })
+      .from(table)
+      .where(and(scope, eq(table.id, after)));
+    if (!cursor) throw new Error(`unknown cursor: ${after}`);
+    return sql`(${table.createdAt}, ${table.id}) < (${iso(cursor.createdAt)}::timestamptz, ${after})`;
   }
 
   /** Mint envelopes and append; caller must hold the session lock. */
@@ -119,15 +168,19 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
 
     async getAgentConfig(id) {
       const [row] = await db.select().from(agentConfigs).where(eq(agentConfigs.id, id));
-      if (!row) return undefined;
-      return AgentConfig.parse({
-        id: row.id,
-        inference: row.inference,
-        systemPrompt: row.systemPrompt,
-        namespace: row.namespace,
-        ...unwrapped(row.metadata),
-        createdAt: iso(row.createdAt),
-      });
+      return row === undefined ? undefined : toAgentConfig(row);
+    },
+
+    async listAgentConfigs(req: ListConfigsRequest) {
+      const scope = eq(agentConfigs.namespace, req.namespace);
+      const page = await olderThanCursor(agentConfigs, scope, req.after);
+      const rows = await db
+        .select()
+        .from(agentConfigs)
+        .where(and(scope, page))
+        .orderBy(desc(agentConfigs.createdAt), desc(agentConfigs.id))
+        .limit(req.limit);
+      return rows.map(toAgentConfig);
     },
 
     async createEnvConfig(req) {
@@ -147,15 +200,19 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
 
     async getEnvConfig(id) {
       const [row] = await db.select().from(envConfigs).where(eq(envConfigs.id, id));
-      if (!row) return undefined;
-      return EnvConfig.parse({
-        id: row.id,
-        network: row.network,
-        packages: row.packages,
-        namespace: row.namespace,
-        ...unwrapped(row.metadata),
-        createdAt: iso(row.createdAt),
-      });
+      return row === undefined ? undefined : toEnvConfig(row);
+    },
+
+    async listEnvConfigs(req: ListConfigsRequest) {
+      const scope = eq(envConfigs.namespace, req.namespace);
+      const page = await olderThanCursor(envConfigs, scope, req.after);
+      const rows = await db
+        .select()
+        .from(envConfigs)
+        .where(and(scope, page))
+        .orderBy(desc(envConfigs.createdAt), desc(envConfigs.id))
+        .limit(req.limit);
+      return rows.map(toEnvConfig);
     },
 
     async createSession(req) {

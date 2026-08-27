@@ -49,8 +49,12 @@ export interface Store {
 
   createAgentConfig(req: CreateAgentConfigRequest): Promise<ConfigId>;
   getAgentConfig(id: ConfigId): Promise<AgentConfig | undefined>;
+  /** One namespace's agent configs, newest first — see ListConfigsRequest. */
+  listAgentConfigs(req: ListConfigsRequest): Promise<AgentConfig[]>;
   createEnvConfig(req: CreateEnvConfigRequest): Promise<ConfigId>;
   getEnvConfig(id: ConfigId): Promise<EnvConfig | undefined>;
+  /** One namespace's env configs, newest first — see ListConfigsRequest. */
+  listEnvConfigs(req: ListConfigsRequest): Promise<EnvConfig[]>;
 
   // --- sessions ---
 
@@ -134,6 +138,37 @@ export interface Store {
   commitStep(req: CommitStepRequest): Promise<void>;
 
   // P4 adds reaper operations (lease expiry, interrupted-result synthesis).
+}
+
+/**
+ * The config list reads' argument, shared by both because the two config
+ * tables page identically.
+ *
+ * `namespace` is required, and it is the one read whose tenancy the
+ * store enforces rather than the api: a list has no id to fetch and
+ * check afterwards, so the scope has to be inside the query.
+ *
+ * `limit` is required too — the port has no unbounded list, so no
+ * caller can forget to bound one. The store returns at most that many
+ * rows; a caller wanting to know whether more exist asks for one more
+ * than it will show.
+ *
+ * `after` is a position cursor with the same meaning as readEntries'
+ * seq — "what comes next" — in this list's newest-first order: the id
+ * of the last row of the page before. It is resolved inside the
+ * namespace, so a foreign cursor throws "unknown cursor" exactly like a
+ * nonexistent one and nothing leaks. Keyset, not offset, and ordered by
+ * (createdAt, id) so ties in the clock still order totally: config rows
+ * are write-once and never deleted, so a page boundary never moves — a
+ * concurrent create lands ahead of the first page, which the caller
+ * already has, and can neither duplicate nor skip a row mid-walk.
+ */
+export interface ListConfigsRequest {
+  namespace: string;
+  /** At most this many rows. */
+  limit: number;
+  /** Id of the previous page's last row; absent starts at the newest. */
+  after?: ConfigId;
 }
 
 /**
