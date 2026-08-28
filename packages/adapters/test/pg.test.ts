@@ -4,23 +4,18 @@
 // concurrent queries, so the contention cases only prove true parallelism
 // there.
 
-import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll } from "vitest";
 import { createPgStore, type StoreDb } from "../src";
+import { storeDdl } from "./store-ddl";
 import { describeStoreConformance } from "./store-conformance";
-
-const ddl = readFileSync(
-  new URL("../migrations/20260820000000_init/migration.sql", import.meta.url),
-  "utf8",
-);
 
 let client: PGlite;
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(ddl);
+  await client.exec(storeDdl);
 });
 
 afterAll(async () => {

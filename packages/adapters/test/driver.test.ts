@@ -6,7 +6,6 @@
 // real echo tool, and the store's injected clock stand in for the
 // world; tests drive steps one at a time, so almost nothing here waits.
 
-import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -24,11 +23,7 @@ import {
   toToolSpec,
 } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
-
-const ddl = readFileSync(
-  new URL("../migrations/20260820000000_init/migration.sql", import.meta.url),
-  "utf8",
-);
+import { storeDdl } from "./store-ddl";
 
 let client: PGlite;
 let store: Store;
@@ -36,7 +31,7 @@ let clock: { advance: (ms: number) => void };
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(ddl);
+  await client.exec(storeDdl);
 });
 
 afterAll(async () => {

@@ -13,6 +13,7 @@ import type {
   Session,
   SessionEntry,
   SessionId,
+  UpdateAgentConfigRequest,
   UserMessage,
   WorkItem,
 } from "@funky/core";
@@ -45,10 +46,20 @@ import type { RunEndStatus } from "../engine/next-action";
  * implement it; the conformance suite keeps that honest.
  */
 export interface Store {
-  // --- configs — write-once, so every get is infinitely cacheable ---
+  // --- configs ---
 
   createAgentConfig(req: CreateAgentConfigRequest): Promise<ConfigId>;
   getAgentConfig(id: ConfigId): Promise<AgentConfig | undefined>;
+  /** An immutable historical snapshot; undefined for an unknown id/version. */
+  getAgentConfigVersion(id: ConfigId, version: number): Promise<AgentConfig | undefined>;
+  /**
+   * Partially update one namespace's agent config. Omitted fields are
+   * preserved. A supplied version is an optimistic-concurrency precondition;
+   * mismatch throws VersionConflictError, while an unknown or foreign id is
+   * undefined. Every successful mutation increments the stored version; a
+   * request containing only the precondition is a read-like no-op.
+   */
+  updateAgentConfig(id: ConfigId, req: UpdateAgentConfigRequest): Promise<AgentConfig | undefined>;
   /** One namespace's agent configs, newest first — see ListConfigsRequest. */
   listAgentConfigs(req: ListConfigsRequest): Promise<AgentConfig[]>;
   createEnvConfig(req: CreateEnvConfigRequest): Promise<ConfigId>;
@@ -58,10 +69,9 @@ export interface Store {
 
   // --- sessions ---
 
-  /** Rejects unknown config ids — a session never dangles — and the
-   *  checks are namespace-scoped: a config in a different namespace IS
-   *  unknown (indistinguishable from nonexistent, so nothing leaks). A
-   *  session and its configs therefore always share one namespace. */
+  /** Pins the requested agent version, or the latest when omitted. Rejects
+   *  unknown configs or versions, with namespace-scoped checks so foreign ids
+   *  remain indistinguishable from nonexistent ones. */
   createSession(req: CreateSessionRequest): Promise<SessionId>;
   getSession(id: SessionId): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the
@@ -158,10 +168,9 @@ export interface Store {
  * of the last row of the page before. It is resolved inside the
  * namespace, so a foreign cursor throws "unknown cursor" exactly like a
  * nonexistent one and nothing leaks. Keyset, not offset, and ordered by
- * (createdAt, id) so ties in the clock still order totally: config rows
- * are write-once and never deleted, so a page boundary never moves — a
- * concurrent create lands ahead of the first page, which the caller
- * already has, and can neither duplicate nor skip a row mid-walk.
+ * immutable (createdAt, id), so updates cannot move a page boundary. A
+ * concurrent create lands ahead of the first page and cannot duplicate or
+ * skip a row mid-walk.
  */
 export interface ListConfigsRequest {
   namespace: string;
@@ -182,6 +191,19 @@ export class FencedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "FencedError";
+  }
+}
+
+/** Thrown when an agent-config update's expected version is stale. */
+export class VersionConflictError extends Error {
+  constructor(
+    readonly expectedVersion: number,
+    readonly actualVersion: number,
+  ) {
+    super(
+      `agent config version ${actualVersion} does not match expected version ${expectedVersion}`,
+    );
+    this.name = "VersionConflictError";
   }
 }
 

@@ -30,7 +30,6 @@
 
 import { type ChildProcess, fork } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,11 +48,7 @@ import {
   PROMPTS,
   user,
 } from "./fixtures/crash-script";
-
-const ddl = readFileSync(
-  new URL("../migrations/20260820000000_init/migration.sql", import.meta.url),
-  "utf8",
-);
+import { storeDdl } from "./store-ddl";
 const driverPath = fileURLToPath(new URL("./fixtures/crash-driver.ts", import.meta.url));
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -283,7 +278,7 @@ beforeAll(async () => {
   templateFresh = join(workRoot, "template-fresh");
   {
     const client = new PGlite(templateFresh);
-    await client.exec(ddl);
+    await client.exec(storeDdl);
     const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
     const agentConfigId = await store.createAgentConfig({
       inference: inferenceConfig,

@@ -14,6 +14,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigserial,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -37,14 +38,29 @@ export type WrappedJson = { v: JsonValue };
 
 export const agentConfigs = pgTable("agent_configs", {
   id: text("id").primaryKey(),
-  inference: jsonb("inference").$type<InferenceConfig>().notNull(),
-  systemPrompt: text("system_prompt").notNull(),
   // The tenancy boundary (core/store.ts) — the adapter materializes the
   // default; no SQL DEFAULT, so the resolution lives in exactly one place.
   namespace: text("namespace").notNull(),
-  metadata: jsonb("metadata").$type<WrappedJson>(),
+  // Pointer to the latest immutable snapshot.
+  currentVersion: integer("current_version").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
+
+// Immutable snapshots of every agent config version.
+export const agentConfigVersions = pgTable(
+  "agent_config_versions",
+  {
+    agentConfigId: text("agent_config_id")
+      .notNull()
+      .references(() => agentConfigs.id),
+    version: integer("version").notNull(),
+    inference: jsonb("inference").$type<InferenceConfig>().notNull(),
+    systemPrompt: text("system_prompt").notNull(),
+    metadata: jsonb("metadata").$type<WrappedJson>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentConfigId, t.version] })],
+);
 
 export const envConfigs = pgTable("env_configs", {
   id: text("id").primaryKey(),
@@ -56,20 +72,30 @@ export const envConfigs = pgTable("env_configs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 
-export const sessions = pgTable("sessions", {
-  id: text("id").primaryKey(),
-  agentConfigId: text("agent_config_id")
-    .notNull()
-    .references(() => agentConfigs.id),
-  envConfigId: text("env_config_id")
-    .notNull()
-    .references(() => envConfigs.id),
-  namespace: text("namespace").notNull(),
-  // The session's one workspace; null until bindSandbox registers it.
-  sandboxId: text("sandbox_id"),
-  metadata: jsonb("metadata").$type<WrappedJson>(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    agentConfigId: text("agent_config_id").notNull(),
+    // Resolved from the agent's latest version at session creation. The
+    // composite FK below makes every session's behavior snapshot durable.
+    agentConfigVersion: integer("agent_config_version").notNull(),
+    envConfigId: text("env_config_id")
+      .notNull()
+      .references(() => envConfigs.id),
+    namespace: text("namespace").notNull(),
+    // The session's one workspace; null until bindSandbox registers it.
+    sandboxId: text("sandbox_id"),
+    metadata: jsonb("metadata").$type<WrappedJson>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.agentConfigId, t.agentConfigVersion],
+      foreignColumns: [agentConfigVersions.agentConfigId, agentConfigVersions.version],
+    }),
+  ],
+);
 
 export const sessionEntries = pgTable(
   "session_entries",

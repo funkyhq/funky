@@ -3,11 +3,11 @@
 // races) that PGlite serializes away. Runs only when
 // STORE_TEST_DATABASE_URL is set; the database is wiped per run.
 
-import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createPgStore, type StoreDb } from "../src";
+import { storeDdl } from "./store-ddl";
 import { describeStoreConformance } from "./store-conformance";
 
 const url = process.env.STORE_TEST_DATABASE_URL;
@@ -17,15 +17,11 @@ if (!url) {
     it("skipped — set STORE_TEST_DATABASE_URL to run", () => {});
   });
 } else {
-  const ddl = readFileSync(
-    new URL("../migrations/20260820000000_init/migration.sql", import.meta.url),
-    "utf8",
-  );
   const pool = new Pool({ connectionString: url });
 
   beforeAll(async () => {
     await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
-    await pool.query(ddl);
+    await pool.query(storeDdl);
   });
 
   afterAll(async () => {

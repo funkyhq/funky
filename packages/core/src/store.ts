@@ -14,10 +14,11 @@ import { InferenceConfig } from "./inference";
  * boundary from the log's control entries — no import edge.
  *
  * Request shapes (Create*Request, after InferenceRequest and
- * StreamRequest) become stored rows verbatim, plus the store-minted
- * envelope (id, createdAt). Two rules keep every row one-shaped:
+ * StreamRequest) become stored rows verbatim, plus store-minted envelope
+ * fields (id/createdAt, and version/updatedAt on mutable agent configs).
+ * Two rules keep every row one-shaped:
  * - Rows store decisions, not rules: a default that is RESOLVED at
- *   creation time is materialized into the write-once row (network →
+ *   creation time is materialized into the stored row (network →
  *   unrestricted), so a later change of the platform default can never
  *   reinterpret an old row. Where absence itself is the fact (no
  *   sampling override, no metadata), absence is stored as absence.
@@ -52,10 +53,10 @@ export const DEFAULT_NAMESPACE = "default";
 
 // --- configs ---
 
-// Config rows are write-once: the port exposes no update or delete, so
-// immutability is an API impossibility, not a discipline. Sessions
-// reference config ids — the resolved config is always read through the
-// id, never copied forward.
+// Agent configs are mutable, with a monotonic version used for optional
+// optimistic concurrency. Env configs remain immutable sandbox recipes.
+// Sessions pin the latest concrete agent version at creation, so later agent
+// updates cannot change the behavior of an existing session.
 
 export const CreateAgentConfigRequest = z.object({
   inference: InferenceConfig,
@@ -65,10 +66,23 @@ export const CreateAgentConfigRequest = z.object({
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
 
+// UpdateAgent-style partial replacement: omission preserves a field. `version`
+// is a precondition, not stored payload — omit it for last-write-wins.
+export const UpdateAgentConfigRequest = z.object({
+  inference: InferenceConfig.optional(),
+  systemPrompt: z.string().optional(),
+  namespace: z.string().min(1).optional(),
+  metadata: JsonValue.optional(),
+  version: z.number().int().min(1).optional(),
+});
+export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
+
 export const AgentConfig = CreateAgentConfigRequest.extend({
   id: z.string(),
   namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
+  version: z.number().int().min(1),
   createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 });
 export type AgentConfig = z.infer<typeof AgentConfig>;
 
@@ -98,6 +112,8 @@ export type EnvConfig = z.infer<typeof EnvConfig>;
 
 export const CreateSessionRequest = z.object({
   agentConfigId: z.string(),
+  // Omit to pin the latest version at creation time.
+  agentConfigVersion: z.number().int().min(1).optional(),
   envConfigId: z.string(),
   // Explicit, not derived from the configs: deriving would let a leaked
   // foreign config id pull a session into the wrong namespace. The store
@@ -110,6 +126,8 @@ export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 export const Session = CreateSessionRequest.extend({
   id: z.string(),
   namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
+  // Materialized from the request or the agent config's latest version.
+  agentConfigVersion: z.number().int().min(1),
   // The session's one workspace, registered by the driver's first
   // execute_tools claim (Store.bindSandbox); absent until then.
   sandboxId: z.string().optional(),

@@ -2,21 +2,13 @@
 // worker is deliberately absent: what these pin is the intake half
 // (create, started/queued branching, cancel-as-control-entry) and the
 // inspection reads, all through HTTP, plus the ownership boundary.
-import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
+import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
-
-const ddl = readFileSync(
-  new URL(
-    "../../../packages/adapters/migrations/20260820000000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
@@ -30,7 +22,7 @@ const PACING = { pollMs: 10, heartbeatMs: 60_000 };
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(ddl);
+  await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   const base = { store, authToken: null, ping: async () => ({}) };
   app = buildApp({ ...base, namespaceSource: "static", stream: PACING });
@@ -78,10 +70,11 @@ async function seedSession(
 describe("POST /v1/sessions", () => {
   it("creates and returns the materialized session, 201", async () => {
     const configs = await seedConfigs(app);
-    const res = await post(app, "/v1/sessions", configs);
+    const res = await post(app, "/v1/sessions", { ...configs, agentConfigVersion: 1 });
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.agentConfigId).toBe(configs.agentConfigId);
+    expect(body.agentConfigVersion).toBe(1);
     expect(body.envConfigId).toBe(configs.envConfigId);
     expect(body.namespace).toBe("default");
     expect(typeof body.id).toBe("string");
@@ -90,6 +83,13 @@ describe("POST /v1/sessions", () => {
   it("400s a dangling config reference", async () => {
     const { envConfigId } = await seedConfigs(app);
     const res = await post(app, "/v1/sessions", { agentConfigId: "nope", envConfigId });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.type).toBe("invalid_request_error");
+  });
+
+  it("400s an unknown agent config version", async () => {
+    const configs = await seedConfigs(app);
+    const res = await post(app, "/v1/sessions", { ...configs, agentConfigVersion: 2 });
     expect(res.status).toBe(400);
     expect((await res.json()).error.type).toBe("invalid_request_error");
   });
