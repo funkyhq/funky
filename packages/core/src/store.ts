@@ -112,6 +112,8 @@ export type EnvConfig = z.infer<typeof EnvConfig>;
 
 export const CreateSessionRequest = z.object({
   agentConfigId: z.string(),
+  // Omit to pin the latest version at creation time.
+  agentConfigVersion: z.number().int().min(1).optional(),
   envConfigId: z.string(),
   // Explicit, not derived from the configs: deriving would let a leaked
   // foreign config id pull a session into the wrong namespace. The store
@@ -124,7 +126,7 @@ export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 export const Session = CreateSessionRequest.extend({
   id: z.string(),
   namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
-  // Materialized from the agent config's latest version at session create.
+  // Materialized from the request or the agent config's latest version.
   agentConfigVersion: z.number().int().min(1),
   // The session's one workspace, registered by the driver's first
   // execute_tools claim (Store.bindSandbox); absent until then.

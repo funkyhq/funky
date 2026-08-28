@@ -19,7 +19,7 @@ describe("store migrations", () => {
     client = undefined;
   });
 
-  it("backfills version and updated_at for existing agent configs", async () => {
+  it("moves existing agent config payload into version 1", async () => {
     client = new PGlite();
     await client.exec(init);
     await client.query(
@@ -44,22 +44,32 @@ describe("store migrations", () => {
     await client.exec(agentConfigVersions);
 
     const result = await client.query<{
-      version: number;
+      current_version: number;
       created_at: Date;
-      updated_at: Date;
-    }>("SELECT version, created_at, updated_at FROM agent_configs WHERE id = 'existing'");
+    }>("SELECT current_version, created_at FROM agent_configs WHERE id = 'existing'");
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.version).toBe(1);
-    expect(result.rows[0]?.updated_at).toEqual(result.rows[0]?.created_at);
+    expect(result.rows[0]?.current_version).toBe(1);
 
     const versions = await client.query<{
       agent_config_id: string;
       version: number;
       system_prompt: string;
-    }>("SELECT agent_config_id, version, system_prompt FROM agent_config_versions");
-    expect(versions.rows).toEqual([
-      { agent_config_id: "existing", version: 1, system_prompt: "s" },
-    ]);
+      updated_at: Date;
+    }>("SELECT agent_config_id, version, system_prompt, updated_at FROM agent_config_versions");
+    expect(versions.rows[0]).toMatchObject({
+      agent_config_id: "existing",
+      version: 1,
+      system_prompt: "s",
+    });
+    expect(versions.rows[0]?.updated_at).toEqual(result.rows[0]?.created_at);
+
+    const payloadColumns = await client.query<{ column_name: string }>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_name = 'agent_configs'
+         AND column_name IN ('inference', 'system_prompt', 'metadata', 'updated_at')`,
+    );
+    expect(payloadColumns.rows).toEqual([]);
     const sessions = await client.query<{ agent_config_version: number }>(
       "SELECT agent_config_version FROM sessions WHERE id = 'session'",
     );

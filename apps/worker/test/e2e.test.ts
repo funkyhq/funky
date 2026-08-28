@@ -19,13 +19,13 @@
 // every test SIGKILLs its own workers before the next begins.
 
 import { type ChildProcess, fork } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AgentMessage, SessionEntry, SessionId } from "@funky/core";
 import { createE2bProvider, createPgStore, type StoreDb } from "@funky/adapters";
+import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 
 const url = process.env.E2E_DATABASE_URL;
 const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -36,14 +36,6 @@ if (!url || !anthropicKey || !e2bKey) {
     it("skipped — set E2E_DATABASE_URL, ANTHROPIC_API_KEY and E2B_API_KEY to run", () => {});
   });
 } else {
-  const ddl = ["20260820000000_init", "20260827000000_agent_config_versions"]
-    .map((name) =>
-      readFileSync(
-        new URL(`../../../packages/adapters/migrations/${name}/migration.sql`, import.meta.url),
-        "utf8",
-      ),
-    )
-    .join("\n");
   const mainPath = fileURLToPath(new URL("../src/main.ts", import.meta.url));
   const apiMainPath = fileURLToPath(new URL("../../api/src/main.ts", import.meta.url));
   const pool = new Pool({ connectionString: url, max: 5 });
@@ -59,7 +51,7 @@ if (!url || !anthropicKey || !e2bKey) {
 
   beforeAll(async () => {
     await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
-    await pool.query(ddl);
+    await pool.query(storeDdl);
   });
 
   afterAll(async () => {

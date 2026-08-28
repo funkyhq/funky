@@ -38,20 +38,15 @@ export type WrappedJson = { v: JsonValue };
 
 export const agentConfigs = pgTable("agent_configs", {
   id: text("id").primaryKey(),
-  inference: jsonb("inference").$type<InferenceConfig>().notNull(),
-  systemPrompt: text("system_prompt").notNull(),
   // The tenancy boundary (core/store.ts) — the adapter materializes the
   // default; no SQL DEFAULT, so the resolution lives in exactly one place.
   namespace: text("namespace").notNull(),
-  metadata: jsonb("metadata").$type<WrappedJson>(),
-  version: integer("version").notNull(),
+  // Pointer to the latest immutable snapshot.
+  currentVersion: integer("current_version").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
 
-// Immutable snapshots of every agent config version. Namespace and the
-// identity's created_at remain on agent_configs; version reads join the parent
-// for those stable fields. updated_at is when this version became current.
+// Immutable snapshots of every agent config version.
 export const agentConfigVersions = pgTable(
   "agent_config_versions",
   {
@@ -81,9 +76,7 @@ export const sessions = pgTable(
   "sessions",
   {
     id: text("id").primaryKey(),
-    agentConfigId: text("agent_config_id")
-      .notNull()
-      .references(() => agentConfigs.id),
+    agentConfigId: text("agent_config_id").notNull(),
     // Resolved from the agent's latest version at session creation. The
     // composite FK below makes every session's behavior snapshot durable.
     agentConfigVersion: integer("agent_config_version").notNull(),

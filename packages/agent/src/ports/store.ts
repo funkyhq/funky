@@ -69,11 +69,9 @@ export interface Store {
 
   // --- sessions ---
 
-  /** Resolves and pins the agent's latest version. Rejects unknown config
-   *  ids — a session never dangles — and the checks are namespace-scoped: a
-   *  config in a different namespace IS unknown (indistinguishable from
-   *  nonexistent, so nothing leaks). A session and its configs therefore
-   *  always share one namespace. */
+  /** Pins the requested agent version, or the latest when omitted. Rejects
+   *  unknown configs or versions, with namespace-scoped checks so foreign ids
+   *  remain indistinguishable from nonexistent ones. */
   createSession(req: CreateSessionRequest): Promise<SessionId>;
   getSession(id: SessionId): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the
@@ -170,10 +168,9 @@ export interface Store {
  * of the last row of the page before. It is resolved inside the
  * namespace, so a foreign cursor throws "unknown cursor" exactly like a
  * nonexistent one and nothing leaks. Keyset, not offset, and ordered by
- * (createdAt, id) so ties in the clock still order totally: those ordering
- * keys are immutable and configs are never deleted, so a page boundary never moves — a
- * concurrent create lands ahead of the first page, which the caller
- * already has, and can neither duplicate nor skip a row mid-walk.
+ * immutable (createdAt, id), so updates cannot move a page boundary. A
+ * concurrent create lands ahead of the first page and cannot duplicate or
+ * skip a row mid-walk.
  */
 export interface ListConfigsRequest {
   namespace: string;

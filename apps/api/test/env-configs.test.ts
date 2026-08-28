@@ -1,22 +1,13 @@
 // Route tests over the REAL store — PGlite + the pg adapter, the same
 // binding the driver suites use — so materialization (defaults resolved
 // at create) is asserted end to end, never mocked.
-import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
+import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
-
-const ddl = ["20260820000000_init", "20260827000000_agent_config_versions"]
-  .map((name) =>
-    readFileSync(
-      new URL(`../../../packages/adapters/migrations/${name}/migration.sql`, import.meta.url),
-      "utf8",
-    ),
-  )
-  .join("\n");
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
@@ -24,7 +15,7 @@ let scoped: ReturnType<typeof buildApp>; // namespaceSource "header" over the SA
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(ddl);
+  await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   const base = { store, authToken: null, ping: async () => ({}) };
   const stream = { pollMs: 1000, heartbeatMs: 15_000 };

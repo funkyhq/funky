@@ -75,27 +75,29 @@ const wrap = (v: JsonValue | undefined): WrappedJson | null => (v === undefined 
 const unwrapped = (w: WrappedJson | null): { metadata?: JsonValue } =>
   w === null ? {} : { metadata: w.v };
 
-// Row → domain, shared by each config's get and list so the two can
-// never disagree about how a stored row reads back.
-const toAgentConfig = (row: typeof agentConfigs.$inferSelect): AgentConfig =>
-  AgentConfig.parse({
-    id: row.id,
-    inference: row.inference,
-    systemPrompt: row.systemPrompt,
-    namespace: row.namespace,
-    ...unwrapped(row.metadata),
-    version: row.version,
-    createdAt: iso(row.createdAt),
-    updatedAt: iso(row.updatedAt),
-  });
-
-type AgentConfigVersionRow = typeof agentConfigVersions.$inferSelect & {
+type AgentConfigRow = Omit<typeof agentConfigVersions.$inferSelect, "agentConfigId"> & {
   id: string;
   namespace: string;
   createdAt: Date;
 };
 
-const toAgentConfigVersion = (row: AgentConfigVersionRow): AgentConfig =>
+const agentConfigColumns = {
+  version: agentConfigVersions.version,
+  inference: agentConfigVersions.inference,
+  systemPrompt: agentConfigVersions.systemPrompt,
+  metadata: agentConfigVersions.metadata,
+  updatedAt: agentConfigVersions.updatedAt,
+  id: agentConfigs.id,
+  namespace: agentConfigs.namespace,
+  createdAt: agentConfigs.createdAt,
+};
+
+const currentAgentVersion = and(
+  eq(agentConfigVersions.agentConfigId, agentConfigs.id),
+  eq(agentConfigVersions.version, agentConfigs.currentVersion),
+);
+
+const toAgentConfig = (row: AgentConfigRow): AgentConfig =>
   AgentConfig.parse({
     id: row.id,
     inference: row.inference,
@@ -180,23 +182,18 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const id = randomUUID();
       const timestamp = now();
       await db.transaction(async (tx) => {
-        const metadata = wrap(parsed.metadata);
         await tx.insert(agentConfigs).values({
           id,
-          inference: parsed.inference,
-          systemPrompt: parsed.systemPrompt,
           namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
-          metadata,
-          version: 1,
+          currentVersion: 1,
           createdAt: timestamp,
-          updatedAt: timestamp,
         });
         await tx.insert(agentConfigVersions).values({
           agentConfigId: id,
           version: 1,
           inference: parsed.inference,
           systemPrompt: parsed.systemPrompt,
-          metadata,
+          metadata: wrap(parsed.metadata),
           updatedAt: timestamp,
         });
       });
@@ -204,29 +201,23 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     },
 
     async getAgentConfig(id) {
-      const [row] = await db.select().from(agentConfigs).where(eq(agentConfigs.id, id));
+      const [row] = await db
+        .select(agentConfigColumns)
+        .from(agentConfigs)
+        .innerJoin(agentConfigVersions, currentAgentVersion)
+        .where(eq(agentConfigs.id, id));
       return row === undefined ? undefined : toAgentConfig(row);
     },
 
     async getAgentConfigVersion(id, version) {
       const [row] = await db
-        .select({
-          agentConfigId: agentConfigVersions.agentConfigId,
-          version: agentConfigVersions.version,
-          inference: agentConfigVersions.inference,
-          systemPrompt: agentConfigVersions.systemPrompt,
-          metadata: agentConfigVersions.metadata,
-          updatedAt: agentConfigVersions.updatedAt,
-          id: agentConfigs.id,
-          namespace: agentConfigs.namespace,
-          createdAt: agentConfigs.createdAt,
-        })
+        .select(agentConfigColumns)
         .from(agentConfigVersions)
         .innerJoin(agentConfigs, eq(agentConfigVersions.agentConfigId, agentConfigs.id))
         .where(
           and(eq(agentConfigVersions.agentConfigId, id), eq(agentConfigVersions.version, version)),
         );
-      return row === undefined ? undefined : toAgentConfigVersion(row);
+      return row === undefined ? undefined : toAgentConfig(row);
     },
 
     async updateAgentConfig(id, req) {
@@ -235,7 +226,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const target = and(
         eq(agentConfigs.id, id),
         eq(agentConfigs.namespace, namespace),
-        parsed.version === undefined ? undefined : eq(agentConfigs.version, parsed.version),
+        parsed.version === undefined ? undefined : eq(agentConfigs.currentVersion, parsed.version),
       );
       const hasMutation =
         parsed.inference !== undefined ||
@@ -244,38 +235,69 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
 
       return db.transaction(async (tx) => {
         if (hasMutation) {
-          const timestamp = now();
-          const [row] = await tx
+          // Incrementing the identity's pointer locks this config row. That
+          // serializes unconditional writers and provides the optional CAS;
+          // the new snapshot is inserted before the transaction commits.
+          const [identity] = await tx
             .update(agentConfigs)
             .set({
-              ...(parsed.inference === undefined ? {} : { inference: parsed.inference }),
-              ...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
-              ...(parsed.metadata === undefined ? {} : { metadata: wrap(parsed.metadata) }),
-              version: sql`${agentConfigs.version} + 1`,
-              updatedAt: timestamp,
+              currentVersion: sql`${agentConfigs.currentVersion} + 1`,
             })
             .where(target)
-            .returning();
-          if (row !== undefined) {
-            await tx.insert(agentConfigVersions).values({
-              agentConfigId: row.id,
-              version: row.version,
-              inference: row.inference,
-              systemPrompt: row.systemPrompt,
-              metadata: row.metadata,
-              updatedAt: timestamp,
+            .returning({
+              id: agentConfigs.id,
+              namespace: agentConfigs.namespace,
+              nextVersion: agentConfigs.currentVersion,
+              createdAt: agentConfigs.createdAt,
             });
-            return toAgentConfig(row);
+          if (identity !== undefined) {
+            const [previous] = await tx
+              .select({
+                inference: agentConfigVersions.inference,
+                systemPrompt: agentConfigVersions.systemPrompt,
+                metadata: agentConfigVersions.metadata,
+              })
+              .from(agentConfigVersions)
+              .where(
+                and(
+                  eq(agentConfigVersions.agentConfigId, identity.id),
+                  eq(agentConfigVersions.version, identity.nextVersion - 1),
+                ),
+              );
+            if (previous === undefined) {
+              throw new Error(
+                `agent config ${identity.id} has no version ${identity.nextVersion - 1}`,
+              );
+            }
+
+            const version = {
+              version: identity.nextVersion,
+              inference: parsed.inference ?? previous.inference,
+              systemPrompt: parsed.systemPrompt ?? previous.systemPrompt,
+              metadata: parsed.metadata === undefined ? previous.metadata : wrap(parsed.metadata),
+              updatedAt: now(),
+            };
+            await tx.insert(agentConfigVersions).values({ agentConfigId: identity.id, ...version });
+            return toAgentConfig({
+              id: identity.id,
+              namespace: identity.namespace,
+              createdAt: identity.createdAt,
+              ...version,
+            });
           }
         } else {
-          const [row] = await tx.select().from(agentConfigs).where(target);
+          const [row] = await tx
+            .select(agentConfigColumns)
+            .from(agentConfigs)
+            .innerJoin(agentConfigVersions, currentAgentVersion)
+            .where(target);
           if (row !== undefined) return toAgentConfig(row);
         }
 
         // No updated row means unknown/foreign, or a failed version precondition.
         // Resolve under the same namespace so a foreign id never leaks existence.
         const [current] = await tx
-          .select({ version: agentConfigs.version })
+          .select({ version: agentConfigs.currentVersion })
           .from(agentConfigs)
           .where(and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace)));
         if (current === undefined) return undefined;
@@ -290,8 +312,9 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const scope = eq(agentConfigs.namespace, req.namespace);
       const page = await olderThanCursor(agentConfigs, scope, req.after);
       const rows = await db
-        .select()
+        .select(agentConfigColumns)
         .from(agentConfigs)
+        .innerJoin(agentConfigVersions, currentAgentVersion)
         .where(and(scope, page))
         .orderBy(desc(agentConfigs.createdAt), desc(agentConfigs.id))
         .limit(req.limit);
@@ -333,15 +356,23 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async createSession(req) {
       const parsed = CreateSessionRequest.parse(req);
       const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
+      const requestedAgentVersion =
+        parsed.agentConfigVersion === undefined
+          ? currentAgentVersion
+          : and(
+              eq(agentConfigVersions.agentConfigId, agentConfigs.id),
+              eq(agentConfigVersions.version, parsed.agentConfigVersion),
+            );
       // Config ids and namespaces are immutable and configs are never deleted,
-      // so this existence/ownership pre-check cannot go stale; the FK
-      // constraints remain as the structural backstop.
+      // so this existence/ownership check cannot go stale. Version snapshots
+      // are immutable, and the FK constraints remain as the backstop.
       // The checks are namespace-scoped: a session and its configs always
       // share one namespace, and a foreign config is "unknown" —
       // indistinguishable from nonexistent, so nothing leaks.
       const [agent] = await db
-        .select({ id: agentConfigs.id, version: agentConfigs.version })
+        .select({ version: agentConfigVersions.version })
         .from(agentConfigs)
+        .innerJoin(agentConfigVersions, requestedAgentVersion)
         .where(
           and(eq(agentConfigs.id, parsed.agentConfigId), eq(agentConfigs.namespace, namespace)),
         );

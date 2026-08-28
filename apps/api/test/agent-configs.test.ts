@@ -3,22 +3,13 @@
 // header source validation) is covered there and in app.test.ts; here
 // we pin this resource's wiring, materialization, and its own
 // fetch-then-check scoping.
-import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
+import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
-
-const ddl = ["20260820000000_init", "20260827000000_agent_config_versions"]
-  .map((name) =>
-    readFileSync(
-      new URL(`../../../packages/adapters/migrations/${name}/migration.sql`, import.meta.url),
-      "utf8",
-    ),
-  )
-  .join("\n");
 
 const RECIPE = {
   inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
@@ -31,7 +22,7 @@ let scoped: ReturnType<typeof buildApp>; // namespaceSource "header" over the SA
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(ddl);
+  await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   const base = { store, authToken: null, ping: async () => ({}) };
   const stream = { pollMs: 1000, heartbeatMs: 15_000 };

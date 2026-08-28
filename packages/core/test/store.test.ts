@@ -158,6 +158,23 @@ describe("sessions", () => {
     const result = CreateSessionRequest.safeParse({ agentConfigId: "ac1" });
     expect(result.success).toBe(false);
   });
+
+  it("accepts an optional positive agent config version", () => {
+    expect(
+      CreateSessionRequest.safeParse({
+        agentConfigId: "ac1",
+        agentConfigVersion: 2,
+        envConfigId: "ec1",
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateSessionRequest.safeParse({
+        agentConfigId: "ac1",
+        agentConfigVersion: 0,
+        envConfigId: "ec1",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("work items", () => {
