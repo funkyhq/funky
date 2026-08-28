@@ -57,6 +57,12 @@ export const DEFAULT_NAMESPACE = "default";
 // optimistic concurrency. Env configs remain immutable sandbox recipes.
 // Sessions pin the latest concrete agent version at creation, so later agent
 // updates cannot change the behavior of an existing session.
+//
+// Archive is the one terminal transition: it retires an agent config
+// without deleting it — the row stays readable and its versions stay
+// resolvable (sessions that pinned one keep running), but it accepts no
+// further update and no new session may reference it. There is no
+// unarchive, so nothing here spells one.
 
 export const CreateAgentConfigRequest = z.object({
   inference: InferenceConfig,
@@ -77,12 +83,24 @@ export const UpdateAgentConfigRequest = z.object({
 });
 export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
 
+// ArchiveAgent carries no payload — archiving is a transition, not an
+// edit, and the state it moves to is the only one there is. The scope
+// is all the request can say.
+export const ArchiveAgentConfigRequest = z.object({
+  namespace: z.string().min(1).optional(),
+});
+export type ArchiveAgentConfigRequest = z.infer<typeof ArchiveAgentConfigRequest>;
+
 export const AgentConfig = CreateAgentConfigRequest.extend({
   id: z.string(),
   namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
   version: z.number().int().min(1),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  // When the config was archived; absent means active. Absence is the
+  // fact itself (no archive happened), so it is stored as absence — and
+  // "archived" is a state with no exit, never a flag to toggle back.
+  archivedAt: z.iso.datetime().optional(),
 });
 export type AgentConfig = z.infer<typeof AgentConfig>;
 

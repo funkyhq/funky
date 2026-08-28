@@ -44,6 +44,9 @@ export const agentConfigs = pgTable("agent_configs", {
   // Pointer to the latest immutable snapshot.
   currentVersion: integer("current_version").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  // The terminal state, set once: null = active. Archiving lives on the
+  // identity, not on a version — it retires the config, not a snapshot.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
 });
 
 // Immutable snapshots of every agent config version.

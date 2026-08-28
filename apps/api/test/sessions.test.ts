@@ -94,6 +94,23 @@ describe("POST /v1/sessions", () => {
     expect((await res.json()).error.type).toBe("invalid_request_error");
   });
 
+  it("409s an archived agent config, while sessions already on it keep working", async () => {
+    const configs = await seedConfigs(app);
+    const sessionId = (await (await post(app, "/v1/sessions", configs)).json()).id;
+    expect((await post(app, `/v1/agent-configs/${configs.agentConfigId}/archive`)).status).toBe(
+      200,
+    );
+
+    const res = await post(app, "/v1/sessions", configs);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.type).toBe("conflict_error");
+
+    // Existing sessions continue: the archive closes the door to new ones.
+    const message = await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
+    expect(message.status).toBe(202);
+    expect((await message.json()).kind).toBe("started");
+  });
+
   it("400s a foreign-namespace config identically to a dangling one", async () => {
     const configs = await seedConfigs(scoped, asTenant("tenant-a"));
     const res = await post(scoped, "/v1/sessions", configs, asTenant("tenant-b"));

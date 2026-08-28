@@ -26,7 +26,7 @@ export type {
   SandboxInfo,
   SandboxProvider,
 } from "./ports/sandbox-provider";
-export { FencedError, VersionConflictError } from "./ports/store";
+export { ArchivedError, FencedError, VersionConflictError } from "./ports/store";
 export type {
   Claim,
   CommitStepRequest,
