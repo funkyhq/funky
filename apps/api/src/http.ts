@@ -5,11 +5,15 @@
 import type { Context } from "hono";
 
 export type ErrorType =
-  "invalid_request_error" | "authentication_error" | "not_found_error" | "api_error";
+  | "invalid_request_error"
+  | "authentication_error"
+  | "not_found_error"
+  | "conflict_error"
+  | "api_error";
 
 export function errorResponse(
   c: Context,
-  status: 400 | 401 | 404 | 500,
+  status: 400 | 401 | 404 | 409 | 500,
   type: ErrorType,
   message: string,
 ) {

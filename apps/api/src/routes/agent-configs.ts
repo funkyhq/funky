@@ -1,23 +1,24 @@
 // apps/api/src/routes/agent-configs.ts
-// The agent-config resource — write-once behavior recipes (inference +
-// system prompt), tenant-private like every config. Same shape as
-// env-configs.ts: create, get, list, core schemas as the wire format,
-// the middleware's namespace stamped on create and checked on read.
+// The agent-config resource — versioned behavior recipes (inference +
+// system prompt), tenant-private like every config. Updates follow
+// UpdateAgent semantics: partial replacement and an optional version
+// precondition for optimistic concurrency.
 import { Hono } from "hono";
-import { CreateAgentConfigRequest } from "@funky/core";
-import type { Store } from "@funky/agent";
+import { CreateAgentConfigRequest, UpdateAgentConfigRequest } from "@funky/core";
+import { type Store, VersionConflictError } from "@funky/agent";
 import { errorResponse } from "../http";
 import { ListQuery, page, validate } from "./common";
 
 /** The slice of the harness Store this resource needs. */
 export type AgentConfigStore = Pick<
   Store,
-  "createAgentConfig" | "getAgentConfig" | "listAgentConfigs"
+  "createAgentConfig" | "getAgentConfig" | "listAgentConfigs" | "updateAgentConfig"
 >;
 
 type Env = { Variables: { requestId: string; namespace: string } };
 
 const WireCreateAgentConfig = CreateAgentConfigRequest.omit({ namespace: true });
+const WireUpdateAgentConfig = UpdateAgentConfigRequest.omit({ namespace: true });
 
 export function agentConfigRoutes(store: AgentConfigStore) {
   const r = new Hono<Env>();
@@ -60,6 +61,25 @@ export function agentConfigRoutes(store: AgentConfigStore) {
       return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
     }
     return c.json(config);
+  });
+
+  r.post("/:id", validate("json", WireUpdateAgentConfig), async (c) => {
+    const id = c.req.param("id");
+    try {
+      const config = await store.updateAgentConfig(id, {
+        ...c.req.valid("json"),
+        namespace: c.get("namespace"),
+      });
+      if (config === undefined) {
+        return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
+      }
+      return c.json(config);
+    } catch (err) {
+      if (err instanceof VersionConflictError) {
+        return errorResponse(c, 409, "conflict_error", err.message);
+      }
+      throw err;
+    }
   });
 
   return r;
