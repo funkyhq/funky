@@ -13,7 +13,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { CreateSessionRequest, UserMessage } from "@funky/core";
-import type { Store } from "@funky/agent";
+import { ArchivedError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
 import { validate } from "./common";
 
@@ -54,6 +54,12 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
     try {
       id = await store.createSession({ ...c.req.valid("json"), namespace: c.get("namespace") });
     } catch (err) {
+      // An archived agent config exists and is readable — it just cannot
+      // be referenced by anything new. That is a conflict with its
+      // terminal state (409), not a malformed request (400).
+      if (err instanceof ArchivedError) {
+        return errorResponse(c, 409, "conflict_error", err.message);
+      }
       // The store's namespace-scoped existence check: a dangling config
       // ref and a foreign-namespace one throw the same "unknown".
       if (err instanceof Error && err.message.startsWith("unknown ")) {

@@ -249,6 +249,66 @@ describe("POST /v1/agent-configs/:id", () => {
   });
 });
 
+describe("POST /v1/agent-configs/:id/archive", () => {
+  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
+
+  it("archives the config and returns it with the mark, 200", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const res = await post(app, `/v1/agent-configs/${created.id}/archive`);
+    expect(res.status).toBe(200);
+    const archived = await res.json();
+    // The config is retired, not edited: same version, same payload.
+    expect(archived).toMatchObject({ ...created, archivedAt: expect.any(String) });
+
+    const fetched = await get(app, `/v1/agent-configs/${created.id}`);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.json()).toEqual(archived);
+  });
+
+  it("is idempotent — re-archiving answers 200 with the first archivedAt", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const first = await (await post(app, `/v1/agent-configs/${created.id}/archive`)).json();
+    const again = await post(app, `/v1/agent-configs/${created.id}/archive`);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual(first);
+  });
+
+  it("409s a later update — the config is read-only, and there is no way back", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    await post(app, `/v1/agent-configs/${created.id}/archive`);
+
+    const res = await post(app, `/v1/agent-configs/${created.id}`, { systemPrompt: "after" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.type).toBe("conflict_error");
+
+    const fetched = await (await get(app, `/v1/agent-configs/${created.id}`)).json();
+    expect(fetched.systemPrompt).toBe(RECIPE.systemPrompt);
+  });
+
+  it("404s unknown and foreign ids without archiving the foreign config", async () => {
+    expect(
+      (await post(scoped, "/v1/agent-configs/nope/archive", undefined, asTenant("arch-a"))).status,
+    ).toBe(404);
+
+    const created = await (
+      await post(scoped, "/v1/agent-configs", RECIPE, asTenant("arch-a"))
+    ).json();
+    const foreign = await post(
+      scoped,
+      `/v1/agent-configs/${created.id}/archive`,
+      undefined,
+      asTenant("arch-b"),
+    );
+    expect(foreign.status).toBe(404);
+    expect((await foreign.json()).error.type).toBe("not_found_error");
+
+    const own = await (
+      await get(scoped, `/v1/agent-configs/${created.id}`, asTenant("arch-a"))
+    ).json();
+    expect("archivedAt" in own).toBe(false);
+  });
+});
+
 describe("GET /v1/agent-configs/:id", () => {
   it("404s an unknown id with the error envelope", async () => {
     const res = await get(app, "/v1/agent-configs/nope");

@@ -14,6 +14,7 @@ import {
   type UserMessage,
 } from "@funky/core";
 import {
+  ArchivedError,
   type CommitStepRequest,
   FencedError,
   type Store,
@@ -271,6 +272,164 @@ export function describeStoreConformance(
       it("returns undefined for an unknown config id", async () => {
         expect(await store.getAgentConfig("nope")).toBeUndefined();
         expect(await store.getEnvConfig("nope")).toBeUndefined();
+      });
+    });
+
+    describe("archiving agent configs", () => {
+      it("marks the config archived without touching what it says", async () => {
+        const id = await newAgent({ systemPrompt: "v1" });
+        await store.updateAgentConfig(id, { systemPrompt: "v2" });
+        const before = await store.getAgentConfig(id);
+        clock.advance(1_000);
+
+        const archived = await store.archiveAgentConfig(id, {});
+
+        // Archiving retires the config; it does not edit it — same version,
+        // same payload, same updatedAt, one new fact.
+        expect(archived).toMatchObject({ ...before, archivedAt: expect.any(String) });
+        expect(await store.getAgentConfig(id)).toEqual(archived);
+      });
+
+      it("stores absence as absence — an unarchived config has no archivedAt key", async () => {
+        const config = await store.getAgentConfig(await newAgent());
+        expect(config).toBeDefined();
+        expect("archivedAt" in config!).toBe(false);
+      });
+
+      it("is idempotent — the terminal state has no second transition", async () => {
+        const id = await newAgent();
+        const first = await store.archiveAgentConfig(id, {});
+        clock.advance(1_000);
+        const second = await store.archiveAgentConfig(id, {});
+
+        expect(second).toEqual(first);
+        expect(second?.archivedAt).toBe(first?.archivedAt);
+      });
+
+      it("makes the config read-only: every mutation throws ArchivedError", async () => {
+        const id = await newAgent({ systemPrompt: "final" });
+        await store.archiveAgentConfig(id, {});
+
+        for (const req of [
+          { systemPrompt: "after" },
+          { inference: { provider: "fake", model: "m2" } },
+          { metadata: { note: "after" } },
+          { systemPrompt: "after", version: 1 },
+        ]) {
+          await expect(store.updateAgentConfig(id, req)).rejects.toMatchObject({
+            name: "ArchivedError",
+            configId: id,
+          });
+        }
+        expect(await store.getAgentConfig(id)).toMatchObject({ systemPrompt: "final", version: 1 });
+      });
+
+      it("reports archived before stale — the version is not what the caller can fix", async () => {
+        const id = await newAgent();
+        await store.updateAgentConfig(id, { systemPrompt: "v2" });
+        await store.archiveAgentConfig(id, {});
+
+        await expect(
+          store.updateAgentConfig(id, { systemPrompt: "x", version: 1 }),
+        ).rejects.toBeInstanceOf(ArchivedError);
+      });
+
+      it("keeps an empty update a read — it mutates nothing, so nothing is forbidden", async () => {
+        const id = await newAgent();
+        const archived = await store.archiveAgentConfig(id, {});
+        expect(await store.updateAgentConfig(id, {})).toEqual(archived);
+      });
+
+      it("stays readable — get, every version, and the list still answer", async () => {
+        const id = await newAgent({ systemPrompt: "v1" });
+        await store.updateAgentConfig(id, { systemPrompt: "v2" });
+        const archived = await store.archiveAgentConfig(id, {});
+
+        expect(await store.getAgentConfig(id)).toEqual(archived);
+        expect(
+          (await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 })).map(
+            (c) => c.id,
+          ),
+        ).toContain(id);
+        // The identity retired, not a snapshot: every version reads back,
+        // and each one carries the mark.
+        for (const version of [1, 2]) {
+          expect(await store.getAgentConfigVersion(id, version)).toMatchObject({
+            version,
+            archivedAt: archived?.archivedAt,
+          });
+        }
+      });
+
+      it("refuses a new session naming an archived config, at any version", async () => {
+        const agentConfigId = await newAgent();
+        await store.updateAgentConfig(agentConfigId, { systemPrompt: "v2" });
+        const envConfigId = await store.createEnvConfig({});
+        await store.archiveAgentConfig(agentConfigId, {});
+
+        await expect(store.createSession({ agentConfigId, envConfigId })).rejects.toBeInstanceOf(
+          ArchivedError,
+        );
+        await expect(
+          store.createSession({ agentConfigId, agentConfigVersion: 1, envConfigId }),
+        ).rejects.toBeInstanceOf(ArchivedError);
+      });
+
+      it("lets sessions that already reference it run on", async () => {
+        const agentConfigId = await newAgent({ systemPrompt: "pinned" });
+        const envConfigId = await store.createEnvConfig({});
+        const sessionId = await store.createSession({ agentConfigId, envConfigId });
+        await store.archiveAgentConfig(agentConfigId, {});
+
+        // The session still resolves the behavior it pinned, and still runs:
+        // archiving stops new references, not existing work.
+        const session = await store.getSession(sessionId);
+        expect(
+          (await store.getAgentConfigVersion(agentConfigId, session!.agentConfigVersion))
+            ?.systemPrompt,
+        ).toBe("pinned");
+        const { itemId, token } = await startAndClaim(sessionId);
+        await store.commitStep({
+          itemId,
+          token,
+          append: [assistant("still here")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(await store.readEntries(sessionId)).toHaveLength(2);
+      });
+
+      it("settles a create/archive race one of the two legal ways", async () => {
+        const agentConfigId = await newAgent();
+        const envConfigId = await store.createEnvConfig({});
+
+        const [created, archived] = await Promise.allSettled([
+          store.createSession({ agentConfigId, envConfigId }),
+          store.archiveAgentConfig(agentConfigId, {}),
+        ]);
+
+        // The archive always lands: nothing outranks the terminal state.
+        expect(archived.status).toBe("fulfilled");
+        // The session either committed ahead of it or was refused by it —
+        // a third outcome (a deadlock, a session on an archived config)
+        // would mean the two writes are not serialized.
+        if (created.status === "fulfilled") {
+          expect(await store.getSession(created.value)).toBeDefined();
+        } else {
+          expect(created.reason).toBeInstanceOf(ArchivedError);
+        }
+        // Whoever won, the door is shut behind them.
+        await expect(store.createSession({ agentConfigId, envConfigId })).rejects.toBeInstanceOf(
+          ArchivedError,
+        );
+      });
+
+      it("treats an unknown or foreign archive target as absent", async () => {
+        const id = await newAgent({ namespace: "tenant-a" });
+        expect(await store.archiveAgentConfig("nope", { namespace: "tenant-a" })).toBeUndefined();
+        expect(await store.archiveAgentConfig(id, { namespace: "tenant-b" })).toBeUndefined();
+        // The foreign archive touched nothing.
+        expect(await store.getAgentConfig(id)).toMatchObject({ namespace: "tenant-a" });
+        expect("archivedAt" in (await store.getAgentConfig(id))!).toBe(false);
       });
     });
 

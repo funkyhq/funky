@@ -1,6 +1,7 @@
 import type {
   AgentConfig,
   AgentMessage,
+  ArchiveAgentConfigRequest,
   ConfigId,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
@@ -58,8 +59,26 @@ export interface Store {
    * mismatch throws VersionConflictError, while an unknown or foreign id is
    * undefined. Every successful mutation increments the stored version; a
    * request containing only the precondition is a read-like no-op.
+   *
+   * An archived config is read-only: a mutation throws ArchivedError, and
+   * that verdict precedes a stale version's — archived is terminal, so
+   * retrying with a fresher version would only fail again.
    */
   updateAgentConfig(id: ConfigId, req: UpdateAgentConfigRequest): Promise<AgentConfig | undefined>;
+  /**
+   * Archive one namespace's agent config — the terminal transition, and
+   * the only state change that is not an edit. The row stays readable and
+   * every version stays resolvable, so sessions that already pinned one
+   * run on untouched; what stops is future writes (updateAgentConfig
+   * throws ArchivedError) and future references (createSession rejects
+   * it). There is no unarchive, which is what makes this idempotent: a
+   * second archive is a no-op returning the first one's archivedAt.
+   * Unknown and foreign ids are undefined, like every other scoped read.
+   */
+  archiveAgentConfig(
+    id: ConfigId,
+    req: ArchiveAgentConfigRequest,
+  ): Promise<AgentConfig | undefined>;
   /** One namespace's agent configs, newest first — see ListConfigsRequest. */
   listAgentConfigs(req: ListConfigsRequest): Promise<AgentConfig[]>;
   createEnvConfig(req: CreateEnvConfigRequest): Promise<ConfigId>;
@@ -71,7 +90,10 @@ export interface Store {
 
   /** Pins the requested agent version, or the latest when omitted. Rejects
    *  unknown configs or versions, with namespace-scoped checks so foreign ids
-   *  remain indistinguishable from nonexistent ones. */
+   *  remain indistinguishable from nonexistent ones, and an archived agent
+   *  config with ArchivedError. Archiving and creating are serialized on the
+   *  agent config row: a session either commits before the archive or sees
+   *  it — never lands after one. */
   createSession(req: CreateSessionRequest): Promise<SessionId>;
   getSession(id: SessionId): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the
@@ -191,6 +213,17 @@ export class FencedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "FencedError";
+  }
+}
+
+/**
+ * Thrown when a write targets an archived config. Terminal, unlike
+ * VersionConflictError: no retry of this request can ever succeed.
+ */
+export class ArchivedError extends Error {
+  constructor(readonly configId: ConfigId) {
+    super(`agent config ${configId} is archived`);
+    this.name = "ArchivedError";
   }
 }
 

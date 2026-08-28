@@ -8,6 +8,10 @@
 //   per-session log stays gapless and monotonic.
 // - Lock order is item → session everywhere an item is involved; no path
 //   takes session → item, so no cycle exists.
+// - createSession holds a FOR SHARE lock on its agent config row until it
+//   commits, and archiveAgentConfig's UPDATE takes that row exclusively:
+//   the two serialize, so no session is born against an archived config.
+//   Archive touches nothing else, so this adds no cycle either.
 // - claimItem uses FOR UPDATE SKIP LOCKED: contended claimers never
 //   queue behind each other, exactly one wins a given item.
 // - Fencing is token + live lease, symmetric across heartbeat and
@@ -29,6 +33,7 @@ import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   AgentConfig,
   AgentMessage,
+  ArchiveAgentConfigRequest,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
   CreateSessionRequest,
@@ -44,6 +49,7 @@ import {
   WorkItem,
 } from "@funky/core";
 import {
+  ArchivedError,
   type CommitStepRequest,
   FencedError,
   type ListConfigsRequest,
@@ -79,6 +85,7 @@ type AgentConfigRow = Omit<typeof agentConfigVersions.$inferSelect, "agentConfig
   id: string;
   namespace: string;
   createdAt: Date;
+  archivedAt: Date | null;
 };
 
 const agentConfigColumns = {
@@ -90,6 +97,7 @@ const agentConfigColumns = {
   id: agentConfigs.id,
   namespace: agentConfigs.namespace,
   createdAt: agentConfigs.createdAt,
+  archivedAt: agentConfigs.archivedAt,
 };
 
 const currentAgentVersion = and(
@@ -107,6 +115,8 @@ const toAgentConfig = (row: AgentConfigRow): AgentConfig =>
     version: row.version,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
+    // SQL NULL is the absence of an archive, and absence stays absent.
+    ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
 const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
@@ -223,11 +233,15 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async updateAgentConfig(id, req) {
       const parsed = UpdateAgentConfigRequest.parse(req);
       const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
+      const scope = and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace));
       const target = and(
-        eq(agentConfigs.id, id),
-        eq(agentConfigs.namespace, namespace),
+        scope,
         parsed.version === undefined ? undefined : eq(agentConfigs.currentVersion, parsed.version),
       );
+      // Read-only means exactly this: an archived row matches no mutation.
+      // The no-op branch keeps reading from `target` — archiving stops
+      // writes, not reads.
+      const mutable = and(target, isNull(agentConfigs.archivedAt));
       const hasMutation =
         parsed.inference !== undefined ||
         parsed.systemPrompt !== undefined ||
@@ -243,7 +257,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             .set({
               currentVersion: sql`${agentConfigs.currentVersion} + 1`,
             })
-            .where(target)
+            .where(mutable)
             .returning({
               id: agentConfigs.id,
               namespace: agentConfigs.namespace,
@@ -282,6 +296,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               id: identity.id,
               namespace: identity.namespace,
               createdAt: identity.createdAt,
+              archivedAt: null, // only an unarchived row can match `mutable`
               ...version,
             });
           }
@@ -294,17 +309,44 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           if (row !== undefined) return toAgentConfig(row);
         }
 
-        // No updated row means unknown/foreign, or a failed version precondition.
-        // Resolve under the same namespace so a foreign id never leaks existence.
+        // No updated row means unknown/foreign, archived, or a failed version
+        // precondition. Resolve under the same namespace so a foreign id never
+        // leaks existence.
         const [current] = await tx
-          .select({ version: agentConfigs.currentVersion })
+          .select({ version: agentConfigs.currentVersion, archivedAt: agentConfigs.archivedAt })
           .from(agentConfigs)
-          .where(and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace)));
+          .where(scope);
         if (current === undefined) return undefined;
+        // Archived outranks the version verdict: it is terminal, so
+        // "retry with the current version" would be a lie.
+        if (current.archivedAt !== null) throw new ArchivedError(id);
         if (parsed.version !== undefined) {
           throw new VersionConflictError(parsed.version, current.version);
         }
         throw new Error(`agent config ${id} was not updated`);
+      });
+    },
+
+    async archiveAgentConfig(id, req) {
+      const parsed = ArchiveAgentConfigRequest.parse(req);
+      const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
+      const scope = and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace));
+      return db.transaction(async (tx) => {
+        // Idempotent by predicate rather than by read-then-write: only an
+        // unarchived row is stamped, so a second archive — or a racing one —
+        // keeps the first archivedAt. The state has no exit, so there is
+        // nothing else a repeat could mean. This UPDATE is also the row lock
+        // createSession's FOR SHARE waits on.
+        await tx
+          .update(agentConfigs)
+          .set({ archivedAt: now() })
+          .where(and(scope, isNull(agentConfigs.archivedAt)));
+        const [row] = await tx
+          .select(agentConfigColumns)
+          .from(agentConfigs)
+          .innerJoin(agentConfigVersions, currentAgentVersion)
+          .where(scope);
+        return row === undefined ? undefined : toAgentConfig(row);
       });
     },
 
@@ -363,34 +405,44 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               eq(agentConfigVersions.agentConfigId, agentConfigs.id),
               eq(agentConfigVersions.version, parsed.agentConfigVersion),
             );
-      // Config ids and namespaces are immutable and configs are never deleted,
-      // so this existence/ownership check cannot go stale. Version snapshots
-      // are immutable, and the FK constraints remain as the backstop.
-      // The checks are namespace-scoped: a session and its configs always
-      // share one namespace, and a foreign config is "unknown" —
-      // indistinguishable from nonexistent, so nothing leaks.
-      const [agent] = await db
-        .select({ version: agentConfigVersions.version })
-        .from(agentConfigs)
-        .innerJoin(agentConfigVersions, requestedAgentVersion)
-        .where(
-          and(eq(agentConfigs.id, parsed.agentConfigId), eq(agentConfigs.namespace, namespace)),
-        );
-      if (!agent) throw new Error(`unknown agent config: ${parsed.agentConfigId}`);
-      const [env] = await db
-        .select({ id: envConfigs.id })
-        .from(envConfigs)
-        .where(and(eq(envConfigs.id, parsed.envConfigId), eq(envConfigs.namespace, namespace)));
-      if (!env) throw new Error(`unknown env config: ${parsed.envConfigId}`);
       const id = randomUUID();
-      await db.insert(sessions).values({
-        id,
-        agentConfigId: parsed.agentConfigId,
-        agentConfigVersion: agent.version,
-        envConfigId: parsed.envConfigId,
-        namespace,
-        metadata: wrap(parsed.metadata),
-        createdAt: now(),
+      // Ids, namespaces, and version snapshots are immutable and configs are
+      // never deleted, so existence and ownership cannot go stale; the FK
+      // constraints remain as the backstop. The checks are namespace-scoped:
+      // a session and its configs always share one namespace, and a foreign
+      // config is "unknown" — indistinguishable from nonexistent, so nothing
+      // leaks.
+      //
+      // Archive is the one fact that CAN change under a check, so the agent
+      // row is read FOR SHARE and the lock held to the insert: a concurrent
+      // archive either waits behind this transaction or is already committed
+      // and read here. "New sessions cannot reference an archived config" is
+      // therefore structural, not a window between a check and a write.
+      await db.transaction(async (tx) => {
+        const [agent] = await tx
+          .select({ version: agentConfigVersions.version, archivedAt: agentConfigs.archivedAt })
+          .from(agentConfigs)
+          .innerJoin(agentConfigVersions, requestedAgentVersion)
+          .where(
+            and(eq(agentConfigs.id, parsed.agentConfigId), eq(agentConfigs.namespace, namespace)),
+          )
+          .for("share", { of: agentConfigs });
+        if (!agent) throw new Error(`unknown agent config: ${parsed.agentConfigId}`);
+        if (agent.archivedAt !== null) throw new ArchivedError(parsed.agentConfigId);
+        const [env] = await tx
+          .select({ id: envConfigs.id })
+          .from(envConfigs)
+          .where(and(eq(envConfigs.id, parsed.envConfigId), eq(envConfigs.namespace, namespace)));
+        if (!env) throw new Error(`unknown env config: ${parsed.envConfigId}`);
+        await tx.insert(sessions).values({
+          id,
+          agentConfigId: parsed.agentConfigId,
+          agentConfigVersion: agent.version,
+          envConfigId: parsed.envConfigId,
+          namespace,
+          metadata: wrap(parsed.metadata),
+          createdAt: now(),
+        });
       });
       return id;
     },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentConfig,
+  ArchiveAgentConfigRequest,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
   CreateSessionRequest,
@@ -84,6 +85,40 @@ describe("configs", () => {
   it("rejects an invalid update version or inference config", () => {
     expect(UpdateAgentConfigRequest.safeParse({ version: 0 }).success).toBe(false);
     expect(UpdateAgentConfigRequest.safeParse({ inference: "model-only" }).success).toBe(false);
+  });
+
+  it("round-trips an archived agent config — the mark is a timestamp, not a flag", () => {
+    const config = {
+      id: "ac1",
+      inference: { provider: "fake", model: "scripted" },
+      systemPrompt: "s",
+      namespace: "default",
+      version: 2,
+      createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-12T12:00:00Z",
+      archivedAt: "2026-08-13T12:00:00Z",
+    };
+    expect(roundTrip(AgentConfig, config)).toEqual(config);
+  });
+
+  it("rejects a null or boolean archivedAt — absence is spelled by absence", () => {
+    const config = {
+      id: "ac1",
+      inference: { provider: "fake", model: "scripted" },
+      systemPrompt: "s",
+      namespace: "default",
+      version: 1,
+      createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-11T12:00:00Z",
+    };
+    expect(AgentConfig.safeParse({ ...config, archivedAt: null }).success).toBe(false);
+    expect(AgentConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
+  });
+
+  it("accepts an archive request carrying nothing but its scope", () => {
+    expect(ArchiveAgentConfigRequest.safeParse({}).success).toBe(true);
+    expect(ArchiveAgentConfigRequest.safeParse({ namespace: "tenant-a" }).success).toBe(true);
+    expect(ArchiveAgentConfigRequest.safeParse({ namespace: "" }).success).toBe(false);
   });
 });
 
