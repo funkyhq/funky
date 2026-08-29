@@ -40,15 +40,15 @@ export type InputId = string;
 // --- namespace ---
 
 // The tenancy boundary, driven by the managed service's trusted gateway
-// (an OSS deployment runs single-tenant and never sets it). Ownership is
-// exactly-one and lives as a fact on the three ownable row types —
-// decided at create, immutable, resolved to DEFAULT_NAMESPACE when
-// absent, like every other materialized default. Work items, entries,
-// and pending inputs derive theirs through sessionId; the worker and
-// the driver never read it. Enforcement is split: the store guarantees
-// a session and its configs share one namespace (a foreign config is
-// "unknown" — indistinguishable from nonexistent, so nothing leaks);
-// scoping reads to a caller's namespace is the api's fetch-then-check.
+// (an OSS deployment runs single-tenant). Ownership is exactly-one and
+// lives as a fact on the three ownable row types — decided at create and
+// immutable. Agent config creation requires that ownership explicitly;
+// env configs and sessions still resolve absence to DEFAULT_NAMESPACE.
+// Work items, entries, and pending inputs derive theirs through sessionId;
+// the worker and the driver never read it. The store guarantees a session
+// and its configs share one namespace, and scopes config references by the
+// namespace they carry; a foreign config is "unknown" — indistinguishable
+// from nonexistent, so nothing leaks.
 export const DEFAULT_NAMESPACE = "default";
 
 // --- configs ---
@@ -64,36 +64,46 @@ export const DEFAULT_NAMESPACE = "default";
 // further update and no new session may reference it. There is no
 // unarchive, so nothing here spells one.
 
+/** A namespace-scoped reference to an agent config. */
+export const AgentConfigRef = z.object({
+  namespace: z.string().min(1),
+  id: z.string().min(1),
+});
+export type AgentConfigRef = z.infer<typeof AgentConfigRef>;
+
+/** A namespace-scoped reference to one immutable agent config version. */
+export const AgentConfigVersionRef = AgentConfigRef.extend({
+  version: z.number().int().min(1),
+});
+export type AgentConfigVersionRef = z.infer<typeof AgentConfigVersionRef>;
+
+/** Lists one namespace's agent configs with keyset pagination. */
+export const ListAgentConfigsRequest = z.object({
+  namespace: z.string().min(1),
+  limit: z.number().int().min(1),
+  after: z.string().min(1).optional(),
+});
+export type ListAgentConfigsRequest = z.infer<typeof ListAgentConfigsRequest>;
+
 export const CreateAgentConfigRequest = z.object({
+  namespace: z.string().min(1),
   inference: InferenceConfig,
   systemPrompt: z.string(),
-  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
 
-// UpdateAgent-style partial replacement: omission preserves a field. `version`
-// is a precondition, not stored payload — omit it for last-write-wins.
 export const UpdateAgentConfigRequest = z.object({
   inference: InferenceConfig.optional(),
   systemPrompt: z.string().optional(),
-  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
+  // Optional optimistic-concurrency precondition: version 3 updates only if 3 is current.
   version: z.number().int().min(1).optional(),
 });
 export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
 
-// ArchiveAgent carries no payload — archiving is a transition, not an
-// edit, and the state it moves to is the only one there is. The scope
-// is all the request can say.
-export const ArchiveAgentConfigRequest = z.object({
-  namespace: z.string().min(1).optional(),
-});
-export type ArchiveAgentConfigRequest = z.infer<typeof ArchiveAgentConfigRequest>;
-
 export const AgentConfig = CreateAgentConfigRequest.extend({
   id: z.string(),
-  namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
   version: z.number().int().min(1),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

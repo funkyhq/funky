@@ -1,7 +1,8 @@
 import type {
   AgentConfig,
+  AgentConfigRef,
+  AgentConfigVersionRef,
   AgentMessage,
-  ArchiveAgentConfigRequest,
   ConfigId,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
@@ -10,6 +11,7 @@ import type {
   InputId,
   IntakeResult,
   ItemId,
+  ListAgentConfigsRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -49,10 +51,10 @@ import type { RunEndStatus } from "../engine/next-action";
 export interface Store {
   // --- configs ---
 
-  createAgentConfig(req: CreateAgentConfigRequest): Promise<ConfigId>;
-  getAgentConfig(id: ConfigId): Promise<AgentConfig | undefined>;
-  /** An immutable historical snapshot; undefined for an unknown id/version. */
-  getAgentConfigVersion(id: ConfigId, version: number): Promise<AgentConfig | undefined>;
+  /** Create the first version of an agent config. Namespace must be specified. */
+  createAgentConfig(req: CreateAgentConfigRequest): Promise<AgentConfigRef>;
+  /** Returns the latest config, or the exact version when the ref specifies one. */
+  getAgentConfig(ref: AgentConfigRef | AgentConfigVersionRef): Promise<AgentConfig | undefined>;
   /**
    * Partially update one namespace's agent config. Omitted fields are
    * preserved. A supplied version is an optimistic-concurrency precondition;
@@ -64,7 +66,10 @@ export interface Store {
    * that verdict precedes a stale version's — archived is terminal, so
    * retrying with a fresher version would only fail again.
    */
-  updateAgentConfig(id: ConfigId, req: UpdateAgentConfigRequest): Promise<AgentConfig | undefined>;
+  updateAgentConfig(
+    ref: AgentConfigRef,
+    req: UpdateAgentConfigRequest,
+  ): Promise<AgentConfig | undefined>;
   /**
    * Archive one namespace's agent config — the terminal transition, and
    * the only state change that is not an edit. The row stays readable and
@@ -73,14 +78,12 @@ export interface Store {
    * throws ArchivedError) and future references (createSession rejects
    * it). There is no unarchive, which is what makes this idempotent: a
    * second archive is a no-op returning the first one's archivedAt.
-   * Unknown and foreign ids are undefined, like every other scoped read.
    */
-  archiveAgentConfig(
-    id: ConfigId,
-    req: ArchiveAgentConfigRequest,
-  ): Promise<AgentConfig | undefined>;
-  /** One namespace's agent configs, newest first — see ListConfigsRequest. */
-  listAgentConfigs(req: ListConfigsRequest): Promise<AgentConfig[]>;
+  archiveAgentConfig(ref: AgentConfigRef): Promise<AgentConfig | undefined>;
+  /** One namespace's agent configs, newest first — see ListAgentConfigsRequest. */
+  listAgentConfigs(req: ListAgentConfigsRequest): Promise<AgentConfig[]>;
+
+  /** Create the environment config. Namespace must be specified */
   createEnvConfig(req: CreateEnvConfigRequest): Promise<ConfigId>;
   getEnvConfig(id: ConfigId): Promise<EnvConfig | undefined>;
   /** One namespace's env configs, newest first — see ListConfigsRequest. */
@@ -173,8 +176,8 @@ export interface Store {
 }
 
 /**
- * The config list reads' argument, shared by both because the two config
- * tables page identically.
+ * The env config list read's argument. Agent configs use the equivalent
+ * core ListAgentConfigsRequest vocabulary.
  *
  * `namespace` is required, and it is the one read whose tenancy the
  * store enforces rather than the api: a list has no id to fetch and
