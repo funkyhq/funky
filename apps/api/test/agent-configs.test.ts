@@ -2,7 +2,7 @@
 // pattern as env-configs.test.ts. The middleware machinery (auth,
 // header source validation) is covered there and in app.test.ts; here
 // we pin this resource's wiring, materialization, and its own
-// fetch-then-check scoping.
+// namespace-scoped Store references.
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

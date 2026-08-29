@@ -8,6 +8,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  type AgentConfigRef,
   type AssistantMessage,
   type CreateAgentConfigRequest,
   DEFAULT_NAMESPACE,
@@ -50,8 +51,11 @@ export function describeStoreConformance(
       ({ store, clock } = await makeHarness());
     });
 
-    async function newAgent(overrides: Partial<CreateAgentConfigRequest> = {}): Promise<string> {
+    async function newAgent(
+      overrides: Partial<CreateAgentConfigRequest> = {},
+    ): Promise<AgentConfigRef> {
       return store.createAgentConfig({
+        namespace: DEFAULT_NAMESPACE,
         inference: { provider: "fake", model: "m" },
         systemPrompt: "s",
         ...overrides,
@@ -59,11 +63,11 @@ export function describeStoreConformance(
     }
 
     async function newSession(): Promise<string> {
-      const agentConfigId = await newAgent({
+      const agentConfigRef = await newAgent({
         inference: { provider: "fake", model: "scripted" },
       });
       const envConfigId = await store.createEnvConfig({});
-      return store.createSession({ agentConfigId, envConfigId });
+      return store.createSession({ agentConfigId: agentConfigRef.id, envConfigId });
     }
 
     /** intake must have started a run; returns the claimed item + token. */
@@ -77,26 +81,28 @@ export function describeStoreConformance(
 
     describe("configs", () => {
       it("round-trips an agent config through create and get", async () => {
-        const id = await store.createAgentConfig({
+        const ref = await store.createAgentConfig({
+          namespace: DEFAULT_NAMESPACE,
           inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
           systemPrompt: "You are helpful.",
           metadata: { team: "growth" },
         });
-        const config = await store.getAgentConfig(id);
+        const config = await store.getAgentConfig(ref);
         expect(config).toMatchObject({
-          id,
+          id: ref.id,
+          namespace: ref.namespace,
           inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
           systemPrompt: "You are helpful.",
           metadata: { team: "growth" },
         });
         expect(config?.createdAt).toMatch(/T.*Z$/);
         expect(config?.version).toBe(1);
-        expect(await store.getAgentConfigVersion(id, 1)).toEqual(config);
+        expect(await store.getAgentConfig({ ...ref, version: 1 })).toEqual(config);
       });
 
       it("stores absence as absence — no metadata or sampling keys materialize", async () => {
-        const id = await newAgent();
-        const config = await store.getAgentConfig(id);
+        const ref = await newAgent();
+        const config = await store.getAgentConfig(ref);
         expect(config).toBeDefined();
         expect("metadata" in config!).toBe(false);
         expect("maxTokens" in config!.inference).toBe(false);
@@ -104,8 +110,8 @@ export function describeStoreConformance(
       });
 
       it("keeps JSON null metadata distinct from absent metadata", async () => {
-        const id = await newAgent({ metadata: null });
-        const config = await store.getAgentConfig(id);
+        const ref = await newAgent({ metadata: null });
+        const config = await store.getAgentConfig(ref);
         expect(config).toBeDefined();
         expect("metadata" in config!).toBe(true);
         expect(config!.metadata).toBeNull();
@@ -114,6 +120,7 @@ export function describeStoreConformance(
       it("rejects an invalid create request at the boundary", async () => {
         await expect(
           store.createAgentConfig({
+            namespace: DEFAULT_NAMESPACE,
             // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
             inference: "claude-sonnet-5" as any,
             systemPrompt: "s",
@@ -122,21 +129,21 @@ export function describeStoreConformance(
       });
 
       it("partially updates an agent config, preserving omitted fields and its identity", async () => {
-        const id = await newAgent({
+        const ref = await newAgent({
           inference: { provider: "anthropic", model: "old-model", maxTokens: 1024 },
           systemPrompt: "old prompt",
           metadata: { team: "growth" },
         });
-        const before = await store.getAgentConfig(id);
+        const before = await store.getAgentConfig(ref);
         clock.advance(1_000);
 
-        const updated = await store.updateAgentConfig(id, {
+        const updated = await store.updateAgentConfig(ref, {
           systemPrompt: "new prompt",
           version: 1,
         });
 
         expect(updated).toMatchObject({
-          id,
+          id: ref.id,
           inference: { provider: "anthropic", model: "old-model", maxTokens: 1024 },
           systemPrompt: "new prompt",
           metadata: { team: "growth" },
@@ -145,13 +152,13 @@ export function describeStoreConformance(
           createdAt: before?.createdAt,
         });
         expect(Date.parse(updated!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
-        expect(await store.getAgentConfig(id)).toEqual(updated);
+        expect(await store.getAgentConfig(ref)).toEqual(updated);
       });
 
       it("updates unconditionally when version is omitted", async () => {
-        const id = await newAgent();
-        const first = await store.updateAgentConfig(id, { systemPrompt: "one" });
-        const second = await store.updateAgentConfig(id, {
+        const ref = await newAgent();
+        const first = await store.updateAgentConfig(ref, { systemPrompt: "one" });
+        const second = await store.updateAgentConfig(ref, {
           inference: { provider: "fake", model: "m2" },
         });
         expect(first?.version).toBe(2);
@@ -159,15 +166,15 @@ export function describeStoreConformance(
       });
 
       it("serializes concurrent unconditional partial updates", async () => {
-        const id = await newAgent();
+        const ref = await newAgent();
 
         const updates = await Promise.all([
-          store.updateAgentConfig(id, { systemPrompt: "new prompt" }),
-          store.updateAgentConfig(id, { inference: { provider: "fake", model: "m2" } }),
+          store.updateAgentConfig(ref, { systemPrompt: "new prompt" }),
+          store.updateAgentConfig(ref, { inference: { provider: "fake", model: "m2" } }),
         ]);
 
         expect(updates.map((config) => config?.version).sort()).toEqual([2, 3]);
-        expect(await store.getAgentConfig(id)).toMatchObject({
+        expect(await store.getAgentConfig(ref)).toMatchObject({
           inference: { provider: "fake", model: "m2" },
           systemPrompt: "new prompt",
           version: 3,
@@ -175,80 +182,84 @@ export function describeStoreConformance(
       });
 
       it("treats an update with no mutable fields as a version-checked no-op", async () => {
-        const id = await newAgent();
-        const before = await store.getAgentConfig(id);
-        expect(await store.updateAgentConfig(id, { version: 1 })).toEqual(before);
-        expect(await store.updateAgentConfig(id, {})).toEqual(before);
+        const ref = await newAgent();
+        const before = await store.getAgentConfig(ref);
+        expect(await store.updateAgentConfig(ref, { version: 1 })).toEqual(before);
+        expect(await store.updateAgentConfig(ref, {})).toEqual(before);
       });
 
       it("rejects a stale expected version without changing the config", async () => {
-        const id = await newAgent();
-        await store.updateAgentConfig(id, { systemPrompt: "winner", version: 1 });
+        const ref = await newAgent();
+        await store.updateAgentConfig(ref, { systemPrompt: "winner", version: 1 });
 
         await expect(
-          store.updateAgentConfig(id, { systemPrompt: "stale", version: 1 }),
+          store.updateAgentConfig(ref, { systemPrompt: "stale", version: 1 }),
         ).rejects.toMatchObject({
           name: "VersionConflictError",
           expectedVersion: 1,
           actualVersion: 2,
         });
-        expect((await store.getAgentConfig(id))?.systemPrompt).toBe("winner");
+        expect((await store.getAgentConfig(ref))?.systemPrompt).toBe("winner");
       });
 
       it("keeps every prior agent version as an immutable snapshot", async () => {
-        const id = await newAgent({
+        const ref = await newAgent({
           inference: { provider: "fake", model: "m1" },
           systemPrompt: "v1",
           metadata: { revision: 1 },
         });
-        const v1 = await store.getAgentConfigVersion(id, 1);
-        await store.updateAgentConfig(id, {
+        const v1 = await store.getAgentConfig({ ...ref, version: 1 });
+        await store.updateAgentConfig(ref, {
           inference: { provider: "fake", model: "m2" },
           systemPrompt: "v2",
           version: 1,
         });
-        await store.updateAgentConfig(id, { metadata: { revision: 3 }, version: 2 });
+        await store.updateAgentConfig(ref, { metadata: { revision: 3 }, version: 2 });
 
-        expect(await store.getAgentConfigVersion(id, 1)).toEqual(v1);
-        expect(await store.getAgentConfigVersion(id, 2)).toMatchObject({
+        expect(await store.getAgentConfig({ ...ref, version: 1 })).toEqual(v1);
+        expect(await store.getAgentConfig({ ...ref, version: 2 })).toMatchObject({
           inference: { provider: "fake", model: "m2" },
           systemPrompt: "v2",
           metadata: { revision: 1 },
           version: 2,
         });
-        expect(await store.getAgentConfigVersion(id, 3)).toEqual(await store.getAgentConfig(id));
-        expect(await store.getAgentConfigVersion(id, 4)).toBeUndefined();
-        expect(await store.getAgentConfigVersion("nope", 1)).toBeUndefined();
+        expect(await store.getAgentConfig({ ...ref, version: 3 })).toEqual(
+          await store.getAgentConfig(ref),
+        );
+        expect(await store.getAgentConfig({ ...ref, version: 4 })).toBeUndefined();
+        expect(
+          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, id: "nope", version: 1 }),
+        ).toBeUndefined();
       });
 
       it("lets exactly one concurrent update satisfy the same version", async () => {
-        const id = await newAgent();
+        const ref = await newAgent();
         const results = await Promise.allSettled([
-          store.updateAgentConfig(id, { systemPrompt: "a", version: 1 }),
-          store.updateAgentConfig(id, { systemPrompt: "b", version: 1 }),
+          store.updateAgentConfig(ref, { systemPrompt: "a", version: 1 }),
+          store.updateAgentConfig(ref, { systemPrompt: "b", version: 1 }),
         ]);
         expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
         const rejected = results.find((result) => result.status === "rejected");
         expect(rejected).toMatchObject({ reason: expect.any(VersionConflictError) });
-        expect((await store.getAgentConfig(id))?.version).toBe(2);
+        expect((await store.getAgentConfig(ref))?.version).toBe(2);
       });
 
       it("treats an unknown or foreign update target as absent", async () => {
-        const id = await newAgent({ namespace: "tenant-a" });
+        const ref = await newAgent({ namespace: "tenant-a" });
         await expect(
-          store.updateAgentConfig("nope", { systemPrompt: "x", namespace: "tenant-a" }),
+          store.updateAgentConfig({ namespace: "tenant-a", id: "nope" }, { systemPrompt: "x" }),
         ).resolves.toBeUndefined();
         await expect(
-          store.updateAgentConfig(id, { systemPrompt: "x", namespace: "tenant-b" }),
+          store.updateAgentConfig({ namespace: "tenant-b", id: ref.id }, { systemPrompt: "x" }),
         ).resolves.toBeUndefined();
-        expect((await store.getAgentConfig(id))?.systemPrompt).toBe("s");
+        expect((await store.getAgentConfig(ref))?.systemPrompt).toBe("s");
       });
 
       it("rejects an invalid update request at the boundary", async () => {
-        const id = await newAgent();
+        const ref = await newAgent();
         await expect(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
-          store.updateAgentConfig(id, { version: 0 } as any),
+          store.updateAgentConfig(ref, { version: 0 } as any),
         ).rejects.toThrow();
       });
 
@@ -269,25 +280,35 @@ export function describeStoreConformance(
         expect(config?.packages).toEqual({ pip: ["pandas==2.2.0"] });
       });
 
-      it("returns undefined for an unknown config id", async () => {
-        expect(await store.getAgentConfig("nope")).toBeUndefined();
+      it("returns undefined for unknown or foreign agent config refs", async () => {
+        const ref = await newAgent({ namespace: "tenant-a" });
+        expect(
+          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, id: "nope" }),
+        ).toBeUndefined();
+        expect(await store.getAgentConfig({ namespace: "tenant-b", id: ref.id })).toBeUndefined();
+        expect(
+          await store.getAgentConfig({ namespace: "tenant-b", id: ref.id, version: 1 }),
+        ).toBeUndefined();
+      });
+
+      it("returns undefined for an unknown env config id", async () => {
         expect(await store.getEnvConfig("nope")).toBeUndefined();
       });
     });
 
     describe("archiving agent configs", () => {
       it("marks the config archived without touching what it says", async () => {
-        const id = await newAgent({ systemPrompt: "v1" });
-        await store.updateAgentConfig(id, { systemPrompt: "v2" });
-        const before = await store.getAgentConfig(id);
+        const ref = await newAgent({ systemPrompt: "v1" });
+        await store.updateAgentConfig(ref, { systemPrompt: "v2" });
+        const before = await store.getAgentConfig(ref);
         clock.advance(1_000);
 
-        const archived = await store.archiveAgentConfig(id, {});
+        const archived = await store.archiveAgentConfig(ref);
 
         // Archiving retires the config; it does not edit it — same version,
         // same payload, same updatedAt, one new fact.
         expect(archived).toMatchObject({ ...before, archivedAt: expect.any(String) });
-        expect(await store.getAgentConfig(id)).toEqual(archived);
+        expect(await store.getAgentConfig(ref)).toEqual(archived);
       });
 
       it("stores absence as absence — an unarchived config has no archivedAt key", async () => {
@@ -297,18 +318,18 @@ export function describeStoreConformance(
       });
 
       it("is idempotent — the terminal state has no second transition", async () => {
-        const id = await newAgent();
-        const first = await store.archiveAgentConfig(id, {});
+        const ref = await newAgent();
+        const first = await store.archiveAgentConfig(ref);
         clock.advance(1_000);
-        const second = await store.archiveAgentConfig(id, {});
+        const second = await store.archiveAgentConfig(ref);
 
         expect(second).toEqual(first);
         expect(second?.archivedAt).toBe(first?.archivedAt);
       });
 
       it("makes the config read-only: every mutation throws ArchivedError", async () => {
-        const id = await newAgent({ systemPrompt: "final" });
-        await store.archiveAgentConfig(id, {});
+        const ref = await newAgent({ systemPrompt: "final" });
+        await store.archiveAgentConfig(ref);
 
         for (const req of [
           { systemPrompt: "after" },
@@ -316,45 +337,48 @@ export function describeStoreConformance(
           { metadata: { note: "after" } },
           { systemPrompt: "after", version: 1 },
         ]) {
-          await expect(store.updateAgentConfig(id, req)).rejects.toMatchObject({
+          await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
             name: "ArchivedError",
-            configId: id,
+            configId: ref.id,
           });
         }
-        expect(await store.getAgentConfig(id)).toMatchObject({ systemPrompt: "final", version: 1 });
+        expect(await store.getAgentConfig(ref)).toMatchObject({
+          systemPrompt: "final",
+          version: 1,
+        });
       });
 
       it("reports archived before stale — the version is not what the caller can fix", async () => {
-        const id = await newAgent();
-        await store.updateAgentConfig(id, { systemPrompt: "v2" });
-        await store.archiveAgentConfig(id, {});
+        const ref = await newAgent();
+        await store.updateAgentConfig(ref, { systemPrompt: "v2" });
+        await store.archiveAgentConfig(ref);
 
         await expect(
-          store.updateAgentConfig(id, { systemPrompt: "x", version: 1 }),
+          store.updateAgentConfig(ref, { systemPrompt: "x", version: 1 }),
         ).rejects.toBeInstanceOf(ArchivedError);
       });
 
       it("keeps an empty update a read — it mutates nothing, so nothing is forbidden", async () => {
-        const id = await newAgent();
-        const archived = await store.archiveAgentConfig(id, {});
-        expect(await store.updateAgentConfig(id, {})).toEqual(archived);
+        const ref = await newAgent();
+        const archived = await store.archiveAgentConfig(ref);
+        expect(await store.updateAgentConfig(ref, {})).toEqual(archived);
       });
 
       it("stays readable — get, every version, and the list still answer", async () => {
-        const id = await newAgent({ systemPrompt: "v1" });
-        await store.updateAgentConfig(id, { systemPrompt: "v2" });
-        const archived = await store.archiveAgentConfig(id, {});
+        const ref = await newAgent({ systemPrompt: "v1" });
+        await store.updateAgentConfig(ref, { systemPrompt: "v2" });
+        const archived = await store.archiveAgentConfig(ref);
 
-        expect(await store.getAgentConfig(id)).toEqual(archived);
+        expect(await store.getAgentConfig(ref)).toEqual(archived);
         expect(
           (await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 })).map(
             (c) => c.id,
           ),
-        ).toContain(id);
+        ).toContain(ref.id);
         // The identity retired, not a snapshot: every version reads back,
         // and each one carries the mark.
         for (const version of [1, 2]) {
-          expect(await store.getAgentConfigVersion(id, version)).toMatchObject({
+          expect(await store.getAgentConfig({ ...ref, version })).toMatchObject({
             version,
             archivedAt: archived?.archivedAt,
           });
@@ -362,31 +386,42 @@ export function describeStoreConformance(
       });
 
       it("refuses a new session naming an archived config, at any version", async () => {
-        const agentConfigId = await newAgent();
-        await store.updateAgentConfig(agentConfigId, { systemPrompt: "v2" });
+        const agentConfigRef = await newAgent();
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2" });
         const envConfigId = await store.createEnvConfig({});
-        await store.archiveAgentConfig(agentConfigId, {});
+        await store.archiveAgentConfig(agentConfigRef);
 
-        await expect(store.createSession({ agentConfigId, envConfigId })).rejects.toBeInstanceOf(
-          ArchivedError,
-        );
         await expect(
-          store.createSession({ agentConfigId, agentConfigVersion: 1, envConfigId }),
+          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId }),
+        ).rejects.toBeInstanceOf(ArchivedError);
+        await expect(
+          store.createSession({
+            agentConfigId: agentConfigRef.id,
+            agentConfigVersion: 1,
+            envConfigId,
+          }),
         ).rejects.toBeInstanceOf(ArchivedError);
       });
 
       it("lets sessions that already reference it run on", async () => {
-        const agentConfigId = await newAgent({ systemPrompt: "pinned" });
+        const agentConfigRef = await newAgent({ systemPrompt: "pinned" });
         const envConfigId = await store.createEnvConfig({});
-        const sessionId = await store.createSession({ agentConfigId, envConfigId });
-        await store.archiveAgentConfig(agentConfigId, {});
+        const sessionId = await store.createSession({
+          agentConfigId: agentConfigRef.id,
+          envConfigId,
+        });
+        await store.archiveAgentConfig(agentConfigRef);
 
         // The session still resolves the behavior it pinned, and still runs:
         // archiving stops new references, not existing work.
         const session = await store.getSession(sessionId);
         expect(
-          (await store.getAgentConfigVersion(agentConfigId, session!.agentConfigVersion))
-            ?.systemPrompt,
+          (
+            await store.getAgentConfig({
+              ...agentConfigRef,
+              version: session!.agentConfigVersion,
+            })
+          )?.systemPrompt,
         ).toBe("pinned");
         const { itemId, token } = await startAndClaim(sessionId);
         await store.commitStep({
@@ -399,12 +434,12 @@ export function describeStoreConformance(
       });
 
       it("settles a create/archive race one of the two legal ways", async () => {
-        const agentConfigId = await newAgent();
+        const agentConfigRef = await newAgent();
         const envConfigId = await store.createEnvConfig({});
 
         const [created, archived] = await Promise.allSettled([
-          store.createSession({ agentConfigId, envConfigId }),
-          store.archiveAgentConfig(agentConfigId, {}),
+          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId }),
+          store.archiveAgentConfig(agentConfigRef),
         ]);
 
         // The archive always lands: nothing outranks the terminal state.
@@ -418,18 +453,22 @@ export function describeStoreConformance(
           expect(created.reason).toBeInstanceOf(ArchivedError);
         }
         // Whoever won, the door is shut behind them.
-        await expect(store.createSession({ agentConfigId, envConfigId })).rejects.toBeInstanceOf(
-          ArchivedError,
-        );
+        await expect(
+          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId }),
+        ).rejects.toBeInstanceOf(ArchivedError);
       });
 
       it("treats an unknown or foreign archive target as absent", async () => {
-        const id = await newAgent({ namespace: "tenant-a" });
-        expect(await store.archiveAgentConfig("nope", { namespace: "tenant-a" })).toBeUndefined();
-        expect(await store.archiveAgentConfig(id, { namespace: "tenant-b" })).toBeUndefined();
+        const ref = await newAgent({ namespace: "tenant-a" });
+        expect(
+          await store.archiveAgentConfig({ namespace: "tenant-a", id: "nope" }),
+        ).toBeUndefined();
+        expect(
+          await store.archiveAgentConfig({ namespace: "tenant-b", id: ref.id }),
+        ).toBeUndefined();
         // The foreign archive touched nothing.
-        expect(await store.getAgentConfig(id)).toMatchObject({ namespace: "tenant-a" });
-        expect("archivedAt" in (await store.getAgentConfig(id))!).toBe(false);
+        expect(await store.getAgentConfig(ref)).toMatchObject({ namespace: "tenant-a" });
+        expect("archivedAt" in (await store.getAgentConfig(ref))!).toBe(false);
       });
     });
 
@@ -438,12 +477,11 @@ export function describeStoreConformance(
       async function agentConfigs(n: number, namespace?: string): Promise<string[]> {
         const ids: string[] = [];
         for (let i = 0; i < n; i++) {
-          ids.push(
-            await newAgent({
-              inference: { provider: "fake", model: `m${i}` },
-              ...(namespace === undefined ? {} : { namespace }),
-            }),
-          );
+          const ref = await newAgent({
+            inference: { provider: "fake", model: `m${i}` },
+            ...(namespace === undefined ? {} : { namespace }),
+          });
+          ids.push(ref.id);
           clock.advance(1_000);
         }
         return ids;
@@ -468,7 +506,9 @@ export function describeStoreConformance(
         const configs = await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
         expect(configs.map((c) => c.id)).toEqual([newest, middle, oldest]);
         // The same shape a get returns — one row mapping, not two.
-        expect(configs[0]).toEqual(await store.getAgentConfig(newest!));
+        expect(configs[0]).toEqual(
+          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, id: newest! }),
+        );
       });
 
       it("bounds the page at limit and resumes strictly after the cursor", async () => {
@@ -552,30 +592,37 @@ export function describeStoreConformance(
       });
 
       it("pins the latest agent version when the session is created", async () => {
-        const agentConfigId = await newAgent({
+        const agentConfigRef = await newAgent({
           inference: { provider: "fake", model: "m1" },
           systemPrompt: "v1",
         });
         const envConfigId = await store.createEnvConfig({});
-        await store.updateAgentConfig(agentConfigId, { systemPrompt: "v2", version: 1 });
-        const sessionId = await store.createSession({ agentConfigId, envConfigId });
-        await store.updateAgentConfig(agentConfigId, { systemPrompt: "v3", version: 2 });
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2", version: 1 });
+        const sessionId = await store.createSession({
+          agentConfigId: agentConfigRef.id,
+          envConfigId,
+        });
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v3", version: 2 });
 
         const session = await store.getSession(sessionId);
         expect(session?.agentConfigVersion).toBe(2);
         expect(
-          (await store.getAgentConfigVersion(agentConfigId, session!.agentConfigVersion))
-            ?.systemPrompt,
+          (
+            await store.getAgentConfig({
+              ...agentConfigRef,
+              version: session!.agentConfigVersion,
+            })
+          )?.systemPrompt,
         ).toBe("v2");
       });
 
       it("pins an explicitly requested agent version", async () => {
-        const agentConfigId = await newAgent({ systemPrompt: "v1" });
+        const agentConfigRef = await newAgent({ systemPrompt: "v1" });
         const envConfigId = await store.createEnvConfig({});
-        await store.updateAgentConfig(agentConfigId, { systemPrompt: "v2", version: 1 });
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2", version: 1 });
 
         const sessionId = await store.createSession({
-          agentConfigId,
+          agentConfigId: agentConfigRef.id,
           agentConfigVersion: 1,
           envConfigId,
         });
@@ -613,37 +660,46 @@ export function describeStoreConformance(
       it("rejects a session naming an unknown agent config or version", async () => {
         const envConfigId = await store.createEnvConfig({});
         await expect(store.createSession({ agentConfigId: "nope", envConfigId })).rejects.toThrow();
-        const agentConfigId = await newAgent();
+        const agentConfigRef = await newAgent();
         await expect(
-          store.createSession({ agentConfigId, agentConfigVersion: 2, envConfigId }),
+          store.createSession({
+            agentConfigId: agentConfigRef.id,
+            agentConfigVersion: 2,
+            envConfigId,
+          }),
         ).rejects.toThrow();
       });
 
       it("rejects a session naming an unknown env config", async () => {
-        const agentConfigId = await newAgent();
-        await expect(store.createSession({ agentConfigId, envConfigId: "nope" })).rejects.toThrow();
+        const agentConfigRef = await newAgent();
+        await expect(
+          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: "nope" }),
+        ).rejects.toThrow();
       });
     });
 
     describe("namespace", () => {
-      it("materializes DEFAULT_NAMESPACE when absent, on all three ownable rows", async () => {
-        const agentConfigId = await newAgent();
+      it("uses an explicit agent namespace while env configs and sessions default", async () => {
+        const agentConfigRef = await newAgent();
         const envConfigId = await store.createEnvConfig({});
-        const sessionId = await store.createSession({ agentConfigId, envConfigId });
-        expect((await store.getAgentConfig(agentConfigId))?.namespace).toBe(DEFAULT_NAMESPACE);
+        const sessionId = await store.createSession({
+          agentConfigId: agentConfigRef.id,
+          envConfigId,
+        });
+        expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
         expect((await store.getEnvConfig(envConfigId))?.namespace).toBe(DEFAULT_NAMESPACE);
         expect((await store.getSession(sessionId))?.namespace).toBe(DEFAULT_NAMESPACE);
       });
 
       it("stores an explicit namespace verbatim", async () => {
-        const agentConfigId = await newAgent({ namespace: "tenant-a" });
+        const agentConfigRef = await newAgent({ namespace: "tenant-a" });
         const envConfigId = await store.createEnvConfig({ namespace: "tenant-a" });
         const sessionId = await store.createSession({
-          agentConfigId,
+          agentConfigId: agentConfigRef.id,
           envConfigId,
           namespace: "tenant-a",
         });
-        expect((await store.getAgentConfig(agentConfigId))?.namespace).toBe("tenant-a");
+        expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe("tenant-a");
         expect((await store.getEnvConfig(envConfigId))?.namespace).toBe("tenant-a");
         expect((await store.getSession(sessionId))?.namespace).toBe("tenant-a");
       });
@@ -656,14 +712,26 @@ export function describeStoreConformance(
         // Cross-namespace refs reject exactly like dangling refs — the
         // error is the same "unknown", so existence never leaks.
         await expect(
-          store.createSession({ agentConfigId: agentA, envConfigId: envB, namespace: "tenant-a" }),
+          store.createSession({
+            agentConfigId: agentA.id,
+            envConfigId: envB,
+            namespace: "tenant-a",
+          }),
         ).rejects.toThrow("unknown env config");
         await expect(
-          store.createSession({ agentConfigId: agentA, envConfigId: envA, namespace: "tenant-b" }),
+          store.createSession({
+            agentConfigId: agentA.id,
+            envConfigId: envA,
+            namespace: "tenant-b",
+          }),
         ).rejects.toThrow("unknown agent config");
         // The matched trio is accepted.
         await expect(
-          store.createSession({ agentConfigId: agentA, envConfigId: envA, namespace: "tenant-a" }),
+          store.createSession({
+            agentConfigId: agentA.id,
+            envConfigId: envA,
+            namespace: "tenant-a",
+          }),
         ).resolves.toBeDefined();
       });
     });

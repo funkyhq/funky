@@ -32,8 +32,9 @@ import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, type SQL, sql } f
 import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   AgentConfig,
+  AgentConfigRef,
+  AgentConfigVersionRef,
   AgentMessage,
-  ArchiveAgentConfigRequest,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
   CreateSessionRequest,
@@ -41,6 +42,7 @@ import {
   EnvConfig,
   IntakeResult,
   type JsonValue,
+  ListAgentConfigsRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -194,7 +196,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       await db.transaction(async (tx) => {
         await tx.insert(agentConfigs).values({
           id,
-          namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
+          namespace: parsed.namespace,
           currentVersion: 1,
           createdAt: timestamp,
         });
@@ -207,32 +209,33 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           updatedAt: timestamp,
         });
       });
-      return id;
+      return AgentConfigRef.parse({ namespace: parsed.namespace, id });
     },
 
-    async getAgentConfig(id) {
+    async getAgentConfig(ref) {
+      const version =
+        "version" in ref && ref.version !== undefined
+          ? AgentConfigVersionRef.parse(ref).version
+          : undefined;
+      const parsed = AgentConfigRef.parse(ref);
+      const requestedVersion =
+        version !== undefined
+          ? and(
+              eq(agentConfigVersions.agentConfigId, agentConfigs.id),
+              eq(agentConfigVersions.version, version),
+            )
+          : currentAgentVersion;
       const [row] = await db
         .select(agentConfigColumns)
         .from(agentConfigs)
-        .innerJoin(agentConfigVersions, currentAgentVersion)
-        .where(eq(agentConfigs.id, id));
+        .innerJoin(agentConfigVersions, requestedVersion)
+        .where(and(eq(agentConfigs.id, parsed.id), eq(agentConfigs.namespace, parsed.namespace)));
       return row === undefined ? undefined : toAgentConfig(row);
     },
 
-    async getAgentConfigVersion(id, version) {
-      const [row] = await db
-        .select(agentConfigColumns)
-        .from(agentConfigVersions)
-        .innerJoin(agentConfigs, eq(agentConfigVersions.agentConfigId, agentConfigs.id))
-        .where(
-          and(eq(agentConfigVersions.agentConfigId, id), eq(agentConfigVersions.version, version)),
-        );
-      return row === undefined ? undefined : toAgentConfig(row);
-    },
-
-    async updateAgentConfig(id, req) {
+    async updateAgentConfig(ref, req) {
+      const { id, namespace } = AgentConfigRef.parse(ref);
       const parsed = UpdateAgentConfigRequest.parse(req);
-      const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
       const scope = and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace));
       const target = and(
         scope,
@@ -327,9 +330,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       });
     },
 
-    async archiveAgentConfig(id, req) {
-      const parsed = ArchiveAgentConfigRequest.parse(req);
-      const namespace = parsed.namespace ?? DEFAULT_NAMESPACE;
+    async archiveAgentConfig(ref) {
+      const { id, namespace } = AgentConfigRef.parse(ref);
       const scope = and(eq(agentConfigs.id, id), eq(agentConfigs.namespace, namespace));
       return db.transaction(async (tx) => {
         // Idempotent by predicate rather than by read-then-write: only an
@@ -350,16 +352,17 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       });
     },
 
-    async listAgentConfigs(req: ListConfigsRequest) {
-      const scope = eq(agentConfigs.namespace, req.namespace);
-      const page = await olderThanCursor(agentConfigs, scope, req.after);
+    async listAgentConfigs(req) {
+      const parsed = ListAgentConfigsRequest.parse(req);
+      const scope = eq(agentConfigs.namespace, parsed.namespace);
+      const page = await olderThanCursor(agentConfigs, scope, parsed.after);
       const rows = await db
         .select(agentConfigColumns)
         .from(agentConfigs)
         .innerJoin(agentConfigVersions, currentAgentVersion)
         .where(and(scope, page))
         .orderBy(desc(agentConfigs.createdAt), desc(agentConfigs.id))
-        .limit(req.limit);
+        .limit(parsed.limit);
       return rows.map(toAgentConfig);
     },
 

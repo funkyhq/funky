@@ -23,18 +23,18 @@ export type AgentConfigStore = Pick<
 type Env = { Variables: { requestId: string; namespace: string } };
 
 const WireCreateAgentConfig = CreateAgentConfigRequest.omit({ namespace: true });
-const WireUpdateAgentConfig = UpdateAgentConfigRequest.omit({ namespace: true });
+const WireUpdateAgentConfig = UpdateAgentConfigRequest;
 
 export function agentConfigRoutes(store: AgentConfigStore) {
   const r = new Hono<Env>();
 
   r.post("/", validate("json", WireCreateAgentConfig), async (c) => {
-    const id = await store.createAgentConfig({
+    const ref = await store.createAgentConfig({
       ...c.req.valid("json"),
       namespace: c.get("namespace"),
     });
-    const config = await store.getAgentConfig(id);
-    if (!config) throw new Error(`agent config ${id} missing after create`);
+    const config = await store.getAgentConfig(ref);
+    if (!config) throw new Error(`agent config ${ref.id} missing after create`);
     return c.json(config, 201);
   });
 
@@ -61,8 +61,8 @@ export function agentConfigRoutes(store: AgentConfigStore) {
 
   r.get("/:id", async (c) => {
     const id = c.req.param("id");
-    const config = await store.getAgentConfig(id);
-    if (!config || config.namespace !== c.get("namespace")) {
+    const config = await store.getAgentConfig({ namespace: c.get("namespace"), id });
+    if (!config) {
       return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
     }
     return c.json(config);
@@ -71,10 +71,10 @@ export function agentConfigRoutes(store: AgentConfigStore) {
   r.post("/:id", validate("json", WireUpdateAgentConfig), async (c) => {
     const id = c.req.param("id");
     try {
-      const config = await store.updateAgentConfig(id, {
-        ...c.req.valid("json"),
-        namespace: c.get("namespace"),
-      });
+      const config = await store.updateAgentConfig(
+        { namespace: c.get("namespace"), id },
+        c.req.valid("json"),
+      );
       if (config === undefined) {
         return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
       }
@@ -99,7 +99,7 @@ export function agentConfigRoutes(store: AgentConfigStore) {
   // archivedAt, because the state it asks for is already the state.
   r.post("/:id/archive", async (c) => {
     const id = c.req.param("id");
-    const config = await store.archiveAgentConfig(id, { namespace: c.get("namespace") });
+    const config = await store.archiveAgentConfig({ namespace: c.get("namespace"), id });
     if (config === undefined) {
       return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
     }

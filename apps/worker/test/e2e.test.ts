@@ -23,7 +23,12 @@ import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { AgentMessage, SessionEntry, SessionId } from "@funky/core";
+import {
+  DEFAULT_NAMESPACE,
+  type AgentMessage,
+  type SessionEntry,
+  type SessionId,
+} from "@funky/core";
 import { createE2bProvider, createPgStore, type StoreDb } from "@funky/adapters";
 import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 
@@ -99,7 +104,8 @@ if (!url || !anthropicKey || !e2bKey) {
   }
 
   async function seedSession(task: string): Promise<SessionId> {
-    const agentConfigId = await store.createAgentConfig({
+    const agentConfigRef = await store.createAgentConfig({
+      namespace: DEFAULT_NAMESPACE,
       inference: {
         provider: "anthropic",
         model: "claude-haiku-4-5-20251001",
@@ -111,7 +117,10 @@ if (!url || !anthropicKey || !e2bKey) {
         "the execution was interrupted, issue that call again.",
     });
     const envConfigId = await store.createEnvConfig({});
-    const sessionId = await store.createSession({ agentConfigId, envConfigId });
+    const sessionId = await store.createSession({
+      agentConfigId: agentConfigRef.id,
+      envConfigId,
+    });
     sessions.push(sessionId);
     const result = await store.intake(sessionId, {
       role: "user",

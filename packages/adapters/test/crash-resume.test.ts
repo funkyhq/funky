@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DEFAULT_NAMESPACE } from "@funky/core";
 import { runStep, type StepDeps, type Store, toToolSpec } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
 import {
@@ -280,12 +281,13 @@ beforeAll(async () => {
     const client = new PGlite(templateFresh);
     await client.exec(storeDdl);
     const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-    const agentConfigId = await store.createAgentConfig({
+    const agentConfigRef = await store.createAgentConfig({
+      namespace: DEFAULT_NAMESPACE,
       inference: inferenceConfig,
       systemPrompt: "be brief",
     });
     const envConfigId = await store.createEnvConfig({});
-    sessionId = await store.createSession({ agentConfigId, envConfigId });
+    sessionId = await store.createSession({ agentConfigId: agentConfigRef.id, envConfigId });
     const result = await store.intake(sessionId, user(PROMPTS[0]));
     if (result.kind !== "started") throw new Error("seed intake did not start a run");
     await client.close();
