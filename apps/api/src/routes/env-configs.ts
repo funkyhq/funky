@@ -8,13 +8,6 @@
 // verb that writes — the other two routes read. Sessions reference
 // config ids; a row that could change under a running session would
 // reinterpret its history.
-//
-// Namespace discipline: the wire schema OMITS namespace — a client can
-// never choose one. The auth middleware decided it (c.get("namespace"));
-// create stamps it, and get answers 404 for a foreign row, so a foreign
-// id is indistinguishable from a nonexistent one. The list is the one
-// read the api can't scope that way — there is no id to check
-// afterwards — so it passes the namespace INTO the store instead.
 import { Hono } from "hono";
 import { CreateEnvConfigRequest } from "@funky/core";
 import type { Store } from "@funky/agent";
@@ -26,21 +19,16 @@ export type EnvConfigStore = Pick<Store, "createEnvConfig" | "getEnvConfig" | "l
 
 type Env = { Variables: { requestId: string; namespace: string } };
 
-const WireCreateEnvConfig = CreateEnvConfigRequest.omit({ namespace: true });
-
 export function envConfigRoutes(store: EnvConfigStore) {
   const r = new Hono<Env>();
 
   // create → 201 with the materialized row: defaults are resolved at
   // create (network → unrestricted, packages → {}), so the caller sees
   // the decision that was stored, not the request they sent.
-  r.post("/", validate("json", WireCreateEnvConfig), async (c) => {
-    const id = await store.createEnvConfig({
-      ...c.req.valid("json"),
-      namespace: c.get("namespace"),
-    });
-    const config = await store.getEnvConfig(id);
-    if (!config) throw new Error(`env config ${id} missing after create`);
+  r.post("/", validate("json", CreateEnvConfigRequest), async (c) => {
+    const ref = await store.createEnvConfig(c.req.valid("json"));
+    const config = await store.getEnvConfig(ref);
+    if (!config) throw new Error(`env config ${ref.id} missing after create`);
     return c.json(config, 201);
   });
 
@@ -68,8 +56,8 @@ export function envConfigRoutes(store: EnvConfigStore) {
 
   r.get("/:id", async (c) => {
     const id = c.req.param("id");
-    const config = await store.getEnvConfig(id);
-    if (!config || config.namespace !== c.get("namespace")) {
+    const config = await store.getEnvConfig({ namespace: c.get("namespace"), id });
+    if (!config) {
       return errorResponse(c, 404, "not_found_error", `no env config ${id}`);
     }
     return c.json(config);

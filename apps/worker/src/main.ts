@@ -43,7 +43,10 @@ const deps: DriverDeps = {
   bindTools: async (sessionId) => {
     const session = await store.getSession(sessionId);
     if (!session) throw new Error(`worker: unknown session ${sessionId}`);
-    const env = await store.getEnvConfig(session.envConfigId);
+    const env = await store.getEnvConfig({
+      namespace: session.namespace,
+      id: session.envConfigId,
+    });
     if (!env) throw new Error(`worker: session ${sessionId} has no env config`);
     const sandbox = await ensureSandbox(store, sandboxes, sessionId, {
       timeoutMs: cfg.sandboxTimeoutMs,

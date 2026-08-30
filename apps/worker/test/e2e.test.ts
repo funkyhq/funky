@@ -116,10 +116,10 @@ if (!url || !anthropicKey || !e2bKey) {
         "tools, then reply with a one-sentence summary. If a tool result says " +
         "the execution was interrupted, issue that call again.",
     });
-    const envConfigId = await store.createEnvConfig({});
+    const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
     const sessionId = await store.createSession({
       agentConfigId: agentConfigRef.id,
-      envConfigId,
+      envConfigId: envConfigRef.id,
     });
     sessions.push(sessionId);
     const result = await store.intake(sessionId, {
@@ -371,7 +371,9 @@ if (!url || !anthropicKey || !e2bKey) {
               "tools, then reply with a one-sentence summary. If a tool result says " +
               "the execution was interrupted, issue that call again.",
           });
-          const env = await apiJson("POST", "/v1/env-configs", {});
+          const env = await apiJson("POST", "/v1/env-configs", {
+            namespace: DEFAULT_NAMESPACE,
+          });
           const session = await apiJson("POST", "/v1/sessions", {
             agentConfigId: agent.id,
             envConfigId: env.id,

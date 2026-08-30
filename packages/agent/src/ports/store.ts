@@ -8,10 +8,12 @@ import type {
   CreateEnvConfigRequest,
   CreateSessionRequest,
   EnvConfig,
+  EnvConfigRef,
   InputId,
   IntakeResult,
   ItemId,
   ListAgentConfigsRequest,
+  ListEnvConfigsRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -83,11 +85,12 @@ export interface Store {
   /** One namespace's agent configs, newest first — see ListAgentConfigsRequest. */
   listAgentConfigs(req: ListAgentConfigsRequest): Promise<AgentConfig[]>;
 
-  /** Create the environment config. Namespace must be specified */
-  createEnvConfig(req: CreateEnvConfigRequest): Promise<ConfigId>;
-  getEnvConfig(id: ConfigId): Promise<EnvConfig | undefined>;
-  /** One namespace's env configs, newest first — see ListConfigsRequest. */
-  listEnvConfigs(req: ListConfigsRequest): Promise<EnvConfig[]>;
+  /** Create an environment config. Namespace must be specified. */
+  createEnvConfig(req: CreateEnvConfigRequest): Promise<EnvConfigRef>;
+  /** Returns the namespace-scoped environment config. */
+  getEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
+  /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */
+  listEnvConfigs(req: ListEnvConfigsRequest): Promise<EnvConfig[]>;
 
   // --- sessions ---
 
@@ -173,36 +176,6 @@ export interface Store {
   commitStep(req: CommitStepRequest): Promise<void>;
 
   // P4 adds reaper operations (lease expiry, interrupted-result synthesis).
-}
-
-/**
- * The env config list read's argument. Agent configs use the equivalent
- * core ListAgentConfigsRequest vocabulary.
- *
- * `namespace` is required, and it is the one read whose tenancy the
- * store enforces rather than the api: a list has no id to fetch and
- * check afterwards, so the scope has to be inside the query.
- *
- * `limit` is required too — the port has no unbounded list, so no
- * caller can forget to bound one. The store returns at most that many
- * rows; a caller wanting to know whether more exist asks for one more
- * than it will show.
- *
- * `after` is a position cursor with the same meaning as readEntries'
- * seq — "what comes next" — in this list's newest-first order: the id
- * of the last row of the page before. It is resolved inside the
- * namespace, so a foreign cursor throws "unknown cursor" exactly like a
- * nonexistent one and nothing leaks. Keyset, not offset, and ordered by
- * immutable (createdAt, id), so updates cannot move a page boundary. A
- * concurrent create lands ahead of the first page and cannot duplicate or
- * skip a row mid-walk.
- */
-export interface ListConfigsRequest {
-  namespace: string;
-  /** At most this many rows. */
-  limit: number;
-  /** Id of the previous page's last row; absent starts at the newest. */
-  after?: ConfigId;
 }
 
 /**

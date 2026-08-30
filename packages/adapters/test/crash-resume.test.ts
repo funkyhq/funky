@@ -286,8 +286,11 @@ beforeAll(async () => {
       inference: inferenceConfig,
       systemPrompt: "be brief",
     });
-    const envConfigId = await store.createEnvConfig({});
-    sessionId = await store.createSession({ agentConfigId: agentConfigRef.id, envConfigId });
+    const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
+    sessionId = await store.createSession({
+      agentConfigId: agentConfigRef.id,
+      envConfigId: envConfigRef.id,
+    });
     const result = await store.intake(sessionId, user(PROMPTS[0]));
     if (result.kind !== "started") throw new Error("seed intake did not start a run");
     await client.close();

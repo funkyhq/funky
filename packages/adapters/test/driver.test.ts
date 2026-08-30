@@ -137,8 +137,8 @@ async function newSession(): Promise<string> {
     inference: inferenceConfig,
     systemPrompt: "be brief",
   });
-  const envConfigId = await store.createEnvConfig({});
-  return store.createSession({ agentConfigId: agentConfigRef.id, envConfigId });
+  const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
+  return store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: envConfigRef.id });
 }
 
 /** Claim the session's ready item — the tests' stand-in for the loop shell. */
