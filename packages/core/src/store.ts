@@ -54,9 +54,9 @@ export const DEFAULT_NAMESPACE = "default";
 // --- configs ---
 
 // Agent configs are mutable, with a monotonic version used for optional
-// optimistic concurrency. Env configs remain immutable sandbox recipes.
-// Sessions pin the latest concrete agent version at creation, so later agent
-// updates cannot change the behavior of an existing session.
+// optimistic concurrency. Env configs update in place. Sessions pin the
+// latest concrete agent version at creation, while retaining an env config
+// reference.
 //
 // Archive is the one terminal transition: it retires an agent config
 // without deleting it — the row stays readable and its versions stay
@@ -114,8 +114,7 @@ export const AgentConfig = CreateAgentConfigRequest.extend({
 });
 export type AgentConfig = z.infer<typeof AgentConfig>;
 
-// The env config is the sandbox recipe — the immutable description of
-// the world a session runs in.
+// The env config is the sandbox recipe describing the world a session runs in.
 /** A namespace-scoped reference to an env config. */
 export const EnvConfigRef = z.object({
   namespace: z.string().min(1),
@@ -140,6 +139,14 @@ export const CreateEnvConfigRequest = z.object({
   metadata: JsonValue.optional(),
 });
 export type CreateEnvConfigRequest = z.infer<typeof CreateEnvConfigRequest>;
+
+/** An in-place partial update; omission preserves the stored field. */
+export const UpdateEnvConfigRequest = z.object({
+  network: NetworkPolicy.optional(),
+  packages: Packages.optional(),
+  metadata: JsonValue.optional(),
+});
+export type UpdateEnvConfigRequest = z.infer<typeof UpdateEnvConfigRequest>;
 
 export const EnvConfig = CreateEnvConfigRequest.extend({
   id: z.string(),

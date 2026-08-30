@@ -14,6 +14,7 @@ import {
   PendingInput,
   Session,
   UpdateAgentConfigRequest,
+  UpdateEnvConfigRequest,
   WorkItem,
 } from "../src/store";
 
@@ -196,6 +197,23 @@ describe("env configs", () => {
     expect(ListEnvConfigsRequest.safeParse({ namespace: "tenant-a", limit: 0 }).success).toBe(
       false,
     );
+  });
+
+  it("accepts partial and empty in-place env config updates", () => {
+    expect(
+      UpdateEnvConfigRequest.safeParse({
+        network: { type: "none" },
+        packages: { pip: ["numpy"] },
+        metadata: { revision: 2 },
+      }).success,
+    ).toBe(true);
+    expect(UpdateEnvConfigRequest.safeParse({ packages: {} }).success).toBe(true);
+    expect(UpdateEnvConfigRequest.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects malformed env config updates", () => {
+    expect(UpdateEnvConfigRequest.safeParse({ network: { type: "vpn" } }).success).toBe(false);
+    expect(UpdateEnvConfigRequest.safeParse({ packages: ["numpy"] }).success).toBe(false);
   });
 
   it("rejects an unknown network policy type", () => {

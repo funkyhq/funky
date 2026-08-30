@@ -49,6 +49,7 @@ import {
   Session,
   SessionEntry,
   UpdateAgentConfigRequest,
+  UpdateEnvConfigRequest,
   UserMessage,
   WorkItem,
 } from "@funky/core";
@@ -388,6 +389,25 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .select()
         .from(envConfigs)
         .where(and(eq(envConfigs.id, id), eq(envConfigs.namespace, namespace)));
+      return row === undefined ? undefined : toEnvConfig(row);
+    },
+
+    async updateEnvConfig(ref, req) {
+      const { id, namespace } = EnvConfigRef.parse(ref);
+      const parsed = UpdateEnvConfigRequest.parse(req);
+      const scope = and(eq(envConfigs.id, id), eq(envConfigs.namespace, namespace));
+      const updates = {
+        ...(parsed.network === undefined ? {} : { network: parsed.network }),
+        ...(parsed.packages === undefined ? {} : { packages: parsed.packages }),
+        ...(parsed.metadata === undefined ? {} : { metadata: wrap(parsed.metadata) }),
+      };
+
+      if (Object.keys(updates).length === 0) {
+        const [row] = await db.select().from(envConfigs).where(scope);
+        return row === undefined ? undefined : toEnvConfig(row);
+      }
+
+      const [row] = await db.update(envConfigs).set(updates).where(scope).returning();
       return row === undefined ? undefined : toEnvConfig(row);
     },
 
