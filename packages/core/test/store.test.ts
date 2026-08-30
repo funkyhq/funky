@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentConfig,
-  ArchiveAgentConfigRequest,
+  AgentConfigRef,
+  AgentConfigVersionRef,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
   CreateSessionRequest,
   EnvConfig,
   IntakeResult,
+  ListAgentConfigsRequest,
   PendingInput,
   Session,
   UpdateAgentConfigRequest,
@@ -38,10 +40,41 @@ describe("configs", () => {
 
   it("accepts a create request without metadata or sampling params — absence needs no placeholder", () => {
     const result = CreateAgentConfigRequest.safeParse({
+      namespace: "default",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("requires an explicit namespace when creating an agent config", () => {
+    expect(
+      CreateAgentConfigRequest.safeParse({
+        inference: { provider: "fake", model: "scripted" },
+        systemPrompt: "s",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates current and versioned agent config references", () => {
+    expect(AgentConfigRef.safeParse({ namespace: "tenant-a", id: "ac1" }).success).toBe(true);
+    expect(AgentConfigRef.safeParse({ namespace: "tenant-a", id: "" }).success).toBe(false);
+    expect(
+      AgentConfigVersionRef.safeParse({ namespace: "tenant-a", id: "ac1", version: 2 }).success,
+    ).toBe(true);
+    expect(
+      AgentConfigVersionRef.safeParse({ namespace: "tenant-a", id: "ac1", version: 0 }).success,
+    ).toBe(false);
+  });
+
+  it("validates namespaced agent config pagination", () => {
+    expect(
+      ListAgentConfigsRequest.safeParse({ namespace: "tenant-a", limit: 10, after: "ac1" }).success,
+    ).toBe(true);
+    expect(ListAgentConfigsRequest.safeParse({ namespace: "", limit: 10 }).success).toBe(false);
+    expect(ListAgentConfigsRequest.safeParse({ namespace: "tenant-a", limit: 0 }).success).toBe(
+      false,
+    );
   });
 
   it("round-trips a stored agent config with no sampling overrides — absence is the stored form", () => {
@@ -69,6 +102,7 @@ describe("configs", () => {
 
   it("rejects a bare-string inference config — it must say which provider serves the model", () => {
     const result = CreateAgentConfigRequest.safeParse({
+      namespace: "default",
       inference: "claude-sonnet-5",
       systemPrompt: "s",
     });
@@ -113,12 +147,6 @@ describe("configs", () => {
     };
     expect(AgentConfig.safeParse({ ...config, archivedAt: null }).success).toBe(false);
     expect(AgentConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
-  });
-
-  it("accepts an archive request carrying nothing but its scope", () => {
-    expect(ArchiveAgentConfigRequest.safeParse({}).success).toBe(true);
-    expect(ArchiveAgentConfigRequest.safeParse({ namespace: "tenant-a" }).success).toBe(true);
-    expect(ArchiveAgentConfigRequest.safeParse({ namespace: "" }).success).toBe(false);
   });
 });
 

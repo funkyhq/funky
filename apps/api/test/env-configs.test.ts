@@ -77,7 +77,11 @@ describe("GET /v1/env-configs", () => {
     await post(
       scoped,
       "/v1/agent-configs",
-      { inference: { provider: "fake", model: "m" }, systemPrompt: "s" },
+      {
+        namespace: "list-env",
+        inference: { provider: "fake", model: "m" },
+        systemPrompt: "s",
+      },
       asTenant("list-env"),
     );
 

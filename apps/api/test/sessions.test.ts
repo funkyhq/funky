@@ -45,11 +45,12 @@ async function seedConfigs(
   on: ReturnType<typeof buildApp>,
   headers: Record<string, string> = {},
 ): Promise<{ agentConfigId: string; envConfigId: string }> {
+  const namespace = headers["X-Funky-Namespace"] ?? "default";
   const agent = await (
     await post(
       on,
       "/v1/agent-configs",
-      { inference: { provider: "fake", model: "m" }, systemPrompt: "s" },
+      { namespace, inference: { provider: "fake", model: "m" }, systemPrompt: "s" },
       headers,
     )
   ).json();

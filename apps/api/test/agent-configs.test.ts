@@ -2,7 +2,7 @@
 // pattern as env-configs.test.ts. The middleware machinery (auth,
 // header source validation) is covered there and in app.test.ts; here
 // we pin this resource's wiring, materialization, and its own
-// fetch-then-check scoping.
+// namespace-scoped Store references.
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,9 +12,12 @@ import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
 const RECIPE = {
+  namespace: "default",
   inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
   systemPrompt: "You are a data analyst.",
 };
+
+const recipeFor = (namespace: string) => ({ ...RECIPE, namespace });
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
@@ -52,8 +55,23 @@ describe("POST /v1/agent-configs", () => {
     expect(await fetched.json()).toEqual(body);
   });
 
+  it("uses the namespace supplied in the request", async () => {
+    const res = await post(app, "/v1/agent-configs", recipeFor("caller-namespace"));
+    expect(res.status).toBe(201);
+    expect((await res.json()).namespace).toBe("caller-namespace");
+  });
+
+  it("requires a namespace", async () => {
+    const res = await post(app, "/v1/agent-configs", {
+      inference: RECIPE.inference,
+      systemPrompt: RECIPE.systemPrompt,
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("rejects a bare-string inference config, 400", async () => {
     const res = await post(app, "/v1/agent-configs", {
+      namespace: "default",
       inference: "claude-sonnet-5",
       systemPrompt: "s",
     });
@@ -62,7 +80,10 @@ describe("POST /v1/agent-configs", () => {
   });
 
   it("rejects a missing system prompt, 400", async () => {
-    const res = await post(app, "/v1/agent-configs", { inference: RECIPE.inference });
+    const res = await post(app, "/v1/agent-configs", {
+      namespace: "default",
+      inference: RECIPE.inference,
+    });
     expect(res.status).toBe(400);
   });
 });
@@ -80,7 +101,7 @@ describe("GET /v1/agent-configs", () => {
   async function seed(tenant: string, n: number): Promise<string[]> {
     const ids: string[] = [];
     for (let i = 0; i < n; i++) {
-      const res = await post(scoped, "/v1/agent-configs", RECIPE, asTenant(tenant));
+      const res = await post(scoped, "/v1/agent-configs", recipeFor(tenant), asTenant(tenant));
       expect(res.status).toBe(201);
       ids.push((await res.json()).id);
     }
@@ -233,7 +254,7 @@ describe("POST /v1/agent-configs/:id", () => {
     expect(unknown.status).toBe(404);
 
     const created = await (
-      await post(scoped, "/v1/agent-configs", RECIPE, asTenant("update-a"))
+      await post(scoped, "/v1/agent-configs", recipeFor("update-a"), asTenant("update-a"))
     ).json();
     const foreign = await post(
       scoped,
@@ -291,7 +312,7 @@ describe("POST /v1/agent-configs/:id/archive", () => {
     ).toBe(404);
 
     const created = await (
-      await post(scoped, "/v1/agent-configs", RECIPE, asTenant("arch-a"))
+      await post(scoped, "/v1/agent-configs", recipeFor("arch-a"), asTenant("arch-a"))
     ).json();
     const foreign = await post(
       scoped,
@@ -319,7 +340,7 @@ describe("GET /v1/agent-configs/:id", () => {
   it("scopes by namespace: a foreign row 404s exactly like a nonexistent one", async () => {
     const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
     const created = await (
-      await post(scoped, "/v1/agent-configs", RECIPE, asTenant("tenant-a"))
+      await post(scoped, "/v1/agent-configs", recipeFor("tenant-a"), asTenant("tenant-a"))
     ).json();
     expect(created.namespace).toBe("tenant-a");
 

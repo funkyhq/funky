@@ -10,7 +10,13 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import type { ProviderEvent, SessionEntry, Usage, UserMessage } from "@funky/core";
+import {
+  DEFAULT_NAMESPACE,
+  type ProviderEvent,
+  type SessionEntry,
+  type Usage,
+  type UserMessage,
+} from "@funky/core";
 import {
   type Claim,
   FencedError,
@@ -126,12 +132,13 @@ const inferenceConfig = {
 };
 
 async function newSession(): Promise<string> {
-  const agentConfigId = await store.createAgentConfig({
+  const agentConfigRef = await store.createAgentConfig({
+    namespace: DEFAULT_NAMESPACE,
     inference: inferenceConfig,
     systemPrompt: "be brief",
   });
   const envConfigId = await store.createEnvConfig({});
-  return store.createSession({ agentConfigId, envConfigId });
+  return store.createSession({ agentConfigId: agentConfigRef.id, envConfigId });
 }
 
 /** Claim the session's ready item — the tests' stand-in for the loop shell. */
