@@ -22,17 +22,11 @@ export type AgentConfigStore = Pick<
 
 type Env = { Variables: { requestId: string; namespace: string } };
 
-const WireCreateAgentConfig = CreateAgentConfigRequest.omit({ namespace: true });
-const WireUpdateAgentConfig = UpdateAgentConfigRequest;
-
 export function agentConfigRoutes(store: AgentConfigStore) {
   const r = new Hono<Env>();
 
-  r.post("/", validate("json", WireCreateAgentConfig), async (c) => {
-    const ref = await store.createAgentConfig({
-      ...c.req.valid("json"),
-      namespace: c.get("namespace"),
-    });
+  r.post("/", validate("json", CreateAgentConfigRequest), async (c) => {
+    const ref = await store.createAgentConfig(c.req.valid("json"));
     const config = await store.getAgentConfig(ref);
     if (!config) throw new Error(`agent config ${ref.id} missing after create`);
     return c.json(config, 201);
@@ -68,7 +62,7 @@ export function agentConfigRoutes(store: AgentConfigStore) {
     return c.json(config);
   });
 
-  r.post("/:id", validate("json", WireUpdateAgentConfig), async (c) => {
+  r.post("/:id", validate("json", UpdateAgentConfigRequest), async (c) => {
     const id = c.req.param("id");
     try {
       const config = await store.updateAgentConfig(
