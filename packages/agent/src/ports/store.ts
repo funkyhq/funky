@@ -19,6 +19,7 @@ import type {
   SessionEntry,
   SessionId,
   UpdateAgentConfigRequest,
+  UpdateEnvConfigRequest,
   UserMessage,
   WorkItem,
 } from "@funky/core";
@@ -89,6 +90,13 @@ export interface Store {
   createEnvConfig(req: CreateEnvConfigRequest): Promise<EnvConfigRef>;
   /** Returns the namespace-scoped environment config. */
   getEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
+  /**
+   * Partially update one namespace's environment config in place. Omitted
+   * fields are preserved; an empty request is a read-like no-op. Namespace
+   * is immutable and carried by the ref. An unknown or foreign ref is
+   * indistinguishable from absence and returns undefined.
+   */
+  updateEnvConfig(ref: EnvConfigRef, req: UpdateEnvConfigRequest): Promise<EnvConfig | undefined>;
   /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */
   listEnvConfigs(req: ListEnvConfigsRequest): Promise<EnvConfig[]>;
 

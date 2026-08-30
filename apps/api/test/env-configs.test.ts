@@ -132,6 +132,78 @@ describe("GET /v1/env-configs/:id", () => {
   });
 });
 
+describe("POST /v1/env-configs/:id", () => {
+  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
+
+  it("partially updates the recipe in place", async () => {
+    const created = await (
+      await post(app, "/v1/env-configs", {
+        namespace: "default",
+        network: { type: "allowlist", domains: ["pypi.org"] },
+        packages: { pip: ["numpy"] },
+        metadata: { stage: "initial" },
+      })
+    ).json();
+
+    const res = await post(app, `/v1/env-configs/${created.id}`, {
+      packages: { npm: ["zod@4"] },
+    });
+    expect(res.status).toBe(200);
+    const updated = await res.json();
+    expect(updated).toEqual({
+      ...created,
+      packages: { npm: ["zod@4"] },
+    });
+    expect(await (await get(app, `/v1/env-configs/${created.id}`)).json()).toEqual(updated);
+  });
+
+  it("accepts an empty update as a no-op", async () => {
+    const created = await (await post(app, "/v1/env-configs", { namespace: "default" })).json();
+    const res = await post(app, `/v1/env-configs/${created.id}`, {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(created);
+  });
+
+  it("validates the update body", async () => {
+    const created = await (await post(app, "/v1/env-configs", { namespace: "default" })).json();
+    for (const body of [{ network: { type: "vpn" } }, { packages: ["numpy"] }]) {
+      const res = await post(app, `/v1/env-configs/${created.id}`, body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
+  });
+
+  it("404s unknown and foreign ids without mutating the foreign config", async () => {
+    const unknown = await post(
+      scoped,
+      "/v1/env-configs/nope",
+      { packages: { npm: ["zod"] } },
+      asTenant("update-a"),
+    );
+    expect(unknown.status).toBe(404);
+
+    const created = await (
+      await post(
+        scoped,
+        "/v1/env-configs",
+        { namespace: "update-a", packages: { pip: ["numpy"] } },
+        asTenant("update-a"),
+      )
+    ).json();
+    const foreign = await post(
+      scoped,
+      `/v1/env-configs/${created.id}`,
+      { packages: { npm: ["zod"] } },
+      asTenant("update-b"),
+    );
+    expect(foreign.status).toBe(404);
+    const own = await (
+      await get(scoped, `/v1/env-configs/${created.id}`, asTenant("update-a"))
+    ).json();
+    expect(own.packages).toEqual({ pip: ["numpy"] });
+  });
+});
+
 describe("namespace scoping (namespaceSource=header — the managed-gateway shape)", () => {
   const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
 

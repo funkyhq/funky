@@ -292,6 +292,61 @@ export function describeStoreConformance(
         expect(config?.packages).toEqual({ pip: ["pandas==2.2.0"] });
       });
 
+      it("partially updates an env config in place while preserving its identity", async () => {
+        const ref = await newEnv({
+          network: { type: "allowlist", domains: ["pypi.org"] },
+          packages: { pip: ["pandas==2.2.0"] },
+          metadata: { stage: "initial" },
+        });
+        const before = await store.getEnvConfig(ref);
+
+        const withPackages = await store.updateEnvConfig(ref, {
+          packages: { npm: ["zod@4"] },
+        });
+        expect(withPackages).toEqual({
+          ...before,
+          packages: { npm: ["zod@4"] },
+        });
+
+        const updated = await store.updateEnvConfig(ref, {
+          network: { type: "none" },
+          metadata: null,
+        });
+        expect(updated).toEqual({
+          ...withPackages,
+          network: { type: "none" },
+          metadata: null,
+        });
+        expect(await store.getEnvConfig(ref)).toEqual(updated);
+      });
+
+      it("treats an empty env config update as a read-like no-op", async () => {
+        const ref = await newEnv();
+        const before = await store.getEnvConfig(ref);
+        expect(await store.updateEnvConfig(ref, {})).toEqual(before);
+        expect(await store.getEnvConfig(ref)).toEqual(before);
+      });
+
+      it("preserves disjoint concurrent env config updates", async () => {
+        const ref = await newEnv();
+        await Promise.all([
+          store.updateEnvConfig(ref, { network: { type: "none" } }),
+          store.updateEnvConfig(ref, { packages: { npm: ["zod@4"] } }),
+        ]);
+        expect(await store.getEnvConfig(ref)).toMatchObject({
+          network: { type: "none" },
+          packages: { npm: ["zod@4"] },
+        });
+      });
+
+      it("rejects an invalid env config update at the boundary", async () => {
+        const ref = await newEnv();
+        await expect(
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+          store.updateEnvConfig(ref, { network: { type: "vpn" } } as any),
+        ).rejects.toThrow();
+      });
+
       it("returns undefined for unknown or foreign agent config refs", async () => {
         const ref = await newAgent({ namespace: "tenant-a" });
         expect(
@@ -309,6 +364,23 @@ export function describeStoreConformance(
           await store.getEnvConfig({ namespace: DEFAULT_NAMESPACE, id: "nope" }),
         ).toBeUndefined();
         expect(await store.getEnvConfig({ namespace: "tenant-b", id: ref.id })).toBeUndefined();
+      });
+
+      it("treats an unknown or foreign env config update target as absent", async () => {
+        const ref = await newEnv({ namespace: "tenant-a", packages: { pip: ["numpy"] } });
+        await expect(
+          store.updateEnvConfig(
+            { namespace: "tenant-a", id: "nope" },
+            { packages: { npm: ["zod"] } },
+          ),
+        ).resolves.toBeUndefined();
+        await expect(
+          store.updateEnvConfig(
+            { namespace: "tenant-b", id: ref.id },
+            { packages: { npm: ["zod"] } },
+          ),
+        ).resolves.toBeUndefined();
+        expect((await store.getEnvConfig(ref))?.packages).toEqual({ pip: ["numpy"] });
       });
     });
 

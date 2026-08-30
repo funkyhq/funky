@@ -1,21 +1,18 @@
 // apps/api/src/routes/env-configs.ts
-// The env-config resource — write-once sandbox recipes. Thin: validate
+// The env-config resource — sandbox recipes updated in place. Thin: validate
 // the core request shape → Store call → status code; the core schemas
 // ARE the wire format, so there is no HTTP-side translation layer.
-//
-// Write-once is structural, not policy: the Store port exposes no
-// update, archive, or delete for config rows, so create is the only
-// verb that writes — the other two routes read. Sessions reference
-// config ids; a row that could change under a running session would
-// reinterpret its history.
 import { Hono } from "hono";
-import { CreateEnvConfigRequest } from "@funky/core";
+import { CreateEnvConfigRequest, UpdateEnvConfigRequest } from "@funky/core";
 import type { Store } from "@funky/agent";
 import { errorResponse } from "../http";
 import { ListQuery, page, validate } from "./common";
 
 /** The slice of the harness Store this resource needs. */
-export type EnvConfigStore = Pick<Store, "createEnvConfig" | "getEnvConfig" | "listEnvConfigs">;
+export type EnvConfigStore = Pick<
+  Store,
+  "createEnvConfig" | "getEnvConfig" | "updateEnvConfig" | "listEnvConfigs"
+>;
 
 type Env = { Variables: { requestId: string; namespace: string } };
 
@@ -57,6 +54,18 @@ export function envConfigRoutes(store: EnvConfigStore) {
   r.get("/:id", async (c) => {
     const id = c.req.param("id");
     const config = await store.getEnvConfig({ namespace: c.get("namespace"), id });
+    if (!config) {
+      return errorResponse(c, 404, "not_found_error", `no env config ${id}`);
+    }
+    return c.json(config);
+  });
+
+  r.post("/:id", validate("json", UpdateEnvConfigRequest), async (c) => {
+    const id = c.req.param("id");
+    const config = await store.updateEnvConfig(
+      { namespace: c.get("namespace"), id },
+      c.req.valid("json"),
+    );
     if (!config) {
       return errorResponse(c, 404, "not_found_error", `no env config ${id}`);
     }
