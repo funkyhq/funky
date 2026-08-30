@@ -40,9 +40,11 @@ import {
   CreateSessionRequest,
   DEFAULT_NAMESPACE,
   EnvConfig,
+  EnvConfigRef,
   IntakeResult,
   type JsonValue,
   ListAgentConfigsRequest,
+  ListEnvConfigsRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -54,7 +56,6 @@ import {
   ArchivedError,
   type CommitStepRequest,
   FencedError,
-  type ListConfigsRequest,
   type Store,
   VersionConflictError,
 } from "@funky/agent";
@@ -372,29 +373,34 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       await db.insert(envConfigs).values({
         id,
         // Materialized at create — resolved decisions, not restatable defaults.
+        namespace: parsed.namespace,
         network: parsed.network ?? { type: "unrestricted" },
         packages: parsed.packages ?? {},
-        namespace: parsed.namespace ?? DEFAULT_NAMESPACE,
         metadata: wrap(parsed.metadata),
         createdAt: now(),
       });
-      return id;
+      return EnvConfigRef.parse({ namespace: parsed.namespace, id });
     },
 
-    async getEnvConfig(id) {
-      const [row] = await db.select().from(envConfigs).where(eq(envConfigs.id, id));
+    async getEnvConfig(ref) {
+      const { id, namespace } = EnvConfigRef.parse(ref);
+      const [row] = await db
+        .select()
+        .from(envConfigs)
+        .where(and(eq(envConfigs.id, id), eq(envConfigs.namespace, namespace)));
       return row === undefined ? undefined : toEnvConfig(row);
     },
 
-    async listEnvConfigs(req: ListConfigsRequest) {
-      const scope = eq(envConfigs.namespace, req.namespace);
-      const page = await olderThanCursor(envConfigs, scope, req.after);
+    async listEnvConfigs(req) {
+      const parsed = ListEnvConfigsRequest.parse(req);
+      const scope = eq(envConfigs.namespace, parsed.namespace);
+      const page = await olderThanCursor(envConfigs, scope, parsed.after);
       const rows = await db
         .select()
         .from(envConfigs)
         .where(and(scope, page))
         .orderBy(desc(envConfigs.createdAt), desc(envConfigs.id))
-        .limit(req.limit);
+        .limit(parsed.limit);
       return rows.map(toEnvConfig);
     },
 

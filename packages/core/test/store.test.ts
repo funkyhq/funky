@@ -7,8 +7,10 @@ import {
   CreateEnvConfigRequest,
   CreateSessionRequest,
   EnvConfig,
+  EnvConfigRef,
   IntakeResult,
   ListAgentConfigsRequest,
+  ListEnvConfigsRequest,
   PendingInput,
   Session,
   UpdateAgentConfigRequest,
@@ -164,23 +166,50 @@ describe("env configs", () => {
   });
 
   it("rejects a flat package list — specs are keyed by their package manager", () => {
-    const result = CreateEnvConfigRequest.safeParse({ packages: ["numpy", "pandas"] });
+    const result = CreateEnvConfigRequest.safeParse({
+      namespace: "tenant-a",
+      packages: ["numpy", "pandas"],
+    });
     expect(result.success).toBe(false);
   });
 
-  it("accepts an empty create request — network and packages resolve at create", () => {
-    const result = CreateEnvConfigRequest.safeParse({});
+  it("accepts a create request without recipe overrides — they resolve at create", () => {
+    const result = CreateEnvConfigRequest.safeParse({ namespace: "tenant-a" });
     expect(result.success).toBe(true);
   });
 
+  it("requires an explicit namespace when creating an env config", () => {
+    expect(CreateEnvConfigRequest.safeParse({}).success).toBe(false);
+  });
+
+  it("validates namespace-scoped env config references", () => {
+    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", id: "ec1" }).success).toBe(true);
+    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", id: "" }).success).toBe(false);
+    expect(EnvConfigRef.safeParse({ namespace: "", id: "ec1" }).success).toBe(false);
+  });
+
+  it("validates namespaced env config pagination", () => {
+    expect(
+      ListEnvConfigsRequest.safeParse({ namespace: "tenant-a", limit: 10, after: "ec1" }).success,
+    ).toBe(true);
+    expect(ListEnvConfigsRequest.safeParse({ namespace: "", limit: 10 }).success).toBe(false);
+    expect(ListEnvConfigsRequest.safeParse({ namespace: "tenant-a", limit: 0 }).success).toBe(
+      false,
+    );
+  });
+
   it("rejects an unknown network policy type", () => {
-    const result = CreateEnvConfigRequest.safeParse({ network: { type: "vpn" } });
+    const result = CreateEnvConfigRequest.safeParse({
+      namespace: "tenant-a",
+      network: { type: "vpn" },
+    });
     expect(result.success).toBe(false);
   });
 
   it("rejects a stored env config missing network — materialized decisions must be present", () => {
     const result = EnvConfig.safeParse({
       id: "ec1",
+      namespace: "tenant-a",
       packages: {},
       createdAt: "2026-08-11T12:00:00Z",
     });

@@ -28,8 +28,8 @@ afterAll(async () => {
 });
 
 describe("POST /v1/env-configs", () => {
-  it("materializes an empty request: every default becomes a stored decision", async () => {
-    const res = await post(app, "/v1/env-configs", {});
+  it("materializes a request without recipe overrides", async () => {
+    const res = await post(app, "/v1/env-configs", { namespace: "default" });
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.network).toEqual({ type: "unrestricted" });
@@ -41,6 +41,7 @@ describe("POST /v1/env-configs", () => {
 
   it("stores an explicit recipe verbatim and GET returns the same row", async () => {
     const recipe = {
+      namespace: "default",
       network: { type: "allowlist", domains: ["registry.npmjs.org"] },
       packages: { npm: ["express@4.18.0"] },
       metadata: { label: "npm-only" },
@@ -56,11 +57,19 @@ describe("POST /v1/env-configs", () => {
   });
 
   it("rejects a malformed network policy, 400", async () => {
-    const res = await post(app, "/v1/env-configs", { network: { type: "limited" } });
+    const res = await post(app, "/v1/env-configs", {
+      namespace: "default",
+      network: { type: "limited" },
+    });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.type).toBe("error");
     expect(body.error.type).toBe("invalid_request_error");
+  });
+
+  it("requires a namespace", async () => {
+    const res = await post(app, "/v1/env-configs", {});
+    expect(res.status).toBe(400);
   });
 });
 
@@ -72,7 +81,12 @@ describe("GET /v1/env-configs", () => {
 
   it("lists env configs only — the two config kinds are separate collections", async () => {
     const created = await (
-      await post(scoped, "/v1/env-configs", { packages: { npm: ["zod@4"] } }, asTenant("list-env"))
+      await post(
+        scoped,
+        "/v1/env-configs",
+        { namespace: "list-env", packages: { npm: ["zod@4"] } },
+        asTenant("list-env"),
+      )
     ).json();
     await post(
       scoped,
@@ -91,7 +105,7 @@ describe("GET /v1/env-configs", () => {
   });
 
   it("is wired on the static namespace source too", async () => {
-    const created = await (await post(app, "/v1/env-configs", {})).json();
+    const created = await (await post(app, "/v1/env-configs", { namespace: "default" })).json();
     const body = await (await get(app, "/v1/env-configs?limit=100")).json();
     expect(body.data).toContainEqual(created);
     // The default page is bounded whether or not the caller asks.
@@ -100,7 +114,9 @@ describe("GET /v1/env-configs", () => {
   });
 
   it("400s a cursor from another namespace", async () => {
-    const foreign = await (await post(scoped, "/v1/env-configs", {}, asTenant("env-cur-b"))).json();
+    const foreign = await (
+      await post(scoped, "/v1/env-configs", { namespace: "env-cur-b" }, asTenant("env-cur-b"))
+    ).json();
     const res = await get(scoped, `/v1/env-configs?after=${foreign.id}`, asTenant("env-cur-a"));
     expect(res.status).toBe(400);
     expect((await res.json()).error.type).toBe("invalid_request_error");
@@ -119,19 +135,21 @@ describe("GET /v1/env-configs/:id", () => {
 describe("namespace scoping (namespaceSource=header — the managed-gateway shape)", () => {
   const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
 
-  it("stamps the middleware's namespace and ignores any client-supplied one", async () => {
+  it("uses the namespace supplied in the request", async () => {
     const res = await post(
       scoped,
       "/v1/env-configs",
-      { namespace: "tenant-b" }, // stripped by the wire schema; the header decides
+      { namespace: "tenant-b" },
       asTenant("tenant-a"),
     );
     expect(res.status).toBe(201);
-    expect((await res.json()).namespace).toBe("tenant-a");
+    expect((await res.json()).namespace).toBe("tenant-b");
   });
 
   it("a foreign row 404s exactly like a nonexistent one", async () => {
-    const created = await (await post(scoped, "/v1/env-configs", {}, asTenant("tenant-a"))).json();
+    const created = await (
+      await post(scoped, "/v1/env-configs", { namespace: "tenant-a" }, asTenant("tenant-a"))
+    ).json();
 
     const foreign = await get(scoped, `/v1/env-configs/${created.id}`, asTenant("tenant-b"));
     expect(foreign.status).toBe(404);
@@ -143,7 +161,12 @@ describe("namespace scoping (namespaceSource=header — the managed-gateway shap
   });
 
   it("rejects a malformed namespace header", async () => {
-    const res = await post(scoped, "/v1/env-configs", {}, asTenant("no spaces allowed"));
+    const res = await post(
+      scoped,
+      "/v1/env-configs",
+      { namespace: "tenant-a" },
+      asTenant("no spaces allowed"),
+    );
     expect(res.status).toBe(400);
   });
 });

@@ -54,7 +54,7 @@ async function seedConfigs(
       headers,
     )
   ).json();
-  const env = await (await post(on, "/v1/env-configs", {}, headers)).json();
+  const env = await (await post(on, "/v1/env-configs", { namespace }, headers)).json();
   return { agentConfigId: agent.id, envConfigId: env.id };
 }
 

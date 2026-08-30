@@ -42,8 +42,8 @@ export type InputId = string;
 // The tenancy boundary, driven by the managed service's trusted gateway
 // (an OSS deployment runs single-tenant). Ownership is exactly-one and
 // lives as a fact on the three ownable row types — decided at create and
-// immutable. Agent config creation requires that ownership explicitly;
-// env configs and sessions still resolve absence to DEFAULT_NAMESPACE.
+// immutable. Config creation requires that ownership explicitly; sessions
+// still resolve absence to DEFAULT_NAMESPACE.
 // Work items, entries, and pending inputs derive theirs through sessionId;
 // the worker and the driver never read it. The store guarantees a session
 // and its configs share one namespace, and scopes config references by the
@@ -116,12 +116,27 @@ export type AgentConfig = z.infer<typeof AgentConfig>;
 
 // The env config is the sandbox recipe — the immutable description of
 // the world a session runs in.
+/** A namespace-scoped reference to an env config. */
+export const EnvConfigRef = z.object({
+  namespace: z.string().min(1),
+  id: z.string().min(1),
+});
+export type EnvConfigRef = z.infer<typeof EnvConfigRef>;
+
+/** Lists one namespace's env configs with keyset pagination. */
+export const ListEnvConfigsRequest = z.object({
+  namespace: z.string().min(1),
+  limit: z.number().int().min(1),
+  after: z.string().min(1).optional(),
+});
+export type ListEnvConfigsRequest = z.infer<typeof ListEnvConfigsRequest>;
+
 export const CreateEnvConfigRequest = z.object({
+  namespace: z.string().min(1),
   network: NetworkPolicy.optional(),
   // Presence is guaranteed at create() or creation fails — missing deps
   // surface at provision, not mid-session.
   packages: Packages.optional(),
-  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateEnvConfigRequest = z.infer<typeof CreateEnvConfigRequest>;
@@ -131,7 +146,6 @@ export const EnvConfig = CreateEnvConfigRequest.extend({
   // Materialized at create — resolved decisions, not restatable defaults:
   network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
   packages: Packages, // absence resolved to {}
-  namespace: z.string().min(1), // absence resolved to DEFAULT_NAMESPACE
   createdAt: z.iso.datetime(),
 });
 export type EnvConfig = z.infer<typeof EnvConfig>;
