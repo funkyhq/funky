@@ -56,6 +56,9 @@ CREATE TABLE env_configs (
   packages jsonb NOT NULL,
   metadata jsonb,
   created_at timestamptz NOT NULL,
+  -- Retires the recipe without deleting it. Existing sessions have their
+  -- own copy; NULL means no archive event, and the mark is never cleared.
+  archived_at timestamptz,
   PRIMARY KEY (namespace, id)
 );
 

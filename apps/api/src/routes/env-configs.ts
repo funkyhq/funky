@@ -1,5 +1,6 @@
 // apps/api/src/routes/env-configs.ts
-// The env-config resource — sandbox recipes updated in place. Thin:
+// The env-config resource — sandbox recipes updated in place until archive,
+// their terminal state. Thin:
 // validate the request shape → Store call → wire row, where the wire
 // mapping only renames the ref's qualified id to the resource's `id`.
 // Namespace is part of the request: the create body carries it — the
@@ -7,14 +8,14 @@
 // ?namespace= (see agent-configs.ts and common.ts NamespaceQuery).
 import { Hono } from "hono";
 import { CreateEnvConfigRequest, type EnvConfig, UpdateEnvConfigRequest } from "@funky/core";
-import type { Store } from "@funky/agent";
+import { ArchivedError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
 import { ListQuery, NamespaceQuery, page, validate } from "./common";
 
 /** The slice of the harness Store this resource needs. */
 export type EnvConfigStore = Pick<
   Store,
-  "createEnvConfig" | "getEnvConfig" | "updateEnvConfig" | "listEnvConfigs"
+  "createEnvConfig" | "getEnvConfig" | "updateEnvConfig" | "archiveEnvConfig" | "listEnvConfigs"
 >;
 
 type Env = { Variables: { requestId: string } };
@@ -74,16 +75,35 @@ export function envConfigRoutes(store: EnvConfigStore) {
     async (c) => {
       const id = c.req.param("id");
       const { namespace } = c.req.valid("query");
-      const config = await store.updateEnvConfig(
-        { namespace, envConfigId: id },
-        c.req.valid("json"),
-      );
-      if (!config) {
-        return errorResponse(c, 404, "not_found_error", `no env config ${id}`);
+      try {
+        const config = await store.updateEnvConfig(
+          { namespace, envConfigId: id },
+          c.req.valid("json"),
+        );
+        if (!config) {
+          return errorResponse(c, 404, "not_found_error", `no env config ${id}`);
+        }
+        return c.json(wire(config));
+      } catch (err) {
+        if (err instanceof ArchivedError) {
+          return errorResponse(c, 409, "conflict_error", err.message);
+        }
+        throw err;
       }
-      return c.json(wire(config));
     },
   );
+
+  // Archive retires the recipe without deleting it. With no unarchive,
+  // repeating the transition is a 200 carrying the original archivedAt.
+  r.post("/:id/archive", validate("query", NamespaceQuery), async (c) => {
+    const id = c.req.param("id");
+    const { namespace } = c.req.valid("query");
+    const config = await store.archiveEnvConfig({ namespace, envConfigId: id });
+    if (!config) {
+      return errorResponse(c, 404, "not_found_error", `no env config ${id}`);
+    }
+    return c.json(wire(config));
+  });
 
   return r;
 }

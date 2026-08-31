@@ -451,7 +451,9 @@ export function describeStoreConformance(
         ]) {
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
             name: "ArchivedError",
+            namespace: ref.namespace,
             configId: ref.agentConfigId,
+            configKind: "agent",
           });
         }
         expect(await store.getAgentConfig(ref)).toMatchObject({
@@ -598,6 +600,143 @@ export function describeStoreConformance(
         // The foreign archive touched nothing.
         expect(await store.getAgentConfig(ref)).toMatchObject({ namespace: "tenant-a" });
         expect("archivedAt" in (await store.getAgentConfig(ref))!).toBe(false);
+      });
+    });
+
+    describe("archiving env configs", () => {
+      it("marks the config archived without changing its recipe", async () => {
+        const ref = await newEnv({
+          network: { type: "allowlist", domains: ["pypi.org"] },
+          packages: { pip: ["numpy"] },
+          metadata: { stage: "final" },
+        });
+        const before = await store.getEnvConfig(ref);
+        clock.advance(1_000);
+
+        const archived = await store.archiveEnvConfig(ref);
+
+        expect(archived).toMatchObject({ ...before, archivedAt: expect.any(String) });
+        expect(await store.getEnvConfig(ref)).toEqual(archived);
+      });
+
+      it("stores absence as absence — an active config has no archivedAt key", async () => {
+        const config = await store.getEnvConfig(await newEnv());
+        expect(config).toBeDefined();
+        expect("archivedAt" in config!).toBe(false);
+      });
+
+      it("is idempotent and preserves the first archive time", async () => {
+        const ref = await newEnv();
+        const first = await store.archiveEnvConfig(ref);
+        clock.advance(1_000);
+        const second = await store.archiveEnvConfig(ref);
+
+        expect(second).toEqual(first);
+        expect(second?.archivedAt).toBe(first?.archivedAt);
+      });
+
+      it("makes every recipe mutation fail with a namespace-scoped ArchivedError", async () => {
+        const ref = await newEnv({ packages: { pip: ["numpy"] } });
+        await store.archiveEnvConfig(ref);
+
+        for (const req of [
+          { network: { type: "none" } as const },
+          { packages: { npm: ["zod@4"] } },
+          { metadata: { stage: "after" } },
+        ]) {
+          await expect(store.updateEnvConfig(ref, req)).rejects.toMatchObject({
+            name: "ArchivedError",
+            namespace: ref.namespace,
+            configId: ref.envConfigId,
+            configKind: "env",
+          });
+        }
+        expect((await store.getEnvConfig(ref))?.packages).toEqual({ pip: ["numpy"] });
+      });
+
+      it("keeps an empty update a read and keeps get and list readable", async () => {
+        const ref = await newEnv();
+        const archived = await store.archiveEnvConfig(ref);
+
+        expect(await store.updateEnvConfig(ref, {})).toEqual(archived);
+        expect(await store.getEnvConfig(ref)).toEqual(archived);
+        expect(
+          (await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 })).map(
+            (c) => c.envConfigId,
+          ),
+        ).toContain(ref.envConfigId);
+      });
+
+      it("refuses new sessions but leaves an existing session's snapshot runnable", async () => {
+        const agentConfigRef = await newAgent();
+        const envConfigRef = await newEnv({
+          network: { type: "none" },
+          packages: { pip: ["numpy"] },
+        });
+        const create = {
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          envConfigId: envConfigRef.envConfigId,
+        };
+        const sessionRef = await store.createSession(create);
+        await store.archiveEnvConfig(envConfigRef);
+
+        await expect(store.createSession(create)).rejects.toMatchObject({
+          name: "ArchivedError",
+          namespace: envConfigRef.namespace,
+          configId: envConfigRef.envConfigId,
+          configKind: "env",
+        });
+        expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
+          network: { type: "none" },
+          packages: { pip: ["numpy"] },
+        });
+
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [assistant("still here")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(await store.readEntries(sessionRef)).toHaveLength(2);
+      });
+
+      it("settles a create/archive race without admitting a session afterward", async () => {
+        const agentConfigRef = await newAgent();
+        const envConfigRef = await newEnv();
+        const create = {
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          envConfigId: envConfigRef.envConfigId,
+        };
+
+        const [created, archived] = await Promise.allSettled([
+          store.createSession(create),
+          store.archiveEnvConfig(envConfigRef),
+        ]);
+
+        expect(archived.status).toBe("fulfilled");
+        if (created.status === "fulfilled") {
+          expect(await store.getSession(created.value)).toBeDefined();
+        } else {
+          expect(created.reason).toBeInstanceOf(ArchivedError);
+        }
+        await expect(store.createSession(create)).rejects.toBeInstanceOf(ArchivedError);
+      });
+
+      it("treats an unknown or foreign archive target as absent", async () => {
+        const ref = await newEnv({ namespace: "tenant-a" });
+        expect(
+          await store.archiveEnvConfig({ namespace: "tenant-a", envConfigId: "nope" }),
+        ).toBeUndefined();
+        expect(
+          await store.archiveEnvConfig({ namespace: "tenant-b", envConfigId: ref.envConfigId }),
+        ).toBeUndefined();
+
+        const own = await store.getEnvConfig(ref);
+        expect(own).toMatchObject({ namespace: "tenant-a" });
+        expect("archivedAt" in own!).toBe(false);
       });
     });
 

@@ -175,6 +175,30 @@ describe("env configs", () => {
     expect(roundTrip(EnvConfig, config)).toEqual(config);
   });
 
+  it("round-trips an archived env config — the mark is a timestamp, not a flag", () => {
+    const config = {
+      envConfigId: "ec1",
+      network: { type: "none" },
+      packages: {},
+      namespace: "tenant-a",
+      createdAt: "2026-08-11T12:00:00Z",
+      archivedAt: "2026-08-13T12:00:00Z",
+    };
+    expect(roundTrip(EnvConfig, config)).toEqual(config);
+  });
+
+  it("rejects a null or boolean env config archivedAt — absence is spelled by absence", () => {
+    const config = {
+      envConfigId: "ec1",
+      network: { type: "none" },
+      packages: {},
+      namespace: "tenant-a",
+      createdAt: "2026-08-11T12:00:00Z",
+    };
+    expect(EnvConfig.safeParse({ ...config, archivedAt: null }).success).toBe(false);
+    expect(EnvConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
+  });
+
   it("rejects a flat package list — specs are keyed by their package manager", () => {
     const result = CreateEnvConfigRequest.safeParse({
       namespace: "tenant-a",
@@ -295,7 +319,7 @@ describe("sessions", () => {
     }
     // The row is the recipe plus its envelope, nothing else.
     expect(Object.keys(EnvConfig.shape).sort()).toEqual(
-      [...recipe, "namespace", "envConfigId", "metadata", "createdAt"].sort(),
+      [...recipe, "namespace", "envConfigId", "metadata", "createdAt", "archivedAt"].sort(),
     );
   });
 

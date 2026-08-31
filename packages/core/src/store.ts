@@ -68,11 +68,11 @@ export const DEFAULT_NAMESPACE = "default";
 // config id beside the copy for provenance rather than resolution. Either
 // way, a later edit cannot reshape a run already under way.
 //
-// Archive is the one terminal transition: it retires an agent config
-// without deleting it — the row stays readable and its versions stay
-// resolvable (sessions that pinned one keep running), but it accepts no
-// further update and no new session may reference it. There is no
-// unarchive, so nothing here spells one.
+// Archive is the one terminal transition: it retires either config without
+// deleting it. The row stays readable, and an agent config's versions stay
+// resolvable; sessions that already pinned the agent version and copied the
+// env recipe keep running. What stops is further update and use by a new
+// session. There is no unarchive, so nothing here spells one.
 
 /** A namespace-scoped reference to an agent config. */
 export const AgentConfigRef = z.object({
@@ -186,6 +186,9 @@ export const EnvConfig = EnvConfigRef.extend({
   ...EnvConfigSnapshot.shape,
   metadata: JsonValue.optional(),
   createdAt: z.iso.datetime(),
+  // Set once when the recipe is retired. Absence is the active state;
+  // archive is terminal, so there is no boolean state to toggle back.
+  archivedAt: z.iso.datetime().optional(),
 });
 export type EnvConfig = z.infer<typeof EnvConfig>;
 

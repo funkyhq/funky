@@ -105,12 +105,22 @@ export interface Store {
    * is immutable and carried by the ref. An unknown or foreign ref is
    * indistinguishable from absence and returns undefined.
    *
+   * An archived config is read-only: a mutation throws ArchivedError. An
+   * empty request remains a read and returns the archived row unchanged.
+   *
    * In place means exactly that: there is no version history, and this
    * reaches no existing session. Sessions carry their own copy of the
    * recipe (createSession), so an update changes only what sessions
    * created after it will provision from.
    */
   updateEnvConfig(ref: EnvConfigRef, req: UpdateEnvConfigRequest): Promise<EnvConfig | undefined>;
+  /**
+   * Archive one namespace's environment config. The row stays readable and
+   * sessions that already copied its recipe keep running; future writes and
+   * references from new sessions are refused. There is no unarchive, making
+   * repeat calls idempotent: they return the original archivedAt.
+   */
+  archiveEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
   /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */
   listEnvConfigs(req: ListEnvConfigsRequest): Promise<EnvConfig[]>;
 
@@ -124,11 +134,11 @@ export interface Store {
    *  would let an edit reshape a running session's world. Namespace must
    *  be specified. Rejects unknown configs or versions with
    *  namespace-scoped checks, so foreign ids remain indistinguishable from
-   *  nonexistent ones, and an archived agent config with ArchivedError.
-   *  Archiving and creating are serialized on the agent config row: a
-   *  session either commits before the archive or sees it — never lands
-   *  after one. The env config row is read under the same discipline, so
-   *  the copy is always of a committed state. */
+   *  nonexistent ones, and either archived config with ArchivedError.
+   *  Archiving and creating are serialized on each config row: a session
+   *  either commits before an archive or sees it — never lands after one.
+   *  The env config row is read under the same discipline, so the copy is
+   *  always of a committed, active state. */
   createSession(req: CreateSessionRequest): Promise<SessionRef>;
   getSession(ref: SessionRef): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the
@@ -221,14 +231,25 @@ export class FencedError extends Error {
   }
 }
 
+export type ConfigKind = "agent" | "env";
+
 /**
- * Thrown when a write targets an archived config. Terminal, unlike
- * VersionConflictError: no retry of this request can ever succeed.
+ * Thrown when a mutation or new reference targets an archived config.
+ * Terminal, unlike VersionConflictError: no retry can ever succeed.
  */
 export class ArchivedError extends Error {
-  constructor(readonly configId: ConfigId) {
-    super(`agent config ${configId} is archived`);
+  readonly namespace: string;
+  readonly configId: ConfigId;
+  readonly configKind: ConfigKind;
+
+  constructor(ref: AgentConfigRef | EnvConfigRef) {
+    const configKind = "agentConfigId" in ref ? "agent" : "env";
+    const configId = "agentConfigId" in ref ? ref.agentConfigId : ref.envConfigId;
+    super(`${configKind} config ${ref.namespace}/${configId} is archived`);
     this.name = "ArchivedError";
+    this.namespace = ref.namespace;
+    this.configId = configId;
+    this.configKind = configKind;
   }
 }
 
