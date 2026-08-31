@@ -42,12 +42,18 @@ export type InputId = string;
 // The tenancy boundary, driven by the managed service's trusted gateway
 // (an OSS deployment runs single-tenant). Ownership is exactly-one and
 // lives as a fact on the three ownable row types — decided at create and
-// immutable. Config creation requires that ownership explicitly; sessions
-// still resolve absence to DEFAULT_NAMESPACE.
-// Work items, entries, and pending inputs derive theirs through sessionId;
-// the worker and the driver never read it. The store guarantees a session
-// and its configs share one namespace, and scopes config references by the
-// namespace they carry; a foreign config is "unknown" — indistinguishable
+// immutable. Every create requires that ownership explicitly; resolving
+// a default is the api gateway's job (DEFAULT_NAMESPACE below), never
+// the store's.
+// In this vocabulary, entries and pending inputs carry no namespace —
+// theirs rides on the SessionRef that addresses them (adapters still
+// store a copy as the partition key). Work items DO carry it here: a
+// claim is the one read that starts from nothing, so the claimed row
+// itself must hand the driver the scope its later refs carry. The
+// driver only echoes that namespace back into refs — tenancy decisions
+// stay at the api's gateway. The store guarantees a session and its
+// configs share one namespace, and scopes every reference by the
+// namespace it carries; a foreign row is "unknown" — indistinguishable
 // from nonexistent, so nothing leaks.
 export const DEFAULT_NAMESPACE = "default";
 
@@ -67,7 +73,7 @@ export const DEFAULT_NAMESPACE = "default";
 /** A namespace-scoped reference to an agent config. */
 export const AgentConfigRef = z.object({
   namespace: z.string().min(1),
-  id: z.string().min(1),
+  agentConfigId: z.string().min(1),
 });
 export type AgentConfigRef = z.infer<typeof AgentConfigRef>;
 
@@ -102,8 +108,8 @@ export const UpdateAgentConfigRequest = z.object({
 });
 export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
 
-export const AgentConfig = CreateAgentConfigRequest.extend({
-  id: z.string(),
+export const AgentConfig = AgentConfigRef.extend({
+  ...CreateAgentConfigRequest.omit({ namespace: true }).shape,
   version: z.number().int().min(1),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -118,7 +124,7 @@ export type AgentConfig = z.infer<typeof AgentConfig>;
 /** A namespace-scoped reference to an env config. */
 export const EnvConfigRef = z.object({
   namespace: z.string().min(1),
-  id: z.string().min(1),
+  envConfigId: z.string().min(1),
 });
 export type EnvConfigRef = z.infer<typeof EnvConfigRef>;
 
@@ -148,8 +154,8 @@ export const UpdateEnvConfigRequest = z.object({
 });
 export type UpdateEnvConfigRequest = z.infer<typeof UpdateEnvConfigRequest>;
 
-export const EnvConfig = CreateEnvConfigRequest.extend({
-  id: z.string(),
+export const EnvConfig = EnvConfigRef.extend({
+  ...CreateEnvConfigRequest.omit({ namespace: true }).shape,
   // Materialized at create — resolved decisions, not restatable defaults:
   network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
   packages: Packages, // absence resolved to {}
@@ -159,22 +165,28 @@ export type EnvConfig = z.infer<typeof EnvConfig>;
 
 // --- sessions ---
 
+/** A namespace-scoped reference to a session. */
+export const SessionRef = z.object({
+  namespace: z.string().min(1),
+  sessionId: z.string().min(1),
+});
+export type SessionRef = z.infer<typeof SessionRef>;
+
 export const CreateSessionRequest = z.object({
+  namespace: z.string().min(1),
   agentConfigId: z.string(),
   // Omit to pin the latest version at creation time.
   agentConfigVersion: z.number().int().min(1).optional(),
   envConfigId: z.string(),
-  // Explicit, not derived from the configs: deriving would let a leaked
-  // foreign config id pull a session into the wrong namespace. The store
-  // enforces the match instead.
-  namespace: z.string().min(1).optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 
-export const Session = CreateSessionRequest.extend({
-  id: z.string(),
-  namespace: z.string().min(1), // materialized: absence resolved to DEFAULT_NAMESPACE
+// The row is its own ref, like WorkItem: the key comes first, and the
+// request's fields ride in verbatim minus namespace, which the key
+// already carries — every field declared exactly once.
+export const Session = SessionRef.extend({
+  ...CreateSessionRequest.omit({ namespace: true }).shape,
   // Materialized from the request or the agent config's latest version.
   agentConfigVersion: z.number().int().min(1),
   // The session's one workspace, registered by the driver's first
@@ -192,9 +204,16 @@ export type ItemType = z.infer<typeof ItemType>;
 export const ItemStatus = z.enum(["ready", "leased", "done"]);
 export type ItemStatus = z.infer<typeof ItemStatus>;
 
-export const WorkItem = z.object({
-  id: z.string(),
-  sessionId: z.string(),
+/**
+ * A reference to a work item — the full path to the row: namespace,
+ * parent session, item.
+ */
+export const WorkItemRef = SessionRef.extend({
+  itemId: z.string().min(1),
+});
+export type WorkItemRef = z.infer<typeof WorkItemRef>;
+
+export const WorkItem = WorkItemRef.extend({
   type: ItemType,
   status: ItemStatus,
   // Times claimed (claimItem increments; 0 = never claimed). attempt > 1

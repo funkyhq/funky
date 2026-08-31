@@ -29,7 +29,6 @@ describe("loadConfig — valid input", () => {
       port: 3000,
       dbPoolMax: 10,
       authToken: BASE.FUNKY_AUTH_TOKEN,
-      namespaceSource: "static",
       streamPollMs: 1000,
       streamHeartbeatMs: 15_000,
     });
@@ -48,13 +47,6 @@ describe("loadConfig — valid input", () => {
   it("FUNKY_AUTH=disabled yields a null token (and no token required)", () => {
     const cfg = loadConfig({ DATABASE_URL: BASE.DATABASE_URL, FUNKY_AUTH: "disabled" });
     expect(cfg.authToken).toBeNull();
-  });
-
-  it("namespace source defaults to static and parses header", () => {
-    expect(loadConfig(BASE).namespaceSource).toBe("static");
-    expect(loadConfig({ ...BASE, FUNKY_NAMESPACE_SOURCE: "header" }).namespaceSource).toBe(
-      "header",
-    );
   });
 });
 
@@ -80,16 +72,6 @@ describe("loadConfig — invalid input", () => {
         ...BASE,
         FUNKY_STREAM_POLL_MS: "60000",
         FUNKY_STREAM_HEARTBEAT_MS: "15000",
-      }),
-    ).toThrow("process.exit(1)");
-  });
-
-  it("exits when the header source is combined with disabled auth", () => {
-    expect(() =>
-      loadConfig({
-        DATABASE_URL: BASE.DATABASE_URL,
-        FUNKY_AUTH: "disabled",
-        FUNKY_NAMESPACE_SOURCE: "header",
       }),
     ).toThrow("process.exit(1)");
   });

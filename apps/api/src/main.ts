@@ -18,7 +18,6 @@ const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb);
 const app = buildApp({
   store,
   authToken: cfg.authToken,
-  namespaceSource: cfg.namespaceSource,
   ping: () => pool.query("SELECT 1"),
   stream: { pollMs: cfg.streamPollMs, heartbeatMs: cfg.streamHeartbeatMs },
 });

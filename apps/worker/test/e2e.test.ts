@@ -27,7 +27,7 @@ import {
   DEFAULT_NAMESPACE,
   type AgentMessage,
   type SessionEntry,
-  type SessionId,
+  type SessionRef,
 } from "@funky/core";
 import { createE2bProvider, createPgStore, type StoreDb } from "@funky/adapters";
 import { storeDdl } from "../../../packages/adapters/test/store-ddl";
@@ -52,7 +52,7 @@ if (!url || !anthropicKey || !e2bKey) {
   const LEASE_MS = 3_000;
 
   const workers: ChildProcess[] = [];
-  const sessions: SessionId[] = [];
+  const sessions: SessionRef[] = [];
 
   beforeAll(async () => {
     await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
@@ -64,8 +64,8 @@ if (!url || !anthropicKey || !e2bKey) {
       if (worker.exitCode === null && worker.signalCode === null) worker.kill("SIGKILL");
     }
     // Orphan hygiene: kill the sandboxes the runs created.
-    for (const sessionId of sessions) {
-      const session = await store.getSession(sessionId);
+    for (const sessionRef of sessions) {
+      const session = await store.getSession(sessionRef);
       if (!session?.sandboxId) continue;
       await sandboxes
         .connect(session.sandboxId)
@@ -103,7 +103,7 @@ if (!url || !anthropicKey || !e2bKey) {
     return worker;
   }
 
-  async function seedSession(task: string): Promise<SessionId> {
+  async function seedSession(task: string): Promise<SessionRef> {
     const agentConfigRef = await store.createAgentConfig({
       namespace: DEFAULT_NAMESPACE,
       inference: {
@@ -117,17 +117,18 @@ if (!url || !anthropicKey || !e2bKey) {
         "the execution was interrupted, issue that call again.",
     });
     const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
-    const sessionId = await store.createSession({
-      agentConfigId: agentConfigRef.id,
-      envConfigId: envConfigRef.id,
+    const sessionRef = await store.createSession({
+      namespace: DEFAULT_NAMESPACE,
+      agentConfigId: agentConfigRef.agentConfigId,
+      envConfigId: envConfigRef.envConfigId,
     });
-    sessions.push(sessionId);
-    const result = await store.intake(sessionId, {
+    sessions.push(sessionRef);
+    const result = await store.intake(sessionRef, {
       role: "user",
       content: [{ type: "text", text: task }],
     });
     expect(result.kind).toBe("started");
-    return sessionId;
+    return sessionRef;
   }
 
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -146,8 +147,8 @@ if (!url || !anthropicKey || !e2bKey) {
   }
 
   // A run's end is the atomic NON-creation of a next item: all items done.
-  async function runFinished(sessionId: SessionId): Promise<boolean> {
-    const items = await store.listItems(sessionId);
+  async function runFinished(sessionRef: SessionRef): Promise<boolean> {
+    const items = await store.listItems(sessionRef);
     return items.length > 0 && items.every((item) => item.status === "done");
   }
 
@@ -175,19 +176,19 @@ if (!url || !anthropicKey || !e2bKey) {
       "drives a real tool task end to end through the forked worker",
       { timeout: 180_000 },
       async () => {
-        const sessionId = await seedSession(
+        const sessionRef = await seedSession(
           "Create a file at /home/user/hello.txt containing exactly: hello funky",
         );
         const worker = forkWorker();
         try {
-          await waitFor(() => runFinished(sessionId), 150_000, "the run to finish");
+          await waitFor(() => runFinished(sessionRef), 150_000, "the run to finish");
         } finally {
           // Claims have no session filter: a worker that outlives its test
           // would steal the next test's items.
           await killWorker(worker);
         }
 
-        const entries = await store.readEntries(sessionId);
+        const entries = await store.readEntries(sessionRef);
         assertEveryCallResolvedOnce(entries);
         const msgs = messages(entries);
         const tail = msgs[msgs.length - 1];
@@ -197,7 +198,7 @@ if (!url || !anthropicKey || !e2bKey) {
 
         // The workspace really changed: read the file back through the
         // provider, via the binding the driver registered.
-        const session = await store.getSession(sessionId);
+        const session = await store.getSession(sessionRef);
         if (!session?.sandboxId) throw new Error("no sandbox bound to the session");
         const sandbox = await sandboxes.connect(session.sandboxId);
         const bytes = await sandbox.readFile("/home/user/hello.txt");
@@ -212,7 +213,7 @@ if (!url || !anthropicKey || !e2bKey) {
         // The sleep is the kill window: an execute_tools item stays leased
         // for its whole duration, so the parent reliably lands the SIGKILL
         // while tools are (or are about to be) executing.
-        const sessionId = await seedSession(
+        const sessionRef = await seedSession(
           "First run the bash command `sleep 15`. Then create a file at " +
             "/home/user/done.txt containing exactly: recovered",
         );
@@ -221,7 +222,7 @@ if (!url || !anthropicKey || !e2bKey) {
         const first = forkWorker();
         await waitFor(
           async () => {
-            const items = await store.listItems(sessionId);
+            const items = await store.listItems(sessionRef);
             return items.some((item) => item.type === "execute_tools" && item.status === "leased");
           },
           120_000,
@@ -231,16 +232,16 @@ if (!url || !anthropicKey || !e2bKey) {
 
         const resume = forkWorker();
         try {
-          await waitFor(() => runFinished(sessionId), 240_000, "the resumed run to finish");
+          await waitFor(() => runFinished(sessionRef), 240_000, "the resumed run to finish");
         } finally {
           await killWorker(resume);
         }
 
-        const entries = await store.readEntries(sessionId);
+        const entries = await store.readEntries(sessionRef);
         assertEveryCallResolvedOnce(entries);
         // The carve-out ran: the killed batch was re-claimed, not re-executed —
         // its calls settled as synthesized interrupted results.
-        const items = await store.listItems(sessionId);
+        const items = await store.listItems(sessionRef);
         expect(items.some((item) => item.type === "execute_tools" && item.attempt > 1)).toBe(true);
         const msgs = messages(entries);
         expect(
@@ -378,7 +379,9 @@ if (!url || !anthropicKey || !e2bKey) {
             agentConfigId: agent.id,
             envConfigId: env.id,
           });
-          sessions.push(session.id);
+          // The wire echoes namespace, so the response rebuilds the ref
+          // (apiJson returns any — nothing checks this line but us).
+          sessions.push({ namespace: session.namespace, sessionId: session.id });
           const started = await apiJson("POST", `/v1/sessions/${session.id}/messages`, {
             content:
               "First run the bash command `sleep 15`. Then create a file at " +

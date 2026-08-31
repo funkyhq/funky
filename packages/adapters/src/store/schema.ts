@@ -36,66 +36,94 @@ import type {
 /** SQL NULL = absent; `{ v }` = present (v may be JSON null). */
 export type WrappedJson = { v: JsonValue };
 
-export const agentConfigs = pgTable("agent_configs", {
-  id: text("id").primaryKey(),
-  // The tenancy boundary (core/store.ts) — the adapter materializes the
-  // default; no SQL DEFAULT, so the resolution lives in exactly one place.
-  namespace: text("namespace").notNull(),
-  // Pointer to the latest immutable snapshot.
-  currentVersion: integer("current_version").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  // The terminal state, set once: null = active. Archiving lives on the
-  // identity, not on a version — it retires the config, not a snapshot.
-  archivedAt: timestamp("archived_at", { withTimezone: true }),
-});
+// Every table carries namespace and is keyed by its full path, namespace
+// leading — point reads arrive ref-scoped, and namespace is the key the
+// future PARTITION BY needs on every table. Children copy it from their
+// parent, made structural by composite FKs; no bare-id UNIQUE exists
+// anywhere (see migration.sql).
+export const agentConfigs = pgTable(
+  "agent_configs",
+  {
+    // The tenancy boundary (core/store.ts); the caller supplies it on
+    // every create — no SQL DEFAULT, no adapter resolution.
+    namespace: text("namespace").notNull(),
+    id: text("id").notNull(),
+    // Pointer to the latest immutable snapshot.
+    currentVersion: integer("current_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    // The terminal state, set once: null = active. Archiving lives on the
+    // identity, not on a version — it retires the config, not a snapshot.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.namespace, t.id] })],
+);
 
-// Immutable snapshots of every agent config version.
+// Immutable snapshots of every agent config version. The PK is the
+// AgentConfigVersionRef verbatim.
 export const agentConfigVersions = pgTable(
   "agent_config_versions",
   {
-    agentConfigId: text("agent_config_id")
-      .notNull()
-      .references(() => agentConfigs.id),
+    namespace: text("namespace").notNull(),
+    agentConfigId: text("agent_config_id").notNull(),
     version: integer("version").notNull(),
     inference: jsonb("inference").$type<InferenceConfig>().notNull(),
     systemPrompt: text("system_prompt").notNull(),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
-  (t) => [primaryKey({ columns: [t.agentConfigId, t.version] })],
+  (t) => [
+    primaryKey({ columns: [t.namespace, t.agentConfigId, t.version] }),
+    foreignKey({
+      columns: [t.namespace, t.agentConfigId],
+      foreignColumns: [agentConfigs.namespace, agentConfigs.id],
+    }),
+  ],
 );
 
-export const envConfigs = pgTable("env_configs", {
-  id: text("id").primaryKey(),
-  // Materialized at create — never SQL NULL (resolved decisions, not defaults).
-  network: jsonb("network").$type<NetworkPolicy>().notNull(),
-  packages: jsonb("packages").$type<Packages>().notNull(),
-  namespace: text("namespace").notNull(),
-  metadata: jsonb("metadata").$type<WrappedJson>(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const envConfigs = pgTable(
+  "env_configs",
+  {
+    namespace: text("namespace").notNull(),
+    id: text("id").notNull(),
+    // Materialized at create — never SQL NULL (resolved decisions, not defaults).
+    network: jsonb("network").$type<NetworkPolicy>().notNull(),
+    packages: jsonb("packages").$type<Packages>().notNull(),
+    metadata: jsonb("metadata").$type<WrappedJson>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.namespace, t.id] })],
+);
 
 export const sessions = pgTable(
   "sessions",
   {
-    id: text("id").primaryKey(),
+    namespace: text("namespace").notNull(),
+    id: text("id").notNull(),
     agentConfigId: text("agent_config_id").notNull(),
     // Resolved from the agent's latest version at session creation. The
     // composite FK below makes every session's behavior snapshot durable.
     agentConfigVersion: integer("agent_config_version").notNull(),
-    envConfigId: text("env_config_id")
-      .notNull()
-      .references(() => envConfigs.id),
-    namespace: text("namespace").notNull(),
+    envConfigId: text("env_config_id").notNull(),
     // The session's one workspace; null until bindSandbox registers it.
     sandboxId: text("sandbox_id"),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (t) => [
+    primaryKey({ columns: [t.namespace, t.id] }),
+    // Same-namespace, structural, on both references: the pinned version
+    // and the env recipe must live in the session's own namespace.
     foreignKey({
-      columns: [t.agentConfigId, t.agentConfigVersion],
-      foreignColumns: [agentConfigVersions.agentConfigId, agentConfigVersions.version],
+      columns: [t.namespace, t.agentConfigId, t.agentConfigVersion],
+      foreignColumns: [
+        agentConfigVersions.namespace,
+        agentConfigVersions.agentConfigId,
+        agentConfigVersions.version,
+      ],
+    }),
+    foreignKey({
+      columns: [t.namespace, t.envConfigId],
+      foreignColumns: [envConfigs.namespace, envConfigs.id],
     }),
   ],
 );
@@ -103,22 +131,30 @@ export const sessions = pgTable(
 export const sessionEntries = pgTable(
   "session_entries",
   {
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id),
+    namespace: text("namespace").notNull(),
+    sessionId: text("session_id").notNull(),
     seq: integer("seq").notNull(),
     entry: jsonb("entry").$type<SessionEntry>().notNull(),
   },
-  (t) => [primaryKey({ columns: [t.sessionId, t.seq] })],
+  (t) => [
+    primaryKey({ columns: [t.namespace, t.sessionId, t.seq] }),
+    foreignKey({
+      columns: [t.namespace, t.sessionId],
+      foreignColumns: [sessions.namespace, sessions.id],
+    }),
+  ],
 );
 
 export const workItems = pgTable(
   "work_items",
   {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id),
+    // Copied from the session at mint (core/store.ts): the claim is the
+    // one read that starts from nothing, so the claimed row itself must
+    // hand the driver the scope its later refs carry. The composite FK
+    // below makes the copy structural — it can never diverge.
+    namespace: text("namespace").notNull(),
+    sessionId: text("session_id").notNull(),
+    id: text("id").notNull(),
     type: text("type").notNull(), // ItemType
     status: text("status").notNull(), // ItemStatus
     // Lease bookkeeping — adapter internals, not port vocabulary.
@@ -131,31 +167,48 @@ export const workItems = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (t) => [
+    primaryKey({ columns: [t.namespace, t.sessionId, t.id] }),
+    foreignKey({
+      columns: [t.namespace, t.sessionId],
+      foreignColumns: [sessions.namespace, sessions.id],
+    }),
     // The one-open-item invariant, enforced declaratively: at most one
-    // non-done item per session. This index IS "busy".
+    // non-done item per session. This index IS "busy". Carries the
+    // partition key like every unique index here.
     uniqueIndex("work_items_one_open_per_session")
-      .on(t.sessionId)
+      .on(t.namespace, t.sessionId)
       .where(sql`${t.status} <> 'done'`),
-    index("work_items_claim_scan").on(t.status, t.createdAt),
+    // Partial: only live rows, in arrival order — the claim poll is one
+    // ordered walk, and the unbounded done majority never enters. The
+    // claim query repeats the predicate verbatim (see pg.ts claimItem).
+    // Deliberately namespace-free: the claim scan is cross-tenant.
+    index("work_items_claim_scan")
+      .on(t.createdAt)
+      .where(sql`${t.status} <> 'done'`),
   ],
 );
 
 export const pendingInputs = pgTable(
   "pending_inputs",
   {
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id),
-    // Drain order — arrival order even under equal timestamps. The key
-    // shape mimics session_entries, but ord is plumbing, not contract:
-    // a global bigserial, gappy and never per-session dense (seq is the
-    // hand-minted dense one). The composite PK is the access path for
-    // the session-scoped reads that are this table's only queries.
+    namespace: text("namespace").notNull(),
+    sessionId: text("session_id").notNull(),
+    // The port-level name — what consumeInputs targets. In the PK, so an
+    // input id is unique within its session by construction.
+    id: text("id").notNull(),
+    // Drain order — arrival order even under equal timestamps. A global
+    // bigserial, gappy and never per-session dense (seq is the
+    // hand-minted dense one): plumbing, not contract. Reads scan the PK
+    // prefix and order by it.
     ord: bigserial("ord", { mode: "number" }),
-    // The port-level name — what consumeInputs targets.
-    id: text("id").notNull().unique(),
     message: jsonb("message").$type<UserMessage>().notNull(),
     arrivedAt: timestamp("arrived_at", { withTimezone: true }).notNull(),
   },
-  (t) => [primaryKey({ columns: [t.sessionId, t.ord] })],
+  (t) => [
+    primaryKey({ columns: [t.namespace, t.sessionId, t.id] }),
+    foreignKey({
+      columns: [t.namespace, t.sessionId],
+      foreignColumns: [sessions.namespace, sessions.id],
+    }),
+  ],
 );

@@ -14,6 +14,7 @@ import {
   DEFAULT_NAMESPACE,
   type ProviderEvent,
   type SessionEntry,
+  type SessionRef,
   type Usage,
   type UserMessage,
 } from "@funky/core";
@@ -131,19 +132,23 @@ const inferenceConfig = {
   temperature: 0.2,
 };
 
-async function newSession(): Promise<string> {
+async function newSession(): Promise<SessionRef> {
   const agentConfigRef = await store.createAgentConfig({
     namespace: DEFAULT_NAMESPACE,
     inference: inferenceConfig,
     systemPrompt: "be brief",
   });
   const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
-  return store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: envConfigRef.id });
+  return store.createSession({
+    namespace: DEFAULT_NAMESPACE,
+    agentConfigId: agentConfigRef.agentConfigId,
+    envConfigId: envConfigRef.envConfigId,
+  });
 }
 
 /** Claim the session's ready item — the tests' stand-in for the loop shell. */
-async function claim(sessionId: string, leaseMs = 60_000): Promise<Claim> {
-  const claimed = await store.claimItem({ leaseMs, sessionId });
+async function claim(ref: SessionRef, leaseMs = 60_000): Promise<Claim> {
+  const claimed = await store.claimItem({ leaseMs, session: ref });
   if (!claimed) throw new Error("expected a claimable item");
   return claimed;
 }
@@ -172,7 +177,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 describe("driver steps over the pg store", () => {
   it("runs a full turn: inference → tools → inference → completion", async () => {
-    const sessionId = await newSession();
+    const sessionRef = await newSession();
     const provider = scriptedProvider([callEcho("hi"), sayText("done!")]);
     const deps: StepDeps = {
       store,
@@ -180,16 +185,16 @@ describe("driver steps over the pg store", () => {
       toolSpecs: [...echoOnly.values()].map(toToolSpec),
     };
 
-    await store.intake(sessionId, user("go"));
+    await store.intake(sessionRef, user("go"));
     // Only the execute_tools step receives executables — the loop's
     // ensure-on-claim; inference steps declare specs without a sandbox.
-    await runStep(deps, await claim(sessionId), 60_000); // inference → tool call
-    await runStep(deps, await claim(sessionId), 60_000, echoOnly); // execute_tools
-    await runStep(deps, await claim(sessionId), 60_000); // inference → end_turn
+    await runStep(deps, await claim(sessionRef), 60_000); // inference → tool call
+    await runStep(deps, await claim(sessionRef), 60_000, echoOnly); // execute_tools
+    await runStep(deps, await claim(sessionRef), 60_000); // inference → end_turn
     // The run ended: its end is the non-creation of a fourth item.
-    expect(await store.claimItem({ leaseMs: 60_000, sessionId })).toBeUndefined();
+    expect(await store.claimItem({ leaseMs: 60_000, session: sessionRef })).toBeUndefined();
 
-    const log = messages(await store.readEntries(sessionId));
+    const log = messages(await store.readEntries(sessionRef));
     expect(log.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
     expect(log[2]).toMatchObject({ toolName: "echo", content: [{ type: "text", text: "hi" }] });
     expect(log[3]).toMatchObject({ stopReason: "end_turn" });
@@ -212,27 +217,27 @@ describe("driver steps over the pg store", () => {
   });
 
   it("drains an input queued before the step as steering, not a follow-up", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
-    const queued = await store.intake(sessionId, user("steer"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const queued = await store.intake(sessionRef, user("steer"));
     expect(queued.kind).toBe("queued");
 
     const provider = scriptedProvider([sayText("ok")]);
-    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionId), 60_000);
+    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionRef), 60_000);
 
     // Steering shaped the context (appended at the tail)…
     expect(provider.requests[0]?.context.map((m) => m.role)).toEqual(["user", "user"]);
     // …rode in the commit before the step's output, and was consumed.
-    const log = messages(await store.readEntries(sessionId));
+    const log = messages(await store.readEntries(sessionRef));
     expect(log.map((m) => m.role)).toEqual(["user", "user", "assistant"]);
-    expect(await store.pendingInputs(sessionId)).toHaveLength(0);
+    expect(await store.pendingInputs(sessionRef)).toHaveLength(0);
     // One run, one item: steering never chains a new run.
-    expect(await store.listItems(sessionId)).toHaveLength(1);
+    expect(await store.listItems(sessionRef)).toHaveLength(1);
   });
 
   it("auto-chains an input that arrives mid-step into a follow-up run", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
 
     const gate = deferred();
     const provider = scriptedProvider([
@@ -241,67 +246,67 @@ describe("driver steps over the pg store", () => {
     ]);
     const deps: StepDeps = { store, provider, toolSpecs: [] };
 
-    const inFlight = runStep(deps, await claim(sessionId), 60_000);
+    const inFlight = runStep(deps, await claim(sessionRef), 60_000);
     // Arrive after run 1's inference prep: too late to steer this step.
     await until(() => provider.requests.length === 1);
-    const queued = await store.intake(sessionId, user("follow-up"));
+    const queued = await store.intake(sessionRef, user("follow-up"));
     expect(queued.kind).toBe("queued");
     gate.resolve();
     await inFlight;
 
     // The terminal commit chained a second run…
-    await runStep(deps, await claim(sessionId), 60_000);
+    await runStep(deps, await claim(sessionRef), 60_000);
 
     // …with the follow-up as an ordinary user entry after run 1's terminal message.
-    const log = messages(await store.readEntries(sessionId));
+    const log = messages(await store.readEntries(sessionRef));
     expect(log.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(provider.requests[1]?.context.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
-    expect(await store.listItems(sessionId)).toHaveLength(2);
+    expect(await store.listItems(sessionRef)).toHaveLength(2);
   });
 
   it("ends a cancelled run at the claim boundary and parks queued inputs", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
-    await store.requestCancel(sessionId);
-    const queued = await store.intake(sessionId, user("while cancelled"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    await store.requestCancel(sessionRef);
+    const queued = await store.intake(sessionRef, user("while cancelled"));
     expect(queued.kind).toBe("queued");
 
     const provider = scriptedProvider([sayText("fresh")]);
     const deps: StepDeps = { store, provider, toolSpecs: [] };
-    await runStep(deps, await claim(sessionId), 60_000);
+    await runStep(deps, await claim(sessionRef), 60_000);
 
     // The run ended without inference, appending nothing; the queued
     // input is parked, not chained.
     expect(provider.requests).toHaveLength(0);
-    expect(await store.readEntries(sessionId)).toHaveLength(2); // user + control
-    expect(await store.pendingInputs(sessionId)).toHaveLength(1);
+    expect(await store.readEntries(sessionRef)).toHaveLength(2); // user + control
+    expect(await store.pendingInputs(sessionRef)).toHaveLength(1);
 
     // The consumed cancel does not re-fire: the next intake starts a run
     // that completes normally, draining the parked input as steering.
-    const next = await store.intake(sessionId, user("again"));
+    const next = await store.intake(sessionRef, user("again"));
     expect(next.kind).toBe("started");
-    await runStep(deps, await claim(sessionId), 60_000);
+    await runStep(deps, await claim(sessionRef), 60_000);
 
-    const log = messages(await store.readEntries(sessionId));
+    const log = messages(await store.readEntries(sessionRef));
     expect(log[log.length - 1]).toMatchObject({ role: "assistant", stopReason: "end_turn" });
     expect(provider.requests[0]?.context.map((m) => m.role)).toEqual(["user", "user", "user"]);
   });
 
   it("commits a provider failure and ends the run as error — no retry", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
     const provider = scriptedProvider([[{ throw: new Error("provider exploded") }]]);
-    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionId), 60_000);
+    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionRef), 60_000);
 
-    const log = messages(await store.readEntries(sessionId));
+    const log = messages(await store.readEntries(sessionRef));
     expect(log).toHaveLength(2);
     expect(log[1]).toMatchObject({ role: "assistant", stopReason: "error" });
     expect(provider.requests).toHaveLength(1);
-    expect(await store.claimItem({ leaseMs: 60_000, sessionId })).toBeUndefined();
+    expect(await store.claimItem({ leaseMs: 60_000, session: sessionRef })).toBeUndefined();
   });
 
   it("synthesizes interrupted results on a re-claimed execute_tools item — no re-execution", async () => {
-    const sessionId = await newSession();
+    const sessionRef = await newSession();
     const provider = scriptedProvider([callEcho("hi"), sayText("recovered")]);
     let executions = 0;
     const spiedEcho: Tool = {
@@ -313,20 +318,20 @@ describe("driver steps over the pg store", () => {
     };
     const deps: StepDeps = { store, provider, toolSpecs: [...echoOnly.values()].map(toToolSpec) };
 
-    await store.intake(sessionId, user("go"));
-    await runStep(deps, await claim(sessionId), 60_000); // inference → tool call
+    await store.intake(sessionRef, user("go"));
+    await runStep(deps, await claim(sessionRef), 60_000); // inference → tool call
 
     // First claim of the execute_tools item dies without committing —
     // whether its side effects ran is unknowable.
-    const first = await claim(sessionId, 300);
+    const first = await claim(sessionRef, 300);
     expect(first.item.attempt).toBe(1);
     clock.advance(10_000);
-    const second = await claim(sessionId);
+    const second = await claim(sessionRef);
     expect(second.item.attempt).toBe(2);
 
     await runStep(deps, second, 60_000, new Map([[spiedEcho.name, spiedEcho]]));
     expect(executions).toBe(0);
-    const log = messages(await store.readEntries(sessionId));
+    const log = messages(await store.readEntries(sessionRef));
     expect(log[2]).toMatchObject({
       role: "toolResult",
       toolName: "echo",
@@ -335,58 +340,58 @@ describe("driver steps over the pg store", () => {
     });
 
     // The run continues: the model sees the interruption and answers.
-    await runStep(deps, await claim(sessionId), 60_000);
-    const finalLog = messages(await store.readEntries(sessionId));
+    await runStep(deps, await claim(sessionRef), 60_000);
+    const finalLog = messages(await store.readEntries(sessionRef));
     expect(finalLog.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
     expect(finalLog[3]).toMatchObject({ stopReason: "end_turn" });
   });
 
   it("revalidates the lease at entry: an expired claim does no work at all", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
     const provider = scriptedProvider([sayText("later")]);
     const deps: StepDeps = { store, provider, toolSpecs: [] };
 
     // The lease dies between claim and runStep — the window the loop's
     // sandbox bind occupies. The awaited first beat must catch it.
-    const expired = await claim(sessionId, 300);
+    const expired = await claim(sessionRef, 300);
     clock.advance(10_000);
     await runStep(deps, expired, 300);
     expect(provider.requests).toHaveLength(0);
-    expect(messages(await store.readEntries(sessionId))).toHaveLength(1);
+    expect(messages(await store.readEntries(sessionRef))).toHaveLength(1);
 
     // The re-claim executes cleanly.
-    await runStep(deps, await claim(sessionId), 60_000);
-    expect(messages(await store.readEntries(sessionId)).map((m) => m.role)).toEqual([
+    await runStep(deps, await claim(sessionRef), 60_000);
+    expect(messages(await store.readEntries(sessionRef)).map((m) => m.role)).toEqual([
       "user",
       "assistant",
     ]);
   });
 
   it("drops an interrupted inference step on lease loss; the next claim re-executes", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
     const provider = scriptedProvider([["untilAborted"], sayText("recovered")]);
     const deps: StepDeps = { store, provider, toolSpecs: [] };
 
-    const inFlight = runStep(deps, await claim(sessionId, 500), 500);
+    const inFlight = runStep(deps, await claim(sessionRef, 500), 500);
     await until(() => provider.requests.length === 1);
     clock.advance(10_000); // the next heartbeat reports the lease lost
     await inFlight;
 
     // The aborted attempt left no trace…
-    expect(messages(await store.readEntries(sessionId))).toHaveLength(1);
+    expect(messages(await store.readEntries(sessionRef))).toHaveLength(1);
     // …and the re-claim (fresh token, expired lease) re-executes cleanly.
-    await runStep(deps, await claim(sessionId), 60_000);
-    const log = messages(await store.readEntries(sessionId));
+    await runStep(deps, await claim(sessionRef), 60_000);
+    const log = messages(await store.readEntries(sessionRef));
     expect(log.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(log[1]).toMatchObject({ stopReason: "end_turn" });
     expect(provider.requests).toHaveLength(2);
   });
 
   it("drops the step when the commit is fenced, and the re-claim redoes it", async () => {
-    const sessionId = await newSession();
-    await store.intake(sessionId, user("go"));
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
 
     let fencedOnce = false;
     const fencingStore: Store = {
@@ -404,14 +409,14 @@ describe("driver steps over the pg store", () => {
     const deps: StepDeps = { store: fencingStore, provider, toolSpecs: [] };
 
     // First step's commit is fenced: runStep swallows it and drops the work.
-    await runStep(deps, await claim(sessionId, 300), 300);
+    await runStep(deps, await claim(sessionRef, 300), 300);
     expect(fencedOnce).toBe(true);
-    expect(messages(await store.readEntries(sessionId))).toHaveLength(1);
+    expect(messages(await store.readEntries(sessionRef))).toHaveLength(1);
 
     // Expire the dropped claim; the re-claim's step commits for real.
     clock.advance(1_000);
-    await runStep(deps, await claim(sessionId), 60_000);
-    const log = messages(await store.readEntries(sessionId));
+    await runStep(deps, await claim(sessionRef), 60_000);
+    const log = messages(await store.readEntries(sessionRef));
     expect(log.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(log[1]).toMatchObject({ content: [{ type: "text", text: "b" }] });
     expect(provider.requests).toHaveLength(2);

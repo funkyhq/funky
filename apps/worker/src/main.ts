@@ -39,16 +39,14 @@ const deps: DriverDeps = {
   toolSpecs: sandboxToolSpecs,
   // Ensure-on-claim: the loop calls this only for an execute_tools item
   // that will actually execute. The session's env config is the sandbox
-  // recipe — its resolved network policy rides into create.
-  bindTools: async (sessionId) => {
-    const session = await store.getSession(sessionId);
-    if (!session) throw new Error(`worker: unknown session ${sessionId}`);
-    const env = await store.getEnvConfig({
-      namespace: session.namespace,
-      id: session.envConfigId,
-    });
-    if (!env) throw new Error(`worker: session ${sessionId} has no env config`);
-    const sandbox = await ensureSandbox(store, sandboxes, sessionId, {
+  // recipe — its resolved network policy rides into create. The session
+  // row is its own ref, and structurally contains its env config's.
+  bindTools: async (ref) => {
+    const session = await store.getSession(ref);
+    if (!session) throw new Error(`worker: unknown session ${ref.sessionId}`);
+    const env = await store.getEnvConfig(session);
+    if (!env) throw new Error(`worker: session ${ref.sessionId} has no env config`);
+    const sandbox = await ensureSandbox(store, sandboxes, ref, {
       timeoutMs: cfg.sandboxTimeoutMs,
       network: env.network,
     });

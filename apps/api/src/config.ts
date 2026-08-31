@@ -5,12 +5,6 @@
 // override, never an omission.
 import { z } from "zod";
 
-/** Where a request's namespace comes from: "static" pins every request
- *  to DEFAULT_NAMESPACE (the OSS deployment shape); "header" trusts
- *  X-Funky-Namespace — for the managed gateway, which authenticates
- *  users itself and holds this api's bearer token privately. */
-export type NamespaceSource = "static" | "header";
-
 const EnvSchema = z
   .object({
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
@@ -18,7 +12,6 @@ const EnvSchema = z
     DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
     FUNKY_AUTH: z.enum(["enabled", "disabled"]).default("enabled"),
     FUNKY_AUTH_TOKEN: z.string().min(16, "FUNKY_AUTH_TOKEN must be ≥16 chars").optional(),
-    FUNKY_NAMESPACE_SOURCE: z.enum(["static", "header"]).default("static"),
     /** SSE tail pacing: how often /stream re-polls the entries cursor,
      *  and how long a quiet stream goes before a keep-alive comment. */
     FUNKY_STREAM_POLL_MS: z.coerce.number().int().min(1).default(1000),
@@ -28,10 +21,6 @@ const EnvSchema = z
     message:
       "FUNKY_AUTH_TOKEN is required. Set it in the environment, " +
       "or set FUNKY_AUTH=disabled for local development (NOT for anything reachable).",
-  })
-  .refine((e) => e.FUNKY_AUTH !== "disabled" || e.FUNKY_NAMESPACE_SOURCE !== "header", {
-    path: ["FUNKY_NAMESPACE_SOURCE"],
-    message: "FUNKY_NAMESPACE_SOURCE=header requires FUNKY_AUTH=enabled",
   })
   // The stream loop checks the heartbeat once per poll, so a poll slower
   // than the heartbeat would silently stretch the keepalive past its
@@ -47,7 +36,6 @@ export type Config = {
   dbPoolMax: number;
   /** null = auth explicitly disabled (dev only) */
   authToken: string | null;
-  namespaceSource: NamespaceSource;
   streamPollMs: number;
   streamHeartbeatMs: number;
 };
@@ -70,7 +58,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     dbPoolMax: e.DB_POOL_MAX,
     authToken: e.FUNKY_AUTH === "disabled" ? null : e.FUNKY_AUTH_TOKEN!,
-    namespaceSource: e.FUNKY_NAMESPACE_SOURCE,
     streamPollMs: e.FUNKY_STREAM_POLL_MS,
     streamHeartbeatMs: e.FUNKY_STREAM_HEARTBEAT_MS,
   };

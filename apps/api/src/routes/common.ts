@@ -5,6 +5,7 @@
 // gets back, written once so no two resources page differently.
 import { zValidator } from "@hono/zod-validator";
 import { type ZodType, z } from "zod";
+import { DEFAULT_NAMESPACE } from "@funky/core";
 import { errorResponse } from "../http";
 
 export const validate = <T extends ZodType>(target: "json" | "query", schema: T) =>
@@ -17,6 +18,28 @@ export const validate = <T extends ZodType>(target: "json" | "query", schema: T)
     }
   });
 
+/**
+ * The namespace is part of the request (the caller holds the root token
+ * and says which tenant it means): create bodies carry it in the body,
+ * every id-addressed or list route as a query parameter. In both spots
+ * absence resolves to DEFAULT_NAMESPACE — the single-tenant self-deploy
+ * convenience the core comment blesses as "the api gateway's job"; the
+ * store itself always receives it explicitly. This object is that one
+ * spelling: routes validate it as a query, and create bodies extend the
+ * core request with its shape so the same default applies.
+ *
+ * The format bound is load-bearing, not taste: namespace is a component
+ * of every table's primary key, and an unbounded string overflows the
+ * btree tuple limit — a 500 where a 400 belongs.
+ */
+export const NamespaceQuery = z.object({
+  namespace: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/, "1-64 characters: letters, digits, _ and -")
+    .default(DEFAULT_NAMESPACE),
+});
+export type NamespaceQuery = z.infer<typeof NamespaceQuery>;
+
 /** Page size when the caller doesn't ask, and the ceiling when it does. */
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -27,7 +50,7 @@ const MAX_LIMIT = 100;
  * request we quietly answer with something else. `after` is the id of
  * the previous page's last row — the cursor `page()` hands back.
  */
-export const ListQuery = z.object({
+export const ListQuery = NamespaceQuery.extend({
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
   after: z.string().min(1).optional(),
 });

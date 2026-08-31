@@ -13,9 +13,11 @@ import {
   ListEnvConfigsRequest,
   PendingInput,
   Session,
+  SessionRef,
   UpdateAgentConfigRequest,
   UpdateEnvConfigRequest,
   WorkItem,
+  WorkItemRef,
 } from "../src/store";
 
 const roundTrip = <T>(schema: { parse: (v: unknown) => T }, value: unknown): T =>
@@ -24,7 +26,7 @@ const roundTrip = <T>(schema: { parse: (v: unknown) => T }, value: unknown): T =
 describe("configs", () => {
   it("round-trips a stored agent config", () => {
     const config = {
-      id: "ac1",
+      agentConfigId: "ac1",
       inference: {
         provider: "anthropic",
         model: "claude-sonnet-5",
@@ -60,13 +62,19 @@ describe("configs", () => {
   });
 
   it("validates current and versioned agent config references", () => {
-    expect(AgentConfigRef.safeParse({ namespace: "tenant-a", id: "ac1" }).success).toBe(true);
-    expect(AgentConfigRef.safeParse({ namespace: "tenant-a", id: "" }).success).toBe(false);
+    expect(AgentConfigRef.safeParse({ namespace: "tenant-a", agentConfigId: "ac1" }).success).toBe(
+      true,
+    );
+    expect(AgentConfigRef.safeParse({ namespace: "tenant-a", agentConfigId: "" }).success).toBe(
+      false,
+    );
     expect(
-      AgentConfigVersionRef.safeParse({ namespace: "tenant-a", id: "ac1", version: 2 }).success,
+      AgentConfigVersionRef.safeParse({ namespace: "tenant-a", agentConfigId: "ac1", version: 2 })
+        .success,
     ).toBe(true);
     expect(
-      AgentConfigVersionRef.safeParse({ namespace: "tenant-a", id: "ac1", version: 0 }).success,
+      AgentConfigVersionRef.safeParse({ namespace: "tenant-a", agentConfigId: "ac1", version: 0 })
+        .success,
     ).toBe(false);
   });
 
@@ -82,7 +90,7 @@ describe("configs", () => {
 
   it("round-trips a stored agent config with no sampling overrides — absence is the stored form", () => {
     const config = {
-      id: "ac1",
+      agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
       namespace: "default",
@@ -95,7 +103,7 @@ describe("configs", () => {
 
   it("rejects null sampling params — absence has exactly one spelling", () => {
     const result = AgentConfig.safeParse({
-      id: "ac1",
+      agentConfigId: "ac1",
       inference: { provider: "anthropic", model: "m", maxTokens: null, temperature: null },
       systemPrompt: "s",
       createdAt: "2026-08-11T12:00:00Z",
@@ -126,7 +134,7 @@ describe("configs", () => {
 
   it("round-trips an archived agent config — the mark is a timestamp, not a flag", () => {
     const config = {
-      id: "ac1",
+      agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
       namespace: "default",
@@ -140,7 +148,7 @@ describe("configs", () => {
 
   it("rejects a null or boolean archivedAt — absence is spelled by absence", () => {
     const config = {
-      id: "ac1",
+      agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
       namespace: "default",
@@ -156,7 +164,7 @@ describe("configs", () => {
 describe("env configs", () => {
   it("round-trips a stored env config with the full recipe spine", () => {
     const config = {
-      id: "ec1",
+      envConfigId: "ec1",
       network: { type: "allowlist", domains: ["api.anthropic.com", "pypi.org"] },
       packages: { pip: ["pandas==2.2.0", "numpy"], npm: ["express@4.18.0"] },
       namespace: "tenant-a",
@@ -184,9 +192,11 @@ describe("env configs", () => {
   });
 
   it("validates namespace-scoped env config references", () => {
-    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", id: "ec1" }).success).toBe(true);
-    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", id: "" }).success).toBe(false);
-    expect(EnvConfigRef.safeParse({ namespace: "", id: "ec1" }).success).toBe(false);
+    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", envConfigId: "ec1" }).success).toBe(
+      true,
+    );
+    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", envConfigId: "" }).success).toBe(false);
+    expect(EnvConfigRef.safeParse({ namespace: "", envConfigId: "ec1" }).success).toBe(false);
   });
 
   it("validates namespaced env config pagination", () => {
@@ -226,7 +236,7 @@ describe("env configs", () => {
 
   it("rejects a stored env config missing network — materialized decisions must be present", () => {
     const result = EnvConfig.safeParse({
-      id: "ec1",
+      envConfigId: "ec1",
       namespace: "tenant-a",
       packages: {},
       createdAt: "2026-08-11T12:00:00Z",
@@ -238,19 +248,19 @@ describe("env configs", () => {
 describe("sessions", () => {
   it("round-trips a stored session — no metadata means no metadata key", () => {
     const session = {
-      id: "s1",
+      namespace: "default",
+      sessionId: "s1",
       agentConfigId: "ac1",
       agentConfigVersion: 2,
       envConfigId: "ec1",
-      namespace: "default",
       createdAt: "2026-08-11T12:00:00Z",
     };
     expect(roundTrip(Session, session)).toEqual(session);
   });
 
-  it("rejects a stored session missing namespace — materialized decisions must be present", () => {
+  it("rejects a stored session missing namespace — the row is its own ref", () => {
     const result = Session.safeParse({
-      id: "s1",
+      sessionId: "s1",
       agentConfigId: "ac1",
       agentConfigVersion: 1,
       envConfigId: "ec1",
@@ -259,19 +269,32 @@ describe("sessions", () => {
     expect(result.success).toBe(false);
   });
 
+  it("validates namespace-scoped session references", () => {
+    expect(SessionRef.safeParse({ namespace: "tenant-a", sessionId: "s1" }).success).toBe(true);
+    expect(SessionRef.safeParse({ namespace: "tenant-a", sessionId: "" }).success).toBe(false);
+    expect(SessionRef.safeParse({ namespace: "", sessionId: "s1" }).success).toBe(false);
+  });
+
+  it("requires an explicit namespace when creating a session", () => {
+    expect(
+      CreateSessionRequest.safeParse({ agentConfigId: "ac1", envConfigId: "ec1" }).success,
+    ).toBe(false);
+  });
+
   it("rejects a create request without an agent config id", () => {
-    const result = CreateSessionRequest.safeParse({ envConfigId: "ec1" });
+    const result = CreateSessionRequest.safeParse({ namespace: "default", envConfigId: "ec1" });
     expect(result.success).toBe(false);
   });
 
   it("rejects a create request without an env config id — every session names its world", () => {
-    const result = CreateSessionRequest.safeParse({ agentConfigId: "ac1" });
+    const result = CreateSessionRequest.safeParse({ namespace: "default", agentConfigId: "ac1" });
     expect(result.success).toBe(false);
   });
 
   it("accepts an optional positive agent config version", () => {
     expect(
       CreateSessionRequest.safeParse({
+        namespace: "default",
         agentConfigId: "ac1",
         agentConfigVersion: 2,
         envConfigId: "ec1",
@@ -279,6 +302,7 @@ describe("sessions", () => {
     ).toBe(true);
     expect(
       CreateSessionRequest.safeParse({
+        namespace: "default",
         agentConfigId: "ac1",
         agentConfigVersion: 0,
         envConfigId: "ec1",
@@ -288,15 +312,31 @@ describe("sessions", () => {
 });
 
 describe("work items", () => {
-  it("round-trips a work item", () => {
-    const item = { id: "i1", sessionId: "s1", type: "inference", status: "ready", attempt: 0 };
+  it("round-trips a work item — the row is its own ref", () => {
+    const item = {
+      namespace: "default",
+      sessionId: "s1",
+      itemId: "i1",
+      type: "inference",
+      status: "ready",
+      attempt: 0,
+    };
     expect(roundTrip(WorkItem, item)).toEqual(item);
+  });
+
+  it("validates the full-path work item reference", () => {
+    expect(
+      WorkItemRef.safeParse({ namespace: "tenant-a", sessionId: "s1", itemId: "i1" }).success,
+    ).toBe(true);
+    // The parent session is part of the address, not an optional detail.
+    expect(WorkItemRef.safeParse({ namespace: "tenant-a", itemId: "i1" }).success).toBe(false);
   });
 
   it("rejects an unknown item type", () => {
     const result = WorkItem.safeParse({
-      id: "i1",
+      namespace: "default",
       sessionId: "s1",
+      itemId: "i1",
       type: "provision",
       status: "ready",
     });

@@ -30,12 +30,12 @@
 
 import type {
   AgentMessage,
-  ItemId,
   ProviderEvent,
   SessionEntry,
-  SessionId,
+  SessionRef,
   ToolCall,
   ToolSpec,
+  WorkItemRef,
 } from "@funky/core";
 import { buildContext } from "../engine/build-context";
 import { executeTools, interruptedResult, type ToolUpdate } from "../engine/execute-tools";
@@ -75,7 +75,7 @@ export interface DriverDeps extends StepDeps {
    *  so the re-claim sees attempt > 1 and interrupts the batch rather
    *  than retrying the bind — a transient sandbox outage costs the
    *  model one recoverable batch, never a duplicated side effect. */
-  bindTools(sessionId: SessionId): Promise<Map<string, Tool>>;
+  bindTools(ref: SessionRef): Promise<Map<string, Tool>>;
 }
 
 export interface DriverOptions {
@@ -85,7 +85,7 @@ export interface DriverOptions {
    *  Notifier port exists. */
   idlePollMs?: number;
   /** Narrow claims to one session (the driver-per-sandbox topology). */
-  sessionId?: SessionId;
+  session?: SessionRef;
 }
 
 /**
@@ -97,7 +97,7 @@ export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Pro
   const leaseMs = opts.leaseMs ?? 60_000;
   const idlePollMs = opts.idlePollMs ?? 1_000;
   while (true) {
-    const claim = await deps.store.claimItem({ leaseMs, sessionId: opts.sessionId });
+    const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
     if (!claim) {
       await sleep(idlePollMs);
       continue;
@@ -110,7 +110,7 @@ export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Pro
     // wasted work, never wrong work.
     const tools =
       claim.item.type === "execute_tools" && claim.item.attempt === 1
-        ? await deps.bindTools(claim.item.sessionId)
+        ? await deps.bindTools(claim.item)
         : undefined;
     await runStep(deps, claim, leaseMs, tools);
   }
@@ -133,11 +133,14 @@ export async function runStep(
   tools: Map<string, Tool> = EMPTY_TOOLS,
 ): Promise<void> {
   const { store } = deps;
+  // The claimed row is its own ref: a WorkItemRef for the item-addressed
+  // writes, and structurally a SessionRef for the session-scoped reads —
+  // the claim handed us every scope this step needs.
   const { item, token } = claim;
 
   // Fires only on lease loss — "stop working; this step will not commit".
   const step = new AbortController();
-  const heartbeat = startHeartbeat(store, item.id, token, leaseMs, () => step.abort());
+  const heartbeat = startHeartbeat(store, item, token, leaseMs, () => step.abort());
 
   try {
     // The first beat is awaited: no step work — not even reads — happens
@@ -147,7 +150,7 @@ export async function runStep(
     await heartbeat.validated;
     if (step.signal.aborted) return;
 
-    const entries = bySeq(await store.readEntries(item.sessionId));
+    const entries = bySeq(await store.readEntries(item));
 
     // Claim boundary: a pending cancel ends the run without running the
     // step. Nothing is appended — for an execute_tools item this is the
@@ -156,7 +159,7 @@ export async function runStep(
     // inputs for the next intake instead of chaining.
     if (cancelRequested(entries)) {
       await store.commitStep({
-        itemId: item.id,
+        itemRef: item,
         token,
         append: [],
         next: { kind: "end_run", status: "cancelled" },
@@ -171,18 +174,18 @@ export async function runStep(
     let tail: AgentMessage;
 
     if (item.type === "inference") {
-      const session = await store.getSession(item.sessionId);
+      const session = await store.getSession(item);
       if (!session) throw new Error(`driver: claimed item for unknown session ${item.sessionId}`);
       const config = await store.getAgentConfig({
         namespace: session.namespace,
-        id: session.agentConfigId,
+        agentConfigId: session.agentConfigId,
         version: session.agentConfigVersion,
       });
       if (!config) throw new Error(`driver: session ${item.sessionId} has no agent config`);
       // Drain-at-inference-prep is what makes these inputs steering: they
       // shape this context, ride in this commit before the step's output,
       // and are consumed by it.
-      const pending = await store.pendingInputs(item.sessionId);
+      const pending = await store.pendingInputs(item);
       const steering = pending.map((input) => input.message);
       // config.inference.provider picked the adapter at composition and
       // is not part of the request.
@@ -230,11 +233,11 @@ export async function runStep(
     // control entries can land mid-step — our open item bars intake from
     // appending messages — so the context cannot have grown behind us.
     const lastSeq = entries.length > 0 ? entries[entries.length - 1]?.seq : undefined;
-    const delta = bySeq(await store.readEntries(item.sessionId, lastSeq));
+    const delta = bySeq(await store.readEntries(item, lastSeq));
     const action = nextAction(tail, cancelRequested([...entries, ...delta]));
 
     await store.commitStep({
-      itemId: item.id,
+      itemRef: item,
       token,
       append,
       consumeInputs,
@@ -321,7 +324,7 @@ function toNext(action: Action): CommitStepRequest["next"] {
  */
 function startHeartbeat(
   store: Store,
-  itemId: ItemId,
+  ref: WorkItemRef,
   token: LeaseToken,
   leaseMs: number,
   onLost: () => void,
@@ -332,7 +335,7 @@ function startHeartbeat(
   const beat = async (): Promise<void> => {
     let alive = false;
     try {
-      alive = await store.heartbeat(itemId, token);
+      alive = await store.heartbeat(ref, token);
     } catch {
       alive = false;
     }
