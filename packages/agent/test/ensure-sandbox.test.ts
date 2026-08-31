@@ -48,6 +48,7 @@ function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
     agentConfigId: "a1",
     agentConfigVersion: 1,
     envConfigId: "e1",
+    envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
     namespace: "default",
     createdAt: "2026-08-18T00:00:00.000Z",
     ...(opts?.sandboxId ? { sandboxId: opts.sandboxId } : {}),

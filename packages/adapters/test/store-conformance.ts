@@ -722,6 +722,88 @@ export function describeStoreConformance(
         expect(session?.envConfigId).toBeDefined();
       });
 
+      // Env configs update in place — there is no version to pin — so the
+      // session copies the resolved recipe instead. These four cases are
+      // the whole contract: what is copied, that an edit cannot reach back
+      // through it, that a later session sees the edit, and that the copy
+      // is of a real row in the caller's own namespace.
+      describe("env config snapshot", () => {
+        it("copies the env config's resolved recipe at create", async () => {
+          const agentConfigRef = await newAgent();
+          const envConfigRef = await newEnv({
+            network: { type: "allowlist", domains: ["pypi.org"] },
+            packages: { pip: ["numpy"] },
+          });
+          const sessionRef = await store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+          });
+          expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
+            network: { type: "allowlist", domains: ["pypi.org"] },
+            packages: { pip: ["numpy"] },
+          });
+        });
+
+        // The materialized defaults are decisions too: the snapshot copies
+        // what the env config resolved, never the request that made it.
+        it("copies the materialized defaults, not the create request", async () => {
+          const sessionRef = await newSession(); // newEnv() states neither field
+          expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
+            network: { type: "unrestricted" },
+            packages: {},
+          });
+        });
+
+        it("does not change under a later env config update", async () => {
+          const agentConfigRef = await newAgent();
+          const envConfigRef = await newEnv({ network: { type: "none" } });
+          const before = await store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+          });
+
+          await store.updateEnvConfig(envConfigRef, {
+            network: { type: "allowlist", domains: ["example.com"] },
+            packages: { npm: ["zod"] },
+          });
+
+          // The running session's world is the one it was born with…
+          expect((await store.getSession(before))?.envConfigSnapshot).toEqual({
+            network: { type: "none" },
+            packages: {},
+          });
+          // …and the next session gets the edit.
+          const after = await store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+          });
+          expect((await store.getSession(after))?.envConfigSnapshot).toEqual({
+            network: { type: "allowlist", domains: ["example.com"] },
+            packages: { npm: ["zod"] },
+          });
+          // The env config itself is untouched by either session.
+          expect((await store.getEnvConfig(envConfigRef))?.network).toEqual({
+            type: "allowlist",
+            domains: ["example.com"],
+          });
+        });
+
+        it("has nothing to copy from a foreign env config — the create fails", async () => {
+          const agentConfigRef = await newAgent({ namespace: "tenant-a" });
+          const foreignEnv = await newEnv({ namespace: "tenant-b" });
+          await expect(
+            store.createSession({
+              namespace: "tenant-a",
+              agentConfigId: agentConfigRef.agentConfigId,
+              envConfigId: foreignEnv.envConfigId,
+            }),
+          ).rejects.toThrow("unknown env config");
+        });
+      });
+
       it("pins the latest agent version when the session is created", async () => {
         const agentConfigRef = await newAgent({
           inference: { provider: "fake", model: "m1" },
