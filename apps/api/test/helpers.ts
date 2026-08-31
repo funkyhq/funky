@@ -2,18 +2,14 @@
 // + app.request(), exactly as app.ts advertises.
 import type { Store } from "@funky/agent";
 import { buildApp } from "../src/app";
-import type { NamespaceSource } from "../src/config";
 
 export type App = ReturnType<typeof buildApp>;
 
 /** An app whose store is never reached — for envelope/auth/health tests. */
-export function makeApp(
-  opts: { authToken?: string | null; namespaceSource?: NamespaceSource } = {},
-): App {
+export function makeApp(opts: { authToken?: string | null } = {}): App {
   return buildApp({
     store: {} as unknown as Store,
     authToken: opts.authToken ?? null,
-    namespaceSource: opts.namespaceSource ?? "static",
     ping: async () => ({}),
     stream: { pollMs: 1000, heartbeatMs: 15_000 },
   });

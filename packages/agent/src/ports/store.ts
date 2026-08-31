@@ -11,17 +11,17 @@ import type {
   EnvConfigRef,
   InputId,
   IntakeResult,
-  ItemId,
   ListAgentConfigsRequest,
   ListEnvConfigsRequest,
   PendingInput,
   Session,
   SessionEntry,
-  SessionId,
+  SessionRef,
   UpdateAgentConfigRequest,
   UpdateEnvConfigRequest,
   UserMessage,
   WorkItem,
+  WorkItemRef,
 } from "@funky/core";
 import type { RunEndStatus } from "../engine/next-action";
 
@@ -50,6 +50,15 @@ import type { RunEndStatus } from "../engine/next-action";
  * transaction handle. Any backend with multi-record ACID transactions,
  * CAS claiming, per-session monotonic seq, and unique constraints can
  * implement it; the conformance suite keeps that honest.
+ *
+ * Addressing is by namespace-scoped ref throughout (the config refs,
+ * SessionRef, WorkItemRef): the namespace is part of the address, not a
+ * filter, and a foreign row answers exactly like a nonexistent one —
+ * undefined from gets, empty from list reads, "unknown" from write
+ * paths. WorkItemRef carries its parent sessionId too, and a mismatched
+ * parent is foreign the same way. The api builds refs from its
+ * gateway-derived namespace; the driver builds them from the claimed
+ * item's own fields, and never decides on them.
  */
 export interface Store {
   // --- configs ---
@@ -102,37 +111,38 @@ export interface Store {
 
   // --- sessions ---
 
-  /** Pins the requested agent version, or the latest when omitted. Rejects
-   *  unknown configs or versions, with namespace-scoped checks so foreign ids
+  /** Create a session. Namespace must be specified. Pins the requested agent
+   *  version, or the latest when omitted. Rejects unknown configs or versions,
+   *  with namespace-scoped checks so foreign ids
    *  remain indistinguishable from nonexistent ones, and an archived agent
    *  config with ArchivedError. Archiving and creating are serialized on the
    *  agent config row: a session either commits before the archive or sees
    *  it — never lands after one. */
-  createSession(req: CreateSessionRequest): Promise<SessionId>;
-  getSession(id: SessionId): Promise<Session | undefined>;
+  createSession(req: CreateSessionRequest): Promise<SessionRef>;
+  getSession(ref: SessionRef): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the
    *  binding — fills a null binding when `previous` is omitted, or
    *  replaces exactly `previous` when the caller is recovering a dead
    *  sandbox. Returns the bound id either way: the atomic pick that
    *  keeps every claimer executing in one workspace — a racer whose
    *  candidate lost learns the winner and discards its own (see
-   *  driver/ensure-sandbox.ts). Rejects an unknown session. */
-  bindSandbox(sessionId: SessionId, sandboxId: string, previous?: string): Promise<string>;
+   *  driver/ensure-sandbox.ts). Rejects an unknown or foreign session. */
+  bindSandbox(ref: SessionRef, sandboxId: string, previous?: string): Promise<string>;
 
   // --- reads — table-shaped; reads need no atomicity ---
 
   /** `after` is a seq cursor: only entries with seq > after. */
-  readEntries(sessionId: SessionId, after?: number): Promise<SessionEntry[]>;
+  readEntries(ref: SessionRef, after?: number): Promise<SessionEntry[]>;
   /** Inspection and audit; workers get items through claimItem. */
-  listItems(sessionId: SessionId): Promise<WorkItem[]>;
-  pendingInputs(sessionId: SessionId): Promise<PendingInput[]>;
+  listItems(ref: SessionRef): Promise<WorkItem[]>;
+  pendingInputs(ref: SessionRef): Promise<PendingInput[]>;
 
   // --- worker coordination ---
 
   /**
    * Atomically lease one ready item (CAS / SKIP LOCKED semantics);
    * undefined = no work. No type filter — workers dispatch on the
-   * claimed item's type. sessionId narrows the scan for the (deferred)
+   * claimed item's type. session narrows the scan for the (deferred)
    * driver-per-sandbox topology.
    *
    * The returned token is the fencing credential, minted by the store
@@ -140,16 +150,16 @@ export interface Store {
    * caller discipline. A re-claim of the same item always issues a new
    * token, so a previous holder's zombie is fenced by construction.
    */
-  claimItem(req: { leaseMs: number; sessionId?: SessionId }): Promise<Claim | undefined>;
+  claimItem(req: { leaseMs: number; session?: SessionRef }): Promise<Claim | undefined>;
 
   /**
    * Extend the lease by the duration chosen at claim; false = lease
-   * lost, the driver must abort its step. itemId addresses the item;
+   * lost, the driver must abort its step. The ref addresses the item;
    * the token authorizes the write. (A progress-checkpoint payload was
    * cut 2026-08-12 — it returns with its first reader, shaped by that
    * reader's needs.)
    */
-  heartbeat(itemId: ItemId, token: LeaseToken): Promise<boolean>;
+  heartbeat(ref: WorkItemRef, token: LeaseToken): Promise<boolean>;
 
   /**
    * Appends a cancel ControlEntry to the log — nothing else. Workers
@@ -157,7 +167,7 @@ export interface Store {
    * cancel addresses (one landing after a run's terminal message
    * addresses a run that no longer exists and is ignored).
    */
-  requestCancel(sessionId: SessionId): Promise<void>;
+  requestCancel(ref: SessionRef): Promise<void>;
 
   // --- write paths — one transaction each ---
 
@@ -168,7 +178,7 @@ export interface Store {
    * input steers or follows up is decided by which boundary drains it,
    * never by the message itself.
    */
-  intake(sessionId: SessionId, message: UserMessage): Promise<IntakeResult>;
+  intake(ref: SessionRef, message: UserMessage): Promise<IntakeResult>;
 
   /**
    * The driver's write path: append the step's output, drain any
@@ -234,8 +244,10 @@ export interface Claim {
 }
 
 export interface CommitStepRequest {
-  itemId: ItemId;
-  /** The claim's credential — itemId addresses, the token authorizes. */
+  // Named itemRef, not item: Claim.item is the full row, and reusing the
+  // name for a ref would make the claim/commit pair lie about its shape.
+  itemRef: WorkItemRef;
+  /** The claim's credential — itemRef addresses, the token authorizes. */
   token: LeaseToken;
   /** Payloads — the store mints envelopes. Drained steering precedes step output. */
   append: AgentMessage[];

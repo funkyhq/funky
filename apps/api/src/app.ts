@@ -2,7 +2,6 @@
 // The whole application, network-free. Tests: buildApp(deps) + app.request().
 import { Hono } from "hono";
 import type { Store } from "@funky/agent";
-import type { NamespaceSource } from "./config";
 import { errorHandler, errorResponse } from "./http";
 import { auth } from "./middleware/auth";
 import { requestId } from "./middleware/request-id";
@@ -15,15 +14,13 @@ export type AppDeps = {
   store: Store;
   /** null = auth explicitly disabled (dev only) */
   authToken: string | null;
-  /** "static" (OSS) or "header" (behind the managed gateway) */
-  namespaceSource: NamespaceSource;
   /** liveness of the DB, e.g. () => pool.query("SELECT 1") */
   ping: () => Promise<unknown>;
   /** SSE tail pacing for /sessions/:id/stream */
   stream: StreamPacing;
 };
 
-type Env = { Variables: { requestId: string; namespace: string } };
+type Env = { Variables: { requestId: string } };
 
 export function buildApp(deps: AppDeps) {
   const app = new Hono<Env>();
@@ -36,7 +33,7 @@ export function buildApp(deps: AppDeps) {
     return c.json({ status: "ok" as const });
   });
 
-  app.use("/v1/*", auth(deps.authToken, deps.namespaceSource));
+  app.use("/v1/*", auth(deps.authToken));
   app.route("/v1/agent-configs", agentConfigRoutes(deps.store));
   app.route("/v1/env-configs", envConfigRoutes(deps.store));
   app.route("/v1/sessions", sessionRoutes(deps.store, deps.stream));

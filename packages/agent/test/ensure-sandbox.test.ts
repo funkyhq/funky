@@ -4,7 +4,7 @@
 // replace a binding only when the provider says it is definitively gone.
 
 import { describe, expect, test } from "vitest";
-import type { Session } from "@funky/core";
+import type { Session, SessionRef } from "@funky/core";
 import { ensureSandbox } from "../src/driver/ensure-sandbox";
 import {
   type CreateSandboxOptions,
@@ -39,10 +39,12 @@ function fakeProvider(opts?: { deadIds?: string[]; connectError?: Error }) {
   return { provider, calls, killed: () => killed };
 }
 
+const s1: SessionRef = { namespace: "default", sessionId: "s1" };
+
 function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
   const binds: { candidate: string; previous?: string }[] = [];
   const session: Session = {
-    id: "s1",
+    sessionId: "s1",
     agentConfigId: "a1",
     agentConfigVersion: 1,
     envConfigId: "e1",
@@ -52,8 +54,9 @@ function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
   };
   return {
     binds,
-    getSession: async (id: string) => (id === "s1" ? session : undefined),
-    bindSandbox: async (_sessionId: string, candidate: string, previous?: string) => {
+    getSession: async (ref: SessionRef) =>
+      ref.namespace === "default" && ref.sessionId === "s1" ? session : undefined,
+    bindSandbox: async (_ref: SessionRef, candidate: string, previous?: string) => {
       binds.push({ candidate, previous });
       return opts?.winner ?? candidate;
     },
@@ -65,7 +68,7 @@ describe("ensureSandbox", () => {
     const store = fakeStore({ sandboxId: "sbx_bound" });
     const { provider, calls } = fakeProvider();
 
-    const sandbox = await ensureSandbox(store, provider, "s1");
+    const sandbox = await ensureSandbox(store, provider, s1);
     expect(sandbox.sandboxId).toBe("sbx_bound");
     expect(calls.connect).toEqual(["sbx_bound"]);
     expect(calls.create).toEqual([]);
@@ -74,14 +77,16 @@ describe("ensureSandbox", () => {
 
   test("throws on an unknown session", async () => {
     const { provider } = fakeProvider();
-    await expect(ensureSandbox(fakeStore(), provider, "nope")).rejects.toThrow("unknown session");
+    await expect(
+      ensureSandbox(fakeStore(), provider, { namespace: "default", sessionId: "nope" }),
+    ).rejects.toThrow("unknown session");
   });
 
   test("creates, stamps the session into metadata, and registers", async () => {
     const store = fakeStore();
     const { provider, calls, killed } = fakeProvider();
 
-    const sandbox = await ensureSandbox(store, provider, "s1", {
+    const sandbox = await ensureSandbox(store, provider, s1, {
       timeoutMs: 60_000,
       network: { type: "none" },
       metadata: { tier: "test" },
@@ -103,7 +108,7 @@ describe("ensureSandbox", () => {
     const store = fakeStore({ winner: "sbx_theirs" });
     const { provider, calls, killed } = fakeProvider();
 
-    const sandbox = await ensureSandbox(store, provider, "s1");
+    const sandbox = await ensureSandbox(store, provider, s1);
     expect(sandbox.sandboxId).toBe("sbx_theirs");
     expect(store.binds).toEqual([{ candidate: "sbx_created", previous: undefined }]);
     expect(killed()).toBe(1);
@@ -114,7 +119,7 @@ describe("ensureSandbox", () => {
     const store = fakeStore({ sandboxId: "sbx_dead" });
     const { provider, calls, killed } = fakeProvider({ deadIds: ["sbx_dead"] });
 
-    const sandbox = await ensureSandbox(store, provider, "s1");
+    const sandbox = await ensureSandbox(store, provider, s1);
     expect(sandbox.sandboxId).toBe("sbx_created");
     expect(calls.connect).toEqual(["sbx_dead"]);
     // The CAS names the dead binding it expects to replace.
@@ -126,7 +131,7 @@ describe("ensureSandbox", () => {
     const store = fakeStore({ sandboxId: "sbx_dead", winner: "sbx_theirs" });
     const { provider, calls, killed } = fakeProvider({ deadIds: ["sbx_dead"] });
 
-    const sandbox = await ensureSandbox(store, provider, "s1");
+    const sandbox = await ensureSandbox(store, provider, s1);
     expect(sandbox.sandboxId).toBe("sbx_theirs");
     expect(store.binds).toEqual([{ candidate: "sbx_created", previous: "sbx_dead" }]);
     expect(killed()).toBe(1);
@@ -137,7 +142,7 @@ describe("ensureSandbox", () => {
     const store = fakeStore({ sandboxId: "sbx_bound" });
     const { provider, calls } = fakeProvider({ connectError: new Error("fetch failed") });
 
-    await expect(ensureSandbox(store, provider, "s1")).rejects.toThrow("fetch failed");
+    await expect(ensureSandbox(store, provider, s1)).rejects.toThrow("fetch failed");
     expect(calls.create).toEqual([]);
     expect(store.binds).toEqual([]);
   });

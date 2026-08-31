@@ -14,7 +14,9 @@ import {
   type CreateEnvConfigRequest,
   DEFAULT_NAMESPACE,
   type EnvConfigRef,
+  type SessionRef,
   type UserMessage,
+  type WorkItemRef,
 } from "@funky/core";
 import {
   ArchivedError,
@@ -71,24 +73,28 @@ export function describeStoreConformance(
       });
     }
 
-    async function newSession(): Promise<string> {
+    async function newSession(): Promise<SessionRef> {
       const agentConfigRef = await newAgent({
         inference: { provider: "fake", model: "scripted" },
       });
       const envConfigRef = await newEnv();
       return store.createSession({
-        agentConfigId: agentConfigRef.id,
-        envConfigId: envConfigRef.id,
+        namespace: DEFAULT_NAMESPACE,
+        agentConfigId: agentConfigRef.agentConfigId,
+        envConfigId: envConfigRef.envConfigId,
       });
     }
 
-    /** intake must have started a run; returns the claimed item + token. */
-    async function startAndClaim(sessionId: string): Promise<{ itemId: string; token: string }> {
-      const result = await store.intake(sessionId, user("go"));
+    /** intake must have started a run; returns the claimed item + token.
+     *  The claimed row IS its own WorkItemRef — passed on unrebuilt. */
+    async function startAndClaim(
+      ref: SessionRef,
+    ): Promise<{ itemRef: WorkItemRef; token: string }> {
+      const result = await store.intake(ref, user("go"));
       expect(result.kind).toBe("started");
-      const claim = await store.claimItem({ leaseMs: 60_000, sessionId });
+      const claim = await store.claimItem({ leaseMs: 60_000, session: ref });
       expect(claim).toBeDefined();
-      return { itemId: claim!.item.id, token: claim!.token };
+      return { itemRef: claim!.item, token: claim!.token };
     }
 
     describe("configs", () => {
@@ -101,7 +107,7 @@ export function describeStoreConformance(
         });
         const config = await store.getAgentConfig(ref);
         expect(config).toMatchObject({
-          id: ref.id,
+          agentConfigId: ref.agentConfigId,
           namespace: ref.namespace,
           inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
           systemPrompt: "You are helpful.",
@@ -155,7 +161,7 @@ export function describeStoreConformance(
         });
 
         expect(updated).toMatchObject({
-          id: ref.id,
+          agentConfigId: ref.agentConfigId,
           inference: { provider: "anthropic", model: "old-model", maxTokens: 1024 },
           systemPrompt: "new prompt",
           metadata: { team: "growth" },
@@ -240,7 +246,11 @@ export function describeStoreConformance(
         );
         expect(await store.getAgentConfig({ ...ref, version: 4 })).toBeUndefined();
         expect(
-          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, id: "nope", version: 1 }),
+          await store.getAgentConfig({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: "nope",
+            version: 1,
+          }),
         ).toBeUndefined();
       });
 
@@ -259,10 +269,16 @@ export function describeStoreConformance(
       it("treats an unknown or foreign update target as absent", async () => {
         const ref = await newAgent({ namespace: "tenant-a" });
         await expect(
-          store.updateAgentConfig({ namespace: "tenant-a", id: "nope" }, { systemPrompt: "x" }),
+          store.updateAgentConfig(
+            { namespace: "tenant-a", agentConfigId: "nope" },
+            { systemPrompt: "x" },
+          ),
         ).resolves.toBeUndefined();
         await expect(
-          store.updateAgentConfig({ namespace: "tenant-b", id: ref.id }, { systemPrompt: "x" }),
+          store.updateAgentConfig(
+            { namespace: "tenant-b", agentConfigId: ref.agentConfigId },
+            { systemPrompt: "x" },
+          ),
         ).resolves.toBeUndefined();
         expect((await store.getAgentConfig(ref))?.systemPrompt).toBe("s");
       });
@@ -350,33 +366,41 @@ export function describeStoreConformance(
       it("returns undefined for unknown or foreign agent config refs", async () => {
         const ref = await newAgent({ namespace: "tenant-a" });
         expect(
-          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, id: "nope" }),
+          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, agentConfigId: "nope" }),
         ).toBeUndefined();
-        expect(await store.getAgentConfig({ namespace: "tenant-b", id: ref.id })).toBeUndefined();
         expect(
-          await store.getAgentConfig({ namespace: "tenant-b", id: ref.id, version: 1 }),
+          await store.getAgentConfig({ namespace: "tenant-b", agentConfigId: ref.agentConfigId }),
+        ).toBeUndefined();
+        expect(
+          await store.getAgentConfig({
+            namespace: "tenant-b",
+            agentConfigId: ref.agentConfigId,
+            version: 1,
+          }),
         ).toBeUndefined();
       });
 
       it("returns undefined for unknown or foreign env config refs", async () => {
         const ref = await newEnv({ namespace: "tenant-a" });
         expect(
-          await store.getEnvConfig({ namespace: DEFAULT_NAMESPACE, id: "nope" }),
+          await store.getEnvConfig({ namespace: DEFAULT_NAMESPACE, envConfigId: "nope" }),
         ).toBeUndefined();
-        expect(await store.getEnvConfig({ namespace: "tenant-b", id: ref.id })).toBeUndefined();
+        expect(
+          await store.getEnvConfig({ namespace: "tenant-b", envConfigId: ref.envConfigId }),
+        ).toBeUndefined();
       });
 
       it("treats an unknown or foreign env config update target as absent", async () => {
         const ref = await newEnv({ namespace: "tenant-a", packages: { pip: ["numpy"] } });
         await expect(
           store.updateEnvConfig(
-            { namespace: "tenant-a", id: "nope" },
+            { namespace: "tenant-a", envConfigId: "nope" },
             { packages: { npm: ["zod"] } },
           ),
         ).resolves.toBeUndefined();
         await expect(
           store.updateEnvConfig(
-            { namespace: "tenant-b", id: ref.id },
+            { namespace: "tenant-b", envConfigId: ref.envConfigId },
             { packages: { npm: ["zod"] } },
           ),
         ).resolves.toBeUndefined();
@@ -427,7 +451,7 @@ export function describeStoreConformance(
         ]) {
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
             name: "ArchivedError",
-            configId: ref.id,
+            configId: ref.agentConfigId,
           });
         }
         expect(await store.getAgentConfig(ref)).toMatchObject({
@@ -460,9 +484,9 @@ export function describeStoreConformance(
         expect(await store.getAgentConfig(ref)).toEqual(archived);
         expect(
           (await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 })).map(
-            (c) => c.id,
+            (c) => c.agentConfigId,
           ),
-        ).toContain(ref.id);
+        ).toContain(ref.agentConfigId);
         // The identity retired, not a snapshot: every version reads back,
         // and each one carries the mark.
         for (const version of [1, 2]) {
@@ -480,13 +504,18 @@ export function describeStoreConformance(
         await store.archiveAgentConfig(agentConfigRef);
 
         await expect(
-          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: envConfigRef.id }),
+          store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+          }),
         ).rejects.toBeInstanceOf(ArchivedError);
         await expect(
           store.createSession({
-            agentConfigId: agentConfigRef.id,
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
             agentConfigVersion: 1,
-            envConfigId: envConfigRef.id,
+            envConfigId: envConfigRef.envConfigId,
           }),
         ).rejects.toBeInstanceOf(ArchivedError);
       });
@@ -494,15 +523,16 @@ export function describeStoreConformance(
       it("lets sessions that already reference it run on", async () => {
         const agentConfigRef = await newAgent({ systemPrompt: "pinned" });
         const envConfigRef = await newEnv();
-        const sessionId = await store.createSession({
-          agentConfigId: agentConfigRef.id,
-          envConfigId: envConfigRef.id,
+        const sessionRef = await store.createSession({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          envConfigId: envConfigRef.envConfigId,
         });
         await store.archiveAgentConfig(agentConfigRef);
 
         // The session still resolves the behavior it pinned, and still runs:
         // archiving stops new references, not existing work.
-        const session = await store.getSession(sessionId);
+        const session = await store.getSession(sessionRef);
         expect(
           (
             await store.getAgentConfig({
@@ -511,14 +541,14 @@ export function describeStoreConformance(
             })
           )?.systemPrompt,
         ).toBe("pinned");
-        const { itemId, token } = await startAndClaim(sessionId);
+        const { itemRef, token } = await startAndClaim(sessionRef);
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [assistant("still here")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(await store.readEntries(sessionId)).toHaveLength(2);
+        expect(await store.readEntries(sessionRef)).toHaveLength(2);
       });
 
       it("settles a create/archive race one of the two legal ways", async () => {
@@ -526,7 +556,11 @@ export function describeStoreConformance(
         const envConfigRef = await newEnv();
 
         const [created, archived] = await Promise.allSettled([
-          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: envConfigRef.id }),
+          store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+          }),
           store.archiveAgentConfig(agentConfigRef),
         ]);
 
@@ -542,17 +576,24 @@ export function describeStoreConformance(
         }
         // Whoever won, the door is shut behind them.
         await expect(
-          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: envConfigRef.id }),
+          store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+          }),
         ).rejects.toBeInstanceOf(ArchivedError);
       });
 
       it("treats an unknown or foreign archive target as absent", async () => {
         const ref = await newAgent({ namespace: "tenant-a" });
         expect(
-          await store.archiveAgentConfig({ namespace: "tenant-a", id: "nope" }),
+          await store.archiveAgentConfig({ namespace: "tenant-a", agentConfigId: "nope" }),
         ).toBeUndefined();
         expect(
-          await store.archiveAgentConfig({ namespace: "tenant-b", id: ref.id }),
+          await store.archiveAgentConfig({
+            namespace: "tenant-b",
+            agentConfigId: ref.agentConfigId,
+          }),
         ).toBeUndefined();
         // The foreign archive touched nothing.
         expect(await store.getAgentConfig(ref)).toMatchObject({ namespace: "tenant-a" });
@@ -562,14 +603,14 @@ export function describeStoreConformance(
 
     describe("listing configs", () => {
       /** n configs, each a tick newer than the last, oldest id first. */
-      async function agentConfigs(n: number, namespace?: string): Promise<string[]> {
+      async function agentConfigIds(n: number, namespace?: string): Promise<string[]> {
         const ids: string[] = [];
         for (let i = 0; i < n; i++) {
           const ref = await newAgent({
             inference: { provider: "fake", model: `m${i}` },
             ...(namespace === undefined ? {} : { namespace }),
           });
-          ids.push(ref.id);
+          ids.push(ref.agentConfigId);
           clock.advance(1_000);
         }
         return ids;
@@ -583,32 +624,32 @@ export function describeStoreConformance(
           const page = await store.listAgentConfigs({ namespace, limit, after });
           expect(page.length).toBeLessThanOrEqual(limit);
           if (page.length === 0) return ids;
-          ids.push(...page.map((c) => c.id));
-          after = page[page.length - 1]?.id;
+          ids.push(...page.map((c) => c.agentConfigId));
+          after = page[page.length - 1]?.agentConfigId;
         }
         throw new Error("walk did not terminate");
       }
 
       it("lists a namespace's configs newest first, whole rows", async () => {
-        const [oldest, middle, newest] = await agentConfigs(3);
+        const [oldest, middle, newest] = await agentConfigIds(3);
         const configs = await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
-        expect(configs.map((c) => c.id)).toEqual([newest, middle, oldest]);
+        expect(configs.map((c) => c.agentConfigId)).toEqual([newest, middle, oldest]);
         // The same shape a get returns — one row mapping, not two.
         expect(configs[0]).toEqual(
-          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, id: newest! }),
+          await store.getAgentConfig({ namespace: DEFAULT_NAMESPACE, agentConfigId: newest! }),
         );
       });
 
       it("bounds the page at limit and resumes strictly after the cursor", async () => {
-        const [oldest, middle, newest] = await agentConfigs(3);
+        const [oldest, middle, newest] = await agentConfigIds(3);
         const first = await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 2 });
-        expect(first.map((c) => c.id)).toEqual([newest, middle]);
+        expect(first.map((c) => c.agentConfigId)).toEqual([newest, middle]);
         const second = await store.listAgentConfigs({
           namespace: DEFAULT_NAMESPACE,
           limit: 2,
           after: middle,
         });
-        expect(second.map((c) => c.id)).toEqual([oldest]);
+        expect(second.map((c) => c.agentConfigId)).toEqual([oldest]);
         expect(
           await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 2, after: oldest }),
         ).toEqual([]);
@@ -633,22 +674,22 @@ export function describeStoreConformance(
             after,
           });
           if (page.length === 0) break;
-          walked.push(...page.map((c) => c.id));
-          after = page[page.length - 1]?.id;
+          walked.push(...page.map((c) => c.envConfigId));
+          after = page[page.length - 1]?.envConfigId;
         }
-        expect(walked).toEqual(whole.map((c) => c.id));
+        expect(walked).toEqual(whole.map((c) => c.envConfigId));
       });
 
       it("scopes the list to one namespace — a page walk never crosses the boundary", async () => {
-        const a = await agentConfigs(3, "tenant-a");
-        const b = await agentConfigs(2, "tenant-b");
+        const a = await agentConfigIds(3, "tenant-a");
+        const b = await agentConfigIds(2, "tenant-b");
         expect(await walk("tenant-a", 2)).toEqual([...a].reverse());
         expect(await walk("tenant-b", 2)).toEqual([...b].reverse());
         expect(await store.listAgentConfigs({ namespace: "tenant-c", limit: 10 })).toEqual([]);
       });
 
       it("rejects a cursor it cannot resolve — a foreign one like a nonexistent one", async () => {
-        const [foreign] = await agentConfigs(1, "tenant-b");
+        const [foreign] = await agentConfigIds(1, "tenant-b");
         await expect(
           store.listAgentConfigs({ namespace: "tenant-a", limit: 10, after: "nope" }),
         ).rejects.toThrow("unknown cursor");
@@ -658,10 +699,10 @@ export function describeStoreConformance(
       });
 
       it("lists the two config kinds independently", async () => {
-        await agentConfigs(2);
+        await agentConfigIds(2);
         const envRef = await newEnv();
         const envs = await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
-        expect(envs.map((c) => c.id)).toEqual([envRef.id]);
+        expect(envs.map((c) => c.envConfigId)).toEqual([envRef.envConfigId]);
         expect(envs[0]).toEqual(await store.getEnvConfig(envRef));
         expect(
           await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 }),
@@ -671,9 +712,11 @@ export function describeStoreConformance(
 
     describe("sessions", () => {
       it("round-trips a session", async () => {
-        const sessionId = await newSession();
-        const session = await store.getSession(sessionId);
-        expect(session?.id).toBe(sessionId);
+        const sessionRef = await newSession();
+        expect(sessionRef.namespace).toBe(DEFAULT_NAMESPACE);
+        const session = await store.getSession(sessionRef);
+        expect(session?.sessionId).toBe(sessionRef.sessionId);
+        expect(session?.namespace).toBe(DEFAULT_NAMESPACE);
         expect(session?.agentConfigId).toBeDefined();
         expect(session?.agentConfigVersion).toBe(1);
         expect(session?.envConfigId).toBeDefined();
@@ -686,13 +729,14 @@ export function describeStoreConformance(
         });
         const envConfigRef = await newEnv();
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2", version: 1 });
-        const sessionId = await store.createSession({
-          agentConfigId: agentConfigRef.id,
-          envConfigId: envConfigRef.id,
+        const sessionRef = await store.createSession({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          envConfigId: envConfigRef.envConfigId,
         });
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v3", version: 2 });
 
-        const session = await store.getSession(sessionId);
+        const session = await store.getSession(sessionRef);
         expect(session?.agentConfigVersion).toBe(2);
         expect(
           (
@@ -709,53 +753,65 @@ export function describeStoreConformance(
         const envConfigRef = await newEnv();
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2", version: 1 });
 
-        const sessionId = await store.createSession({
-          agentConfigId: agentConfigRef.id,
+        const sessionRef = await store.createSession({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
           agentConfigVersion: 1,
-          envConfigId: envConfigRef.id,
+          envConfigId: envConfigRef.envConfigId,
         });
 
-        expect((await store.getSession(sessionId))?.agentConfigVersion).toBe(1);
+        expect((await store.getSession(sessionRef))?.agentConfigVersion).toBe(1);
       });
 
       it("bindSandbox: first writer wins, losers learn the winner", async () => {
-        const sessionId = await newSession();
-        expect((await store.getSession(sessionId))?.sandboxId).toBeUndefined();
+        const sessionRef = await newSession();
+        expect((await store.getSession(sessionRef))?.sandboxId).toBeUndefined();
 
-        expect(await store.bindSandbox(sessionId, "sbx_a")).toBe("sbx_a");
+        expect(await store.bindSandbox(sessionRef, "sbx_a")).toBe("sbx_a");
         // The loser's candidate is not recorded; it gets the winner back.
-        expect(await store.bindSandbox(sessionId, "sbx_b")).toBe("sbx_a");
-        expect((await store.getSession(sessionId))?.sandboxId).toBe("sbx_a");
+        expect(await store.bindSandbox(sessionRef, "sbx_b")).toBe("sbx_a");
+        expect((await store.getSession(sessionRef))?.sandboxId).toBe("sbx_a");
       });
 
       it("bindSandbox replaces only the expected previous binding", async () => {
-        const sessionId = await newSession();
-        await store.bindSandbox(sessionId, "sbx_a");
+        const sessionRef = await newSession();
+        await store.bindSandbox(sessionRef, "sbx_a");
 
         // Wrong expectation: nothing written, the current binding returns.
-        expect(await store.bindSandbox(sessionId, "sbx_c", "sbx_b")).toBe("sbx_a");
-        expect((await store.getSession(sessionId))?.sandboxId).toBe("sbx_a");
+        expect(await store.bindSandbox(sessionRef, "sbx_c", "sbx_b")).toBe("sbx_a");
+        expect((await store.getSession(sessionRef))?.sandboxId).toBe("sbx_a");
 
         // Right expectation: the dead binding is replaced.
-        expect(await store.bindSandbox(sessionId, "sbx_c", "sbx_a")).toBe("sbx_c");
-        expect((await store.getSession(sessionId))?.sandboxId).toBe("sbx_c");
+        expect(await store.bindSandbox(sessionRef, "sbx_c", "sbx_a")).toBe("sbx_c");
+        expect((await store.getSession(sessionRef))?.sandboxId).toBe("sbx_c");
       });
 
-      it("bindSandbox rejects an unknown session", async () => {
-        await expect(store.bindSandbox("nope", "sbx_a")).rejects.toThrow("unknown session");
+      it("bindSandbox rejects an unknown or foreign session", async () => {
+        await expect(
+          store.bindSandbox({ namespace: DEFAULT_NAMESPACE, sessionId: "nope" }, "sbx_a"),
+        ).rejects.toThrow("unknown session");
+        const sessionRef = await newSession();
+        await expect(
+          store.bindSandbox({ ...sessionRef, namespace: "tenant-b" }, "sbx_a"),
+        ).rejects.toThrow("unknown session");
       });
 
       it("rejects a session naming an unknown agent config or version", async () => {
         const envConfigRef = await newEnv();
         await expect(
-          store.createSession({ agentConfigId: "nope", envConfigId: envConfigRef.id }),
+          store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: "nope",
+            envConfigId: envConfigRef.envConfigId,
+          }),
         ).rejects.toThrow();
         const agentConfigRef = await newAgent();
         await expect(
           store.createSession({
-            agentConfigId: agentConfigRef.id,
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
             agentConfigVersion: 2,
-            envConfigId: envConfigRef.id,
+            envConfigId: envConfigRef.envConfigId,
           }),
         ).rejects.toThrow();
       });
@@ -763,35 +819,53 @@ export function describeStoreConformance(
       it("rejects a session naming an unknown env config", async () => {
         const agentConfigRef = await newAgent();
         await expect(
-          store.createSession({ agentConfigId: agentConfigRef.id, envConfigId: "nope" }),
+          store.createSession({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: "nope",
+          }),
         ).rejects.toThrow();
       });
     });
 
     describe("namespace", () => {
-      it("uses the explicit default namespace for configs while sessions default", async () => {
+      it("stamps every row with the namespace it was created under", async () => {
         const agentConfigRef = await newAgent();
         const envConfigRef = await newEnv();
-        const sessionId = await store.createSession({
-          agentConfigId: agentConfigRef.id,
-          envConfigId: envConfigRef.id,
+        const sessionRef = await store.createSession({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          envConfigId: envConfigRef.envConfigId,
         });
         expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
         expect((await store.getEnvConfig(envConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
-        expect((await store.getSession(sessionId))?.namespace).toBe(DEFAULT_NAMESPACE);
+        expect((await store.getSession(sessionRef))?.namespace).toBe(DEFAULT_NAMESPACE);
       });
 
       it("stores an explicit namespace verbatim", async () => {
         const agentConfigRef = await newAgent({ namespace: "tenant-a" });
         const envConfigRef = await newEnv({ namespace: "tenant-a" });
-        const sessionId = await store.createSession({
-          agentConfigId: agentConfigRef.id,
-          envConfigId: envConfigRef.id,
+        const sessionRef = await store.createSession({
           namespace: "tenant-a",
+          agentConfigId: agentConfigRef.agentConfigId,
+          envConfigId: envConfigRef.envConfigId,
         });
+        expect(sessionRef.namespace).toBe("tenant-a");
         expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe("tenant-a");
         expect((await store.getEnvConfig(envConfigRef))?.namespace).toBe("tenant-a");
-        expect((await store.getSession(sessionId))?.namespace).toBe("tenant-a");
+        expect((await store.getSession(sessionRef))?.namespace).toBe("tenant-a");
+      });
+
+      it("rejects a session create without a namespace at the boundary", async () => {
+        const agentConfigRef = await newAgent();
+        const envConfigRef = await newEnv();
+        await expect(
+          store.createSession({
+            agentConfigId: agentConfigRef.agentConfigId,
+            envConfigId: envConfigRef.envConfigId,
+            // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
+          } as any),
+        ).rejects.toThrow();
       });
 
       it("a foreign-namespace config is unknown — sessions and their configs share one namespace", async () => {
@@ -803,84 +877,135 @@ export function describeStoreConformance(
         // error is the same "unknown", so existence never leaks.
         await expect(
           store.createSession({
-            agentConfigId: agentA.id,
-            envConfigId: envB.id,
             namespace: "tenant-a",
+            agentConfigId: agentA.agentConfigId,
+            envConfigId: envB.envConfigId,
           }),
         ).rejects.toThrow("unknown env config");
         await expect(
           store.createSession({
-            agentConfigId: agentA.id,
-            envConfigId: envA.id,
             namespace: "tenant-b",
+            agentConfigId: agentA.agentConfigId,
+            envConfigId: envA.envConfigId,
           }),
         ).rejects.toThrow("unknown agent config");
         // The matched trio is accepted.
         await expect(
           store.createSession({
-            agentConfigId: agentA.id,
-            envConfigId: envA.id,
             namespace: "tenant-a",
+            agentConfigId: agentA.agentConfigId,
+            envConfigId: envA.envConfigId,
           }),
         ).resolves.toBeDefined();
       });
     });
 
+    describe("session scoping", () => {
+      it("a foreign session ref is unknown — gets, reads, and writes all agree", async () => {
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go")); // seed an entry and an item
+        await store.intake(sessionRef, user("queued")); // seed a pending input
+        const foreign: SessionRef = { namespace: "tenant-b", sessionId: sessionRef.sessionId };
+
+        expect(await store.getSession(foreign)).toBeUndefined();
+        expect(await store.readEntries(foreign)).toEqual([]);
+        expect(await store.listItems(foreign)).toEqual([]);
+        expect(await store.pendingInputs(foreign)).toEqual([]);
+        await expect(store.intake(foreign, user("hi"))).rejects.toThrow("unknown session");
+        await expect(store.requestCancel(foreign)).rejects.toThrow("unknown session");
+
+        // The rightful owner still sees everything.
+        expect(await store.readEntries(sessionRef)).toHaveLength(1);
+        expect(await store.listItems(sessionRef)).toHaveLength(1);
+        expect(await store.pendingInputs(sessionRef)).toHaveLength(1);
+      });
+
+      it("a foreign claim filter finds nothing", async () => {
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
+        expect(
+          await store.claimItem({
+            leaseMs: 60_000,
+            session: { ...sessionRef, namespace: "tenant-b" },
+          }),
+        ).toBeUndefined();
+        expect(await store.claimItem({ leaseMs: 60_000, session: sessionRef })).toBeDefined();
+      });
+
+      it("hands the driver its scope on the claimed row", async () => {
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
+        // No filter — the claim starts from nothing; the row must carry
+        // the namespace and parent every later ref needs.
+        const claim = await store.claimItem({ leaseMs: 60_000 });
+        expect(claim?.item).toMatchObject({
+          namespace: sessionRef.namespace,
+          sessionId: sessionRef.sessionId,
+        });
+      });
+    });
+
     describe("intake", () => {
       it("starts a run on an idle session — one entry, one ready inference item", async () => {
-        const sessionId = await newSession();
-        const result = await store.intake(sessionId, user("hi"));
+        const sessionRef = await newSession();
+        const result = await store.intake(sessionRef, user("hi"));
         expect(result.kind).toBe("started");
-        const entries = await store.readEntries(sessionId);
+        const entries = await store.readEntries(sessionRef);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({ type: "message", seq: 0, message: user("hi") });
-        const items = await store.listItems(sessionId);
+        const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(1);
         expect(items[0]).toMatchObject({ type: "inference", status: "ready" });
       });
 
       it("queues on a busy session — a pending input, never a second item", async () => {
-        const sessionId = await newSession();
-        await store.intake(sessionId, user("first"));
-        const result = await store.intake(sessionId, user("second"));
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("first"));
+        const result = await store.intake(sessionRef, user("second"));
         expect(result.kind).toBe("queued");
-        expect(await store.listItems(sessionId)).toHaveLength(1);
-        const pending = await store.pendingInputs(sessionId);
+        expect(await store.listItems(sessionRef)).toHaveLength(1);
+        const pending = await store.pendingInputs(sessionRef);
         expect(pending).toHaveLength(1);
         expect(pending[0]?.message).toEqual(user("second"));
         // The queued message is parked, not logged.
-        expect(await store.readEntries(sessionId)).toHaveLength(1);
+        expect(await store.readEntries(sessionRef)).toHaveLength(1);
       });
 
       it("rejects intake for an unknown session", async () => {
-        await expect(store.intake("nope", user("hi"))).rejects.toThrow();
+        await expect(
+          store.intake({ namespace: DEFAULT_NAMESPACE, sessionId: "nope" }, user("hi")),
+        ).rejects.toThrow();
       });
 
       it("admits exactly one starter under concurrent intake", async () => {
-        const sessionId = await newSession();
+        const sessionRef = await newSession();
         const results = await Promise.all(
-          Array.from({ length: 5 }, (_, i) => store.intake(sessionId, user(`m${i}`))),
+          Array.from({ length: 5 }, (_, i) => store.intake(sessionRef, user(`m${i}`))),
         );
         expect(results.filter((r) => r.kind === "started")).toHaveLength(1);
         expect(results.filter((r) => r.kind === "queued")).toHaveLength(4);
-        expect(await store.listItems(sessionId)).toHaveLength(1);
+        expect(await store.listItems(sessionRef)).toHaveLength(1);
       });
     });
 
     describe("claiming", () => {
       it("leases the ready item to exactly one claimer", async () => {
-        const sessionId = await newSession();
-        await store.intake(sessionId, user("go"));
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
         const claim = await store.claimItem({ leaseMs: 60_000 });
-        expect(claim?.item).toMatchObject({ sessionId, type: "inference", status: "leased" });
+        expect(claim?.item).toMatchObject({
+          sessionId: sessionRef.sessionId,
+          type: "inference",
+          status: "leased",
+        });
         expect(claim?.token).toBeTruthy();
         expect(await store.claimItem({ leaseMs: 60_000 })).toBeUndefined();
       });
 
       it("counts attempts: 0 until claimed, incremented by every claim", async () => {
-        const sessionId = await newSession();
-        await store.intake(sessionId, user("go"));
-        expect((await store.listItems(sessionId))[0]?.attempt).toBe(0);
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
+        expect((await store.listItems(sessionRef))[0]?.attempt).toBe(0);
 
         const first = await store.claimItem({ leaseMs: 1_000 });
         expect(first?.item.attempt).toBe(1);
@@ -890,53 +1015,64 @@ export function describeStoreConformance(
         clock.advance(5_000);
         const second = await store.claimItem({ leaseMs: 1_000 });
         expect(second?.item.attempt).toBe(2);
-        expect((await store.listItems(sessionId))[0]?.attempt).toBe(2);
+        expect((await store.listItems(sessionRef))[0]?.attempt).toBe(2);
       });
 
       it("admits exactly one winner under contended claims", async () => {
-        const sessionId = await newSession();
-        await store.intake(sessionId, user("go"));
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
         const claims = await Promise.all(
           Array.from({ length: 8 }, () => store.claimItem({ leaseMs: 60_000 })),
         );
         expect(claims.filter((c) => c !== undefined)).toHaveLength(1);
       });
 
-      it("scopes the claim scan when sessionId is given", async () => {
+      it("scopes the claim scan when a session is given", async () => {
         const s1 = await newSession();
         const s2 = await newSession();
         await store.intake(s1, user("a"));
         await store.intake(s2, user("b"));
-        const claim = await store.claimItem({ leaseMs: 60_000, sessionId: s2 });
-        expect(claim?.item.sessionId).toBe(s2);
+        const claim = await store.claimItem({ leaseMs: 60_000, session: s2 });
+        expect(claim?.item.sessionId).toBe(s2.sessionId);
       });
 
       it("heartbeats only the live lease's token", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
-        expect(await store.heartbeat(itemId, token)).toBe(true);
-        expect(await store.heartbeat(itemId, "forged-token")).toBe(false);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        expect(await store.heartbeat(itemRef, token)).toBe(true);
+        expect(await store.heartbeat(itemRef, "forged-token")).toBe(false);
+      });
+
+      it("misses a heartbeat addressed through the wrong session or namespace", async () => {
+        const s1 = await newSession();
+        const s2 = await newSession();
+        const { itemRef, token } = await startAndClaim(s1);
+        // The full path is the address: a mismatched parent or a foreign
+        // namespace is unknown, exactly like a missing item.
+        expect(await store.heartbeat({ ...itemRef, sessionId: s2.sessionId }, token)).toBe(false);
+        expect(await store.heartbeat({ ...itemRef, namespace: "tenant-b" }, token)).toBe(false);
+        expect(await store.heartbeat(itemRef, token)).toBe(true);
       });
 
       it("reclaims an expired lease with a fresh token, fencing the old one", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
         clock.advance(120_000);
-        expect(await store.heartbeat(itemId, token)).toBe(false); // lease lost
+        expect(await store.heartbeat(itemRef, token)).toBe(false); // lease lost
         const reclaimed = await store.claimItem({ leaseMs: 60_000 });
-        expect(reclaimed?.item.id).toBe(itemId);
+        expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
         // A re-claim never re-issues the credential — the zombie stays fenced.
         expect(reclaimed?.token).not.toBe(token);
         await expect(
           store.commitStep({
-            itemId,
+            itemRef,
             token,
             append: [assistant("stale work")],
             next: { kind: "end_run", status: "completed" },
           }),
         ).rejects.toThrow(FencedError);
         await store.commitStep({
-          itemId,
+          itemRef,
           token: reclaimed!.token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
@@ -944,48 +1080,48 @@ export function describeStoreConformance(
       });
 
       it("transfers authority at the exact expiry instant — expired has one spelling", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId); // leaseMs 60_000
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef); // leaseMs 60_000
         clock.advance(60_000); // now == leaseExpiresAt, exactly
-        expect(await store.heartbeat(itemId, token)).toBe(false); // holder is out…
+        expect(await store.heartbeat(itemRef, token)).toBe(false); // holder is out…
         await expect(
           store.commitStep({
-            itemId,
+            itemRef,
             token,
             append: [assistant("at the wire")],
             next: { kind: "end_run", status: "completed" },
           }),
         ).rejects.toThrow(FencedError);
         const reclaimed = await store.claimItem({ leaseMs: 60_000 }); // …and a claimer is in
-        expect(reclaimed?.item.id).toBe(itemId);
+        expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
       });
 
       it("rejects a commit on an expired lease even before any reclaim", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
         clock.advance(120_000);
         await expect(
           store.commitStep({
-            itemId,
+            itemRef,
             token,
             append: [assistant("late")],
             next: { kind: "end_run", status: "completed" },
           }),
         ).rejects.toThrow(FencedError);
         // The rejected commit rolled back whole — nothing landed.
-        expect(await store.readEntries(sessionId)).toHaveLength(1);
+        expect(await store.readEntries(sessionRef)).toHaveLength(1);
         // After expiry the item's fate belongs to its next claimer.
         const reclaimed = await store.claimItem({ leaseMs: 60_000 });
-        expect(reclaimed?.item.id).toBe(itemId);
+        expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
       });
     });
 
     describe("cancel", () => {
       it("appends a control entry in log order", async () => {
-        const sessionId = await newSession();
-        await store.intake(sessionId, user("go"));
-        await store.requestCancel(sessionId);
-        const entries = await store.readEntries(sessionId);
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
+        await store.requestCancel(sessionRef);
+        const entries = await store.readEntries(sessionRef);
         expect(entries).toHaveLength(2);
         expect(entries[1]).toMatchObject({ type: "control", control: "cancel", seq: 1 });
       });
@@ -993,100 +1129,100 @@ export function describeStoreConformance(
 
     describe("commitStep", () => {
       it("appends output and chains the next item atomically", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [assistant("thinking…")],
           next: { kind: "execute_tools" },
         });
-        const entries = await store.readEntries(sessionId);
+        const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => e.seq)).toEqual([0, 1]);
-        const items = await store.listItems(sessionId);
+        const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(2);
-        expect(items[0]).toMatchObject({ id: itemId, status: "done" });
+        expect(items[0]).toMatchObject({ itemId: itemRef.itemId, status: "done" });
         expect(items[1]).toMatchObject({ type: "execute_tools", status: "ready" });
       });
 
       it("end_run with no pending inputs leaves the session idle", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        const items = await store.listItems(sessionId);
+        const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(1); // the run's end is the NON-creation of a next item
         expect(items[0]?.status).toBe("done");
         // Idle again: the next intake starts a run.
-        expect((await store.intake(sessionId, user("next"))).kind).toBe("started");
+        expect((await store.intake(sessionRef, user("next"))).kind).toBe("started");
       });
 
       it("end_run auto-chains parked inputs into a new run, in arrival order", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
-        await store.intake(sessionId, user("follow-up 1"));
-        await store.intake(sessionId, user("follow-up 2"));
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        await store.intake(sessionRef, user("follow-up 1"));
+        await store.intake(sessionRef, user("follow-up 2"));
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        const entries = await store.readEntries(sessionId);
+        const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => (e.type === "message" ? e.message : e.type))).toEqual([
           user("go"),
           assistant("done"),
           user("follow-up 1"),
           user("follow-up 2"),
         ]);
-        expect(await store.pendingInputs(sessionId)).toHaveLength(0);
-        const items = await store.listItems(sessionId);
+        expect(await store.pendingInputs(sessionRef)).toHaveLength(0);
+        const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(2);
         expect(items[1]).toMatchObject({ type: "inference", status: "ready" });
       });
 
       it("end_run cancelled parks pending inputs instead of chaining", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
-        await store.intake(sessionId, user("queued during run"));
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        await store.intake(sessionRef, user("queued during run"));
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [],
           next: { kind: "end_run", status: "cancelled" },
         });
-        expect(await store.listItems(sessionId)).toHaveLength(1); // no chain
-        expect(await store.pendingInputs(sessionId)).toHaveLength(1); // parked
+        expect(await store.listItems(sessionRef)).toHaveLength(1); // no chain
+        expect(await store.pendingInputs(sessionRef)).toHaveLength(1); // parked
       });
 
       it("drains consumed inputs atomically with the step", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
-        const queued = await store.intake(sessionId, user("steer!"));
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        const queued = await store.intake(sessionRef, user("steer!"));
         expect(queued.kind).toBe("queued");
         const inputId = queued.kind === "queued" ? queued.inputId : "";
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           // Drained steering precedes step output.
           append: [user("steer!"), assistant("adjusted")],
           consumeInputs: [inputId],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(await store.pendingInputs(sessionId)).toHaveLength(0);
-        expect((await store.readEntries(sessionId)).map((e) => e.seq)).toEqual([0, 1, 2]);
+        expect(await store.pendingInputs(sessionRef)).toHaveLength(0);
+        expect((await store.readEntries(sessionRef)).map((e) => e.seq)).toEqual([0, 1, 2]);
       });
 
       it("rejects consuming an unknown or already-consumed input", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
         await expect(
           store.commitStep({
-            itemId,
+            itemRef,
             token,
             append: [],
             consumeInputs: ["nope"],
@@ -1096,60 +1232,89 @@ export function describeStoreConformance(
       });
 
       it("resolves an idempotent re-commit of a done item without duplicating", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
         const commit: CommitStepRequest = {
-          itemId,
+          itemRef,
           token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         };
         await store.commitStep(commit);
         await store.commitStep(commit); // crash-after-commit recovery
-        expect(await store.readEntries(sessionId)).toHaveLength(2);
-        expect(await store.listItems(sessionId)).toHaveLength(1);
+        expect(await store.readEntries(sessionRef)).toHaveLength(2);
+        expect(await store.listItems(sessionRef)).toHaveLength(1);
       });
 
       it("rejects a commit for an unknown item", async () => {
         await expect(
           store.commitStep({
-            itemId: "nope",
+            itemRef: { namespace: DEFAULT_NAMESPACE, sessionId: "nope", itemId: "nope" },
             token: "any",
             append: [],
             next: { kind: "inference" },
           }),
         ).rejects.toThrow();
       });
-    });
 
-    describe("the log", () => {
-      it("serves the seq cursor — only entries after the given seq", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId);
+      it("treats a commit addressed through the wrong session or namespace as unknown", async () => {
+        const s1 = await newSession();
+        const s2 = await newSession();
+        const { itemRef, token } = await startAndClaim(s1);
+        await expect(
+          store.commitStep({
+            itemRef: { ...itemRef, sessionId: s2.sessionId },
+            token,
+            append: [],
+            next: { kind: "end_run", status: "completed" },
+          }),
+        ).rejects.toThrow("unknown item");
+        await expect(
+          store.commitStep({
+            itemRef: { ...itemRef, namespace: "tenant-b" },
+            token,
+            append: [],
+            next: { kind: "end_run", status: "completed" },
+          }),
+        ).rejects.toThrow("unknown item");
+        // The rightful address still commits.
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        const tail = await store.readEntries(sessionId, 0);
+      });
+    });
+
+    describe("the log", () => {
+      it("serves the seq cursor — only entries after the given seq", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        const tail = await store.readEntries(sessionRef, 0);
         expect(tail).toHaveLength(1);
         expect(tail[0]?.seq).toBe(1);
-        expect(await store.readEntries(sessionId, 1)).toHaveLength(0);
+        expect(await store.readEntries(sessionRef, 1)).toHaveLength(0);
       });
 
       it("keeps seq gapless and monotonic across every write path", async () => {
-        const sessionId = await newSession();
-        const { itemId, token } = await startAndClaim(sessionId); // seq 0: user message
-        await store.requestCancel(sessionId); // seq 1: control
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef); // seq 0: user message
+        await store.requestCancel(sessionRef); // seq 1: control
         await store.commitStep({
-          itemId,
+          itemRef,
           token,
           append: [assistant("stopped")], // seq 2
           next: { kind: "end_run", status: "cancelled" },
         });
-        await store.intake(sessionId, user("again")); // seq 3
-        const entries = await store.readEntries(sessionId);
+        await store.intake(sessionRef, user("again")); // seq 3
+        const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
       });
     });

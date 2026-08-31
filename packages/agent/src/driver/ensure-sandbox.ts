@@ -18,10 +18,10 @@
 // duplicate and joins whoever replaced it first.
 //
 // The composition root closes the driver's `bindTools` dep over this:
-//   bindTools: (sessionId) =>
-//     ensureSandbox(store, provider, sessionId, opts).then(createSandboxTools)
+//   bindTools: (ref) =>
+//     ensureSandbox(store, provider, ref, opts).then(createSandboxTools)
 
-import type { SessionId } from "@funky/core";
+import type { SessionRef } from "@funky/core";
 import {
   type CreateSandboxOptions,
   type Sandbox,
@@ -33,11 +33,11 @@ import type { Store } from "../ports/store";
 export async function ensureSandbox(
   store: Pick<Store, "getSession" | "bindSandbox">,
   provider: SandboxProvider,
-  sessionId: SessionId,
+  ref: SessionRef,
   createOpts?: CreateSandboxOptions,
 ): Promise<Sandbox> {
-  const session = await store.getSession(sessionId);
-  if (!session) throw new Error(`ensureSandbox: unknown session ${sessionId}`);
+  const session = await store.getSession(ref);
+  if (!session) throw new Error(`ensureSandbox: unknown session ${ref.sessionId}`);
   return acquire(session.sandboxId);
 
   async function acquire(bound: string | undefined): Promise<Sandbox> {
@@ -51,9 +51,9 @@ export async function ensureSandbox(
     }
     const created = await provider.create({
       ...createOpts,
-      metadata: { ...createOpts?.metadata, sessionId },
+      metadata: { ...createOpts?.metadata, sessionId: ref.sessionId },
     });
-    const winner = await store.bindSandbox(sessionId, created.sandboxId, bound);
+    const winner = await store.bindSandbox(ref, created.sandboxId, bound);
     if (winner === created.sandboxId) return created;
 
     // Lost the registration race: discard the duplicate and join the

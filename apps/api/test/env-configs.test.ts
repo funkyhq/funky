@@ -1,6 +1,10 @@
 // Route tests over the REAL store — PGlite + the pg adapter, the same
 // binding the driver suites use — so materialization (defaults resolved
 // at create) is asserted end to end, never mocked.
+//
+// Namespace is part of the request: create bodies carry it, every other
+// route takes ?namespace= — and in both spots absence defaults to
+// "default" (common.ts NamespaceQuery).
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,16 +15,17 @@ import { get, post } from "./helpers";
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
-let scoped: ReturnType<typeof buildApp>; // namespaceSource "header" over the SAME store
 
 beforeAll(async () => {
   client = new PGlite();
   await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-  const base = { store, authToken: null, ping: async () => ({}) };
-  const stream = { pollMs: 1000, heartbeatMs: 15_000 };
-  app = buildApp({ ...base, namespaceSource: "static", stream });
-  scoped = buildApp({ ...base, namespaceSource: "header", stream });
+  app = buildApp({
+    store,
+    authToken: null,
+    ping: async () => ({}),
+    stream: { pollMs: 1000, heartbeatMs: 15_000 },
+  });
 });
 
 afterAll(async () => {
@@ -67,9 +72,26 @@ describe("POST /v1/env-configs", () => {
     expect(body.error.type).toBe("invalid_request_error");
   });
 
-  it("requires a namespace", async () => {
+  it("defaults the namespace when the body omits it", async () => {
     const res = await post(app, "/v1/env-configs", {});
+    expect(res.status).toBe(201);
+    expect((await res.json()).namespace).toBe("default");
+  });
+
+  it("rejects an empty namespace — absence defaults, emptiness is a mistake", async () => {
+    const res = await post(app, "/v1/env-configs", { namespace: "" });
     expect(res.status).toBe(400);
+  });
+
+  // Namespace is a PK component on every table; without the format
+  // bound an oversized value overflows the btree tuple limit and
+  // surfaces as a 500 instead of this 400.
+  it("rejects a malformed namespace, 400 — oversized or bad characters", async () => {
+    for (const namespace of ["x".repeat(65), "tenant a", "tenant/../b"]) {
+      const res = await post(app, "/v1/env-configs", { namespace });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
   });
 });
 
@@ -77,34 +99,23 @@ describe("GET /v1/env-configs", () => {
   // The pagination machinery itself (limit bounds, over-fetched
   // hasMore, the page walk) is pinned in agent-configs.test.ts, which
   // shares it; here we pin this resource's own wiring.
-  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
 
   it("lists env configs only — the two config kinds are separate collections", async () => {
     const created = await (
-      await post(
-        scoped,
-        "/v1/env-configs",
-        { namespace: "list-env", packages: { npm: ["zod@4"] } },
-        asTenant("list-env"),
-      )
+      await post(app, "/v1/env-configs", { namespace: "list-env", packages: { npm: ["zod@4"] } })
     ).json();
-    await post(
-      scoped,
-      "/v1/agent-configs",
-      {
-        namespace: "list-env",
-        inference: { provider: "fake", model: "m" },
-        systemPrompt: "s",
-      },
-      asTenant("list-env"),
-    );
+    await post(app, "/v1/agent-configs", {
+      namespace: "list-env",
+      inference: { provider: "fake", model: "m" },
+      systemPrompt: "s",
+    });
 
-    const res = await get(scoped, "/v1/env-configs", asTenant("list-env"));
+    const res = await get(app, "/v1/env-configs?namespace=list-env");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ data: [created], hasMore: false, lastId: created.id });
   });
 
-  it("is wired on the static namespace source too", async () => {
+  it("defaults the namespace when the query omits it", async () => {
     const created = await (await post(app, "/v1/env-configs", { namespace: "default" })).json();
     const body = await (await get(app, "/v1/env-configs?limit=100")).json();
     expect(body.data).toContainEqual(created);
@@ -114,10 +125,8 @@ describe("GET /v1/env-configs", () => {
   });
 
   it("400s a cursor from another namespace", async () => {
-    const foreign = await (
-      await post(scoped, "/v1/env-configs", { namespace: "env-cur-b" }, asTenant("env-cur-b"))
-    ).json();
-    const res = await get(scoped, `/v1/env-configs?after=${foreign.id}`, asTenant("env-cur-a"));
+    const foreign = await (await post(app, "/v1/env-configs", { namespace: "env-cur-b" })).json();
+    const res = await get(app, `/v1/env-configs?namespace=env-cur-a&after=${foreign.id}`);
     expect(res.status).toBe(400);
     expect((await res.json()).error.type).toBe("invalid_request_error");
   });
@@ -133,8 +142,6 @@ describe("GET /v1/env-configs/:id", () => {
 });
 
 describe("POST /v1/env-configs/:id", () => {
-  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-
   it("partially updates the recipe in place", async () => {
     const created = await (
       await post(app, "/v1/env-configs", {
@@ -174,71 +181,49 @@ describe("POST /v1/env-configs/:id", () => {
   });
 
   it("404s unknown and foreign ids without mutating the foreign config", async () => {
-    const unknown = await post(
-      scoped,
-      "/v1/env-configs/nope",
-      { packages: { npm: ["zod"] } },
-      asTenant("update-a"),
-    );
+    const unknown = await post(app, "/v1/env-configs/nope?namespace=update-a", {
+      packages: { npm: ["zod"] },
+    });
     expect(unknown.status).toBe(404);
 
     const created = await (
-      await post(
-        scoped,
-        "/v1/env-configs",
-        { namespace: "update-a", packages: { pip: ["numpy"] } },
-        asTenant("update-a"),
-      )
+      await post(app, "/v1/env-configs", { namespace: "update-a", packages: { pip: ["numpy"] } })
     ).json();
-    const foreign = await post(
-      scoped,
-      `/v1/env-configs/${created.id}`,
-      { packages: { npm: ["zod"] } },
-      asTenant("update-b"),
-    );
+    const foreign = await post(app, `/v1/env-configs/${created.id}?namespace=update-b`, {
+      packages: { npm: ["zod"] },
+    });
     expect(foreign.status).toBe(404);
-    const own = await (
-      await get(scoped, `/v1/env-configs/${created.id}`, asTenant("update-a"))
-    ).json();
+    const own = await (await get(app, `/v1/env-configs/${created.id}?namespace=update-a`)).json();
     expect(own.packages).toEqual({ pip: ["numpy"] });
   });
 });
 
-describe("namespace scoping (namespaceSource=header — the managed-gateway shape)", () => {
-  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-
-  it("uses the namespace supplied in the request", async () => {
-    const res = await post(
-      scoped,
-      "/v1/env-configs",
-      { namespace: "tenant-b" },
-      asTenant("tenant-a"),
-    );
+describe("namespace scoping", () => {
+  it("creates in the namespace the request names and scopes reads by the query", async () => {
+    const res = await post(app, "/v1/env-configs", { namespace: "tenant-a" });
     expect(res.status).toBe(201);
-    expect((await res.json()).namespace).toBe("tenant-b");
+    const created = await res.json();
+    expect(created.namespace).toBe("tenant-a");
+    expect((await get(app, `/v1/env-configs/${created.id}?namespace=tenant-a`)).status).toBe(200);
+    expect((await get(app, `/v1/env-configs/${created.id}?namespace=tenant-b`)).status).toBe(404);
   });
 
   it("a foreign row 404s exactly like a nonexistent one", async () => {
-    const created = await (
-      await post(scoped, "/v1/env-configs", { namespace: "tenant-a" }, asTenant("tenant-a"))
-    ).json();
+    const created = await (await post(app, "/v1/env-configs", { namespace: "tenant-a" })).json();
 
-    const foreign = await get(scoped, `/v1/env-configs/${created.id}`, asTenant("tenant-b"));
+    const foreign = await get(app, `/v1/env-configs/${created.id}?namespace=tenant-b`);
     expect(foreign.status).toBe(404);
     expect((await foreign.json()).error.type).toBe("not_found_error");
 
-    const own = await get(scoped, `/v1/env-configs/${created.id}`, asTenant("tenant-a"));
+    const own = await get(app, `/v1/env-configs/${created.id}?namespace=tenant-a`);
     expect(own.status).toBe(200);
     expect((await own.json()).namespace).toBe("tenant-a");
   });
 
-  it("rejects a malformed namespace header", async () => {
-    const res = await post(
-      scoped,
-      "/v1/env-configs",
-      { namespace: "tenant-a" },
-      asTenant("no spaces allowed"),
-    );
-    expect(res.status).toBe(400);
+  it("400s an empty or malformed namespace in the query", async () => {
+    for (const namespace of ["", "x".repeat(65), "tenant%20a"]) {
+      const res = await get(app, `/v1/env-configs/some-id?namespace=${namespace}`);
+      expect(res.status).toBe(400);
+    }
   });
 });

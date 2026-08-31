@@ -1,8 +1,11 @@
 // Route tests over the REAL store — PGlite + the pg adapter — same
-// pattern as env-configs.test.ts. The middleware machinery (auth,
-// header source validation) is covered there and in app.test.ts; here
-// we pin this resource's wiring, materialization, and its own
-// namespace-scoped Store references.
+// pattern as env-configs.test.ts. The middleware machinery (auth) is
+// covered in app.test.ts; here we pin this resource's wiring,
+// materialization, and its namespace-scoped Store references.
+//
+// Namespace is part of the request: create bodies carry it, every other
+// route takes ?namespace= — and in both spots absence defaults to
+// "default" (common.ts NamespaceQuery).
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -21,16 +24,17 @@ const recipeFor = (namespace: string) => ({ ...RECIPE, namespace });
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
-let scoped: ReturnType<typeof buildApp>; // namespaceSource "header" over the SAME store
 
 beforeAll(async () => {
   client = new PGlite();
   await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-  const base = { store, authToken: null, ping: async () => ({}) };
-  const stream = { pollMs: 1000, heartbeatMs: 15_000 };
-  app = buildApp({ ...base, namespaceSource: "static", stream });
-  scoped = buildApp({ ...base, namespaceSource: "header", stream });
+  app = buildApp({
+    store,
+    authToken: null,
+    ping: async () => ({}),
+    stream: { pollMs: 1000, heartbeatMs: 15_000 },
+  });
 });
 
 afterAll(async () => {
@@ -50,6 +54,7 @@ describe("POST /v1/agent-configs", () => {
     expect(typeof body.createdAt).toBe("string");
     expect(body.updatedAt).toBe(body.createdAt);
 
+    // Reads default ?namespace= to "default" — the self-deploy shape.
     const fetched = await get(app, `/v1/agent-configs/${body.id}`);
     expect(fetched.status).toBe(200);
     expect(await fetched.json()).toEqual(body);
@@ -58,15 +63,23 @@ describe("POST /v1/agent-configs", () => {
   it("uses the namespace supplied in the request", async () => {
     const res = await post(app, "/v1/agent-configs", recipeFor("caller-namespace"));
     expect(res.status).toBe(201);
-    expect((await res.json()).namespace).toBe("caller-namespace");
+    const created = await res.json();
+    expect(created.namespace).toBe("caller-namespace");
+    expect(
+      (await get(app, `/v1/agent-configs/${created.id}?namespace=caller-namespace`)).status,
+    ).toBe(200);
+    // Without the query the read defaults to "default" — a different
+    // namespace, so the row is unknown there.
+    expect((await get(app, `/v1/agent-configs/${created.id}`)).status).toBe(404);
   });
 
-  it("requires a namespace", async () => {
+  it("defaults the namespace when the body omits it", async () => {
     const res = await post(app, "/v1/agent-configs", {
       inference: RECIPE.inference,
       systemPrompt: RECIPE.systemPrompt,
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
+    expect((await res.json()).namespace).toBe("default");
   });
 
   it("rejects a bare-string inference config, 400", async () => {
@@ -96,12 +109,10 @@ describe("GET /v1/agent-configs", () => {
   // created back to back can share a timestamp. That the order is
   // newest-first is pinned in the store conformance suite, which owns
   // an injected clock.
-  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-
   async function seed(tenant: string, n: number): Promise<string[]> {
     const ids: string[] = [];
     for (let i = 0; i < n; i++) {
-      const res = await post(scoped, "/v1/agent-configs", recipeFor(tenant), asTenant(tenant));
+      const res = await post(app, "/v1/agent-configs", recipeFor(tenant));
       expect(res.status).toBe(201);
       ids.push((await res.json()).id);
     }
@@ -110,30 +121,28 @@ describe("GET /v1/agent-configs", () => {
 
   it("returns the namespace's rows in one page, whole rows, hasMore false", async () => {
     const ids = await seed("list-one", 3);
-    const res = await get(scoped, "/v1/agent-configs", asTenant("list-one"));
+    const res = await get(app, "/v1/agent-configs?namespace=list-one");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.map((c: { id: string }) => c.id).sort()).toEqual([...ids].sort());
     expect(body.hasMore).toBe(false);
     expect(body.lastId).toBe(body.data[2].id);
     // A listed row is the same row a get returns.
-    const one = await get(scoped, `/v1/agent-configs/${ids[0]}`, asTenant("list-one"));
+    const one = await get(app, `/v1/agent-configs/${ids[0]}?namespace=list-one`);
     expect(body.data).toContainEqual(await one.json());
   });
 
   it("pages with limit and after: the walk equals the whole list", async () => {
     await seed("list-page", 3);
-    const whole = await (await get(scoped, "/v1/agent-configs", asTenant("list-page"))).json();
+    const whole = await (await get(app, "/v1/agent-configs?namespace=list-page")).json();
 
-    const first = await (
-      await get(scoped, "/v1/agent-configs?limit=2", asTenant("list-page"))
-    ).json();
+    const first = await (await get(app, "/v1/agent-configs?namespace=list-page&limit=2")).json();
     expect(first.data).toHaveLength(2);
     expect(first.hasMore).toBe(true); // the over-fetched row, not a guess
     expect(first.lastId).toBe(first.data[1].id);
 
     const second = await (
-      await get(scoped, `/v1/agent-configs?limit=2&after=${first.lastId}`, asTenant("list-page"))
+      await get(app, `/v1/agent-configs?namespace=list-page&limit=2&after=${first.lastId}`)
     ).json();
     expect(second.data).toHaveLength(1);
     expect(second.hasMore).toBe(false);
@@ -142,20 +151,20 @@ describe("GET /v1/agent-configs", () => {
   });
 
   it("answers an empty namespace with an empty page and no cursor", async () => {
-    const body = await (await get(scoped, "/v1/agent-configs", asTenant("list-empty"))).json();
+    const body = await (await get(app, "/v1/agent-configs?namespace=list-empty")).json();
     expect(body).toEqual({ data: [], hasMore: false });
   });
 
   it("never crosses the namespace boundary", async () => {
     const mine = await seed("list-mine", 2);
     await seed("list-theirs", 1);
-    const body = await (await get(scoped, "/v1/agent-configs", asTenant("list-mine"))).json();
+    const body = await (await get(app, "/v1/agent-configs?namespace=list-mine")).json();
     expect(body.data.map((c: { id: string }) => c.id).sort()).toEqual([...mine].sort());
   });
 
   it("400s a limit outside the bounds and a non-numeric one", async () => {
     for (const q of ["limit=0", "limit=101", "limit=abc", "limit=1.5"]) {
-      const res = await get(scoped, `/v1/agent-configs?${q}`, asTenant("list-one"));
+      const res = await get(app, `/v1/agent-configs?namespace=list-one&${q}`);
       expect(res.status).toBe(400);
       expect((await res.json()).error.type).toBe("invalid_request_error");
     }
@@ -164,7 +173,7 @@ describe("GET /v1/agent-configs", () => {
   it("400s a cursor the store can't resolve — foreign like made-up", async () => {
     const [foreign] = await seed("list-cursor-b", 1);
     for (const after of ["nope", foreign]) {
-      const res = await get(scoped, `/v1/agent-configs?after=${after}`, asTenant("list-cursor-a"));
+      const res = await get(app, `/v1/agent-configs?namespace=list-cursor-a&after=${after}`);
       expect(res.status).toBe(400);
       expect((await res.json()).error.type).toBe("invalid_request_error");
     }
@@ -244,35 +253,23 @@ describe("POST /v1/agent-configs/:id", () => {
   });
 
   it("404s unknown and foreign ids without mutating the foreign config", async () => {
-    const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-    const unknown = await post(
-      scoped,
-      "/v1/agent-configs/nope",
-      { systemPrompt: "x" },
-      asTenant("update-a"),
-    );
+    const unknown = await post(app, "/v1/agent-configs/nope?namespace=update-a", {
+      systemPrompt: "x",
+    });
     expect(unknown.status).toBe(404);
 
-    const created = await (
-      await post(scoped, "/v1/agent-configs", recipeFor("update-a"), asTenant("update-a"))
-    ).json();
-    const foreign = await post(
-      scoped,
-      `/v1/agent-configs/${created.id}`,
-      { systemPrompt: "x", version: 1 },
-      asTenant("update-b"),
-    );
+    const created = await (await post(app, "/v1/agent-configs", recipeFor("update-a"))).json();
+    const foreign = await post(app, `/v1/agent-configs/${created.id}?namespace=update-b`, {
+      systemPrompt: "x",
+      version: 1,
+    });
     expect(foreign.status).toBe(404);
-    const own = await (
-      await get(scoped, `/v1/agent-configs/${created.id}`, asTenant("update-a"))
-    ).json();
+    const own = await (await get(app, `/v1/agent-configs/${created.id}?namespace=update-a`)).json();
     expect(own).toMatchObject({ systemPrompt: RECIPE.systemPrompt, version: 1 });
   });
 });
 
 describe("POST /v1/agent-configs/:id/archive", () => {
-  const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-
   it("archives the config and returns it with the mark, 200", async () => {
     const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
     const res = await post(app, `/v1/agent-configs/${created.id}/archive`);
@@ -307,25 +304,14 @@ describe("POST /v1/agent-configs/:id/archive", () => {
   });
 
   it("404s unknown and foreign ids without archiving the foreign config", async () => {
-    expect(
-      (await post(scoped, "/v1/agent-configs/nope/archive", undefined, asTenant("arch-a"))).status,
-    ).toBe(404);
+    expect((await post(app, "/v1/agent-configs/nope/archive?namespace=arch-a")).status).toBe(404);
 
-    const created = await (
-      await post(scoped, "/v1/agent-configs", recipeFor("arch-a"), asTenant("arch-a"))
-    ).json();
-    const foreign = await post(
-      scoped,
-      `/v1/agent-configs/${created.id}/archive`,
-      undefined,
-      asTenant("arch-b"),
-    );
+    const created = await (await post(app, "/v1/agent-configs", recipeFor("arch-a"))).json();
+    const foreign = await post(app, `/v1/agent-configs/${created.id}/archive?namespace=arch-b`);
     expect(foreign.status).toBe(404);
     expect((await foreign.json()).error.type).toBe("not_found_error");
 
-    const own = await (
-      await get(scoped, `/v1/agent-configs/${created.id}`, asTenant("arch-a"))
-    ).json();
+    const own = await (await get(app, `/v1/agent-configs/${created.id}?namespace=arch-a`)).json();
     expect("archivedAt" in own).toBe(false);
   });
 });
@@ -338,16 +324,13 @@ describe("GET /v1/agent-configs/:id", () => {
   });
 
   it("scopes by namespace: a foreign row 404s exactly like a nonexistent one", async () => {
-    const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-    const created = await (
-      await post(scoped, "/v1/agent-configs", recipeFor("tenant-a"), asTenant("tenant-a"))
-    ).json();
-    expect(created.namespace).toBe("tenant-a");
+    const created = await (await post(app, "/v1/agent-configs", recipeFor("tenant-a"))).json();
 
-    const foreign = await get(scoped, `/v1/agent-configs/${created.id}`, asTenant("tenant-b"));
+    const foreign = await get(app, `/v1/agent-configs/${created.id}?namespace=tenant-b`);
     expect(foreign.status).toBe(404);
 
-    const own = await get(scoped, `/v1/agent-configs/${created.id}`, asTenant("tenant-a"));
+    const own = await get(app, `/v1/agent-configs/${created.id}?namespace=tenant-a`);
     expect(own.status).toBe(200);
+    expect((await own.json()).namespace).toBe("tenant-a");
   });
 });

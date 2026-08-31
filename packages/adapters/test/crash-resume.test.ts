@@ -37,7 +37,7 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DEFAULT_NAMESPACE } from "@funky/core";
+import { DEFAULT_NAMESPACE, type SessionRef } from "@funky/core";
 import { runStep, type StepDeps, type Store, toToolSpec } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
 import {
@@ -60,7 +60,7 @@ const SWEEP_SEED = Number(process.env["CRASH_SWEEP_SEED"] ?? 20_260_816);
 let workRoot: string;
 let templateFresh: string; // seeded: config + session + turn-one intake
 let templateMidway: string; // turn one complete + turn-two intake
-let sessionId: string;
+let sessionRef: SessionRef;
 let refEntries: unknown[];
 let refItemTypes: string[];
 
@@ -98,7 +98,7 @@ async function driveToIdle(store: Store): Promise<void> {
 async function intakeSecondPrompt(dir: string): Promise<void> {
   const { store, close } = await openDir(dir);
   try {
-    const result = await store.intake(sessionId, user(PROMPTS[1]));
+    const result = await store.intake(sessionRef, user(PROMPTS[1]));
     if (result.kind !== "started") {
       throw new Error(`expected turn-two intake to start a run, got "${result.kind}"`);
     }
@@ -137,14 +137,14 @@ const ANY_INTERRUPTION: number[][] = [[], [0], [1], [0, 1]];
 async function assertMatchesReference(dir: string, acceptable: number[][] = [[]]): Promise<void> {
   const { store, close } = await openDir(dir);
   try {
-    const actual = normalizeEntries(await store.readEntries(sessionId));
+    const actual = normalizeEntries(await store.readEntries(sessionRef));
     const variants = acceptable.map((batches) => withInterrupted(refEntries, batches));
     if (variants.length === 1) expect(actual).toEqual(variants[0]);
     else expect(variants).toContainEqual(actual);
-    const items = await store.listItems(sessionId);
+    const items = await store.listItems(sessionRef);
     expect(items.map((i) => i.type)).toEqual(refItemTypes);
     expect(items.map((i) => i.status)).toEqual(refItemTypes.map(() => "done"));
-    expect(await store.pendingInputs(sessionId)).toEqual([]);
+    expect(await store.pendingInputs(sessionRef)).toEqual([]);
   } finally {
     await close();
   }
@@ -287,11 +287,12 @@ beforeAll(async () => {
       systemPrompt: "be brief",
     });
     const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
-    sessionId = await store.createSession({
-      agentConfigId: agentConfigRef.id,
-      envConfigId: envConfigRef.id,
+    sessionRef = await store.createSession({
+      namespace: DEFAULT_NAMESPACE,
+      agentConfigId: agentConfigRef.agentConfigId,
+      envConfigId: envConfigRef.envConfigId,
     });
-    const result = await store.intake(sessionId, user(PROMPTS[0]));
+    const result = await store.intake(sessionRef, user(PROMPTS[0]));
     if (result.kind !== "started") throw new Error("seed intake did not start a run");
     await client.close();
   }
@@ -301,7 +302,7 @@ beforeAll(async () => {
   {
     const { store, close } = await openDir(templateMidway);
     await driveToIdle(store);
-    const result = await store.intake(sessionId, user(PROMPTS[1]));
+    const result = await store.intake(sessionRef, user(PROMPTS[1]));
     if (result.kind !== "started") throw new Error("turn-two intake did not start a run");
     await close();
   }
@@ -311,8 +312,8 @@ beforeAll(async () => {
   {
     const { store, close } = await openDir(referenceDir);
     await driveToIdle(store);
-    refEntries = normalizeEntries(await store.readEntries(sessionId));
-    refItemTypes = (await store.listItems(sessionId)).map((i) => i.type);
+    refEntries = normalizeEntries(await store.readEntries(sessionRef));
+    refItemTypes = (await store.listItems(sessionRef)).map((i) => i.type);
     await close();
   }
 

@@ -1,20 +1,15 @@
 // apps/api/src/middleware/auth.ts
-// Static bearer auth + the namespace decision, in one middleware because
-// the header source is only trustworthy AFTER authentication: the
-// managed gateway holds this api's token privately and injects
-// X-Funky-Namespace per authenticated user. An OSS deployment runs
-// source "static" and every request is DEFAULT_NAMESPACE. Routes read
-// the decision from c.get("namespace") and never from the request body.
+// Static bearer auth, nothing else. The token is a root credential: its
+// holder — the managed gateway, or a self-deploy operator — can address
+// every namespace, and says which one each request means IN the request
+// (create bodies carry it; id-addressed routes take ?namespace=).
+// Tenant authorization is the managed layer's job, above this api.
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createMiddleware } from "hono/factory";
-import { DEFAULT_NAMESPACE } from "@funky/core";
-import type { NamespaceSource } from "../config";
 import { errorResponse } from "../http";
 
-const VALID_NAMESPACE = /^[A-Za-z0-9_-]{1,64}$/;
-
 /** token === null means FUNKY_AUTH=disabled (dev only; config.ts already warned). */
-export const auth = (token: string | null, namespaceSource: NamespaceSource) =>
+export const auth = (token: string | null) =>
   createMiddleware(async (c, next) => {
     if (token !== null) {
       const header = c.req.header("authorization") ?? "";
@@ -23,18 +18,6 @@ export const auth = (token: string | null, namespaceSource: NamespaceSource) =>
         return errorResponse(c, 401, "authentication_error", "invalid or missing bearer token");
       }
     }
-
-    if (namespaceSource === "static") {
-      c.set("namespace", DEFAULT_NAMESPACE);
-      await next();
-      return;
-    }
-
-    const namespace = c.req.header("X-Funky-Namespace") ?? DEFAULT_NAMESPACE;
-    if (!VALID_NAMESPACE.test(namespace)) {
-      return errorResponse(c, 400, "invalid_request_error", "invalid X-Funky-Namespace");
-    }
-    c.set("namespace", namespace);
     await next();
   });
 

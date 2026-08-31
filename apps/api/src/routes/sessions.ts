@@ -1,8 +1,16 @@
 // apps/api/src/routes/sessions.ts
 // The sessions resource — the intake half of the Store port, plus the
-// inspection reads. Every route under /:id does the ownership check
-// once at the top: a foreign session 404s exactly like a nonexistent
-// one, so nothing leaks across namespaces.
+// inspection reads. Every route under /:id resolves ownership once at
+// the top with a namespace-scoped get: the store answers a foreign
+// session exactly like a nonexistent one, so no route compares
+// namespaces by hand. The row the get returns is its own SessionRef, so
+// it addresses every later call.
+//
+// Namespace is part of the request (the caller holds the root token;
+// tenant authorization lives in the managed layer above): the create
+// body carries it — the core request schema IS the wire shape — and
+// every id-addressed route takes ?namespace=, defaulting for
+// single-tenant self-deploys (common.ts NamespaceQuery).
 //
 // The api writes nothing itself: intake and requestCancel are the only
 // mutations, both Store transactions. Whether a message starts a run or
@@ -12,10 +20,10 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { CreateSessionRequest, UserMessage } from "@funky/core";
+import { CreateSessionRequest, type Session, UserMessage, type WorkItem } from "@funky/core";
 import { ArchivedError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
-import { validate } from "./common";
+import { NamespaceQuery, validate } from "./common";
 
 /** The slice of the harness Store this resource needs. */
 export type SessionStore = Pick<
@@ -31,9 +39,19 @@ export type StreamPacing = {
   heartbeatMs: number;
 };
 
-type Env = { Variables: { requestId: string; namespace: string } };
+type Env = { Variables: { requestId: string } };
 
-const WireCreateSession = CreateSessionRequest.omit({ namespace: true });
+// The core request, with the body's namespace defaulted the same way
+// the query's is (common.ts NamespaceQuery).
+const CreateSessionBody = CreateSessionRequest.extend(NamespaceQuery.shape);
+
+/** Store row → wire resource: the ref's qualified id becomes the
+ *  resource's `id`; everything else — namespace included — rides
+ *  through to the trusted caller. */
+const wire = ({ sessionId, ...rest }: Session) => ({ id: sessionId, ...rest });
+
+/** Same rule for items: the row, with its own qualified id as `id`. */
+const wireItem = ({ itemId, ...rest }: WorkItem) => ({ id: itemId, ...rest });
 
 // "Always an array; plain strings are normalized at intake"
 // (core/messages.ts) — this is the intake boundary, so the wire accepts
@@ -42,17 +60,19 @@ const WireMessage = z.object({
   content: z.union([z.string(), UserMessage.shape.content]),
 });
 
-const EntriesQuery = z.object({
+const EntriesQuery = NamespaceQuery.extend({
   after: z.coerce.number().int().nonnegative().optional(),
 });
 
 export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
   const r = new Hono<Env>();
 
-  r.post("/", validate("json", WireCreateSession), async (c) => {
-    let id: string;
+  r.post("/", validate("json", CreateSessionBody), async (c) => {
+    let session: Session | undefined;
     try {
-      id = await store.createSession({ ...c.req.valid("json"), namespace: c.get("namespace") });
+      const ref = await store.createSession(c.req.valid("json"));
+      session = await store.getSession(ref);
+      if (!session) throw new Error(`session ${ref.sessionId} missing after create`);
     } catch (err) {
       // An archived agent config exists and is readable — it just cannot
       // be referenced by anything new. That is a conflict with its
@@ -67,47 +87,50 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
       }
       throw err;
     }
-    const session = await store.getSession(id);
-    if (!session) throw new Error(`session ${id} missing after create`);
-    return c.json(session, 201);
+    return c.json(wire(session), 201);
   });
 
-  r.get("/:id", async (c) => {
-    const session = await owned(c);
+  r.get("/:id", validate("query", NamespaceQuery), async (c) => {
+    const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
-    return c.json(session);
+    return c.json(wire(session));
   });
 
-  r.post("/:id/messages", validate("json", WireMessage), async (c) => {
-    const session = await owned(c);
-    if (!session) return notFound(c);
-    const { content } = c.req.valid("json");
-    const message: UserMessage = {
-      role: "user",
-      content: typeof content === "string" ? [{ type: "text", text: content }] : content,
-    };
-    return c.json(await store.intake(session.id, message), 202);
-  });
+  r.post(
+    "/:id/messages",
+    validate("query", NamespaceQuery),
+    validate("json", WireMessage),
+    async (c) => {
+      const session = await owned(c, c.req.valid("query").namespace);
+      if (!session) return notFound(c);
+      const { content } = c.req.valid("json");
+      const message: UserMessage = {
+        role: "user",
+        content: typeof content === "string" ? [{ type: "text", text: content }] : content,
+      };
+      return c.json(await store.intake(session, message), 202);
+    },
+  );
 
-  r.post("/:id/cancel", async (c) => {
-    const session = await owned(c);
+  r.post("/:id/cancel", validate("query", NamespaceQuery), async (c) => {
+    const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
     // Appends a control entry; the worker answers it at a step boundary,
     // so cancellation is accepted here, not completed.
-    await store.requestCancel(session.id);
+    await store.requestCancel(session);
     return c.body(null, 202);
   });
 
   r.get("/:id/entries", validate("query", EntriesQuery), async (c) => {
-    const session = await owned(c);
+    const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
-    return c.json(await store.readEntries(session.id, c.req.valid("query").after));
+    return c.json(await store.readEntries(session, c.req.valid("query").after));
   });
 
-  r.get("/:id/items", async (c) => {
-    const session = await owned(c);
+  r.get("/:id/items", validate("query", NamespaceQuery), async (c) => {
+    const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
-    return c.json(await store.listItems(session.id));
+    return c.json((await store.listItems(session)).map(wireItem));
   });
 
   // The entries read, delivered incrementally: replay past the cursor,
@@ -124,7 +147,7 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
   // The stream has no server-side end — sessions don't terminate. The
   // client hangs up; `aborted` stops the loop.
   r.get("/:id/stream", validate("query", EntriesQuery), async (c) => {
-    const session = await owned(c);
+    const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
     let after = c.req.valid("query").after;
     const lastEventId = c.req.header("Last-Event-ID");
@@ -139,7 +162,7 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
       let cursor = after;
       let quietSince = Date.now();
       while (!stream.aborted) {
-        const entries = [...(await store.readEntries(session.id, cursor))].sort(
+        const entries = [...(await store.readEntries(session, cursor))].sort(
           (a, b) => a.seq - b.seq,
         );
         for (const entry of entries) {
@@ -159,11 +182,10 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
     });
   });
 
-  /** The one ownership check: undefined for unknown AND foreign rows. */
-  async function owned(c: { req: { param(k: "id"): string }; get(k: "namespace"): string }) {
-    const session = await store.getSession(c.req.param("id"));
-    if (!session || session.namespace !== c.get("namespace")) return undefined;
-    return session;
+  /** The one ownership check — a scoped get: the store answers undefined
+   *  for unknown AND foreign rows, so nothing is compared by hand here. */
+  async function owned(c: { req: { param(k: "id"): string } }, namespace: string) {
+    return store.getSession({ namespace, sessionId: c.req.param("id") });
   }
 
   function notFound(c: Parameters<typeof errorResponse>[0]) {

@@ -12,7 +12,6 @@ import { get, post } from "./helpers";
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
-let scoped: ReturnType<typeof buildApp>; // namespaceSource "header" over the SAME store
 let heartbeatApp: ReturnType<typeof buildApp>; // heartbeat fires within a test's patience
 
 // Fast enough that stream tests never wait on the poll; a heartbeat
@@ -25,45 +24,37 @@ beforeAll(async () => {
   await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   const base = { store, authToken: null, ping: async () => ({}) };
-  app = buildApp({ ...base, namespaceSource: "static", stream: PACING });
-  scoped = buildApp({ ...base, namespaceSource: "header", stream: PACING });
-  heartbeatApp = buildApp({
-    ...base,
-    namespaceSource: "static",
-    stream: { pollMs: 10, heartbeatMs: 25 },
-  });
+  app = buildApp({ ...base, stream: PACING });
+  heartbeatApp = buildApp({ ...base, stream: { pollMs: 10, heartbeatMs: 25 } });
 });
 
 afterAll(async () => {
   await client.close();
 });
 
-const asTenant = (tenant: string) => ({ "X-Funky-Namespace": tenant });
-
-/** Seed the two configs over HTTP; returns their ids. */
+/** Seed the two configs over HTTP; returns their ids. Namespace is part
+ *  of the request: it rides in the create bodies. */
 async function seedConfigs(
   on: ReturnType<typeof buildApp>,
-  headers: Record<string, string> = {},
+  namespace = "default",
 ): Promise<{ agentConfigId: string; envConfigId: string }> {
-  const namespace = headers["X-Funky-Namespace"] ?? "default";
   const agent = await (
-    await post(
-      on,
-      "/v1/agent-configs",
-      { namespace, inference: { provider: "fake", model: "m" }, systemPrompt: "s" },
-      headers,
-    )
+    await post(on, "/v1/agent-configs", {
+      namespace,
+      inference: { provider: "fake", model: "m" },
+      systemPrompt: "s",
+    })
   ).json();
-  const env = await (await post(on, "/v1/env-configs", { namespace }, headers)).json();
+  const env = await (await post(on, "/v1/env-configs", { namespace })).json();
   return { agentConfigId: agent.id, envConfigId: env.id };
 }
 
 async function seedSession(
   on: ReturnType<typeof buildApp>,
-  headers: Record<string, string> = {},
+  namespace = "default",
 ): Promise<string> {
-  const configs = await seedConfigs(on, headers);
-  const res = await post(on, "/v1/sessions", configs, headers);
+  const configs = await seedConfigs(on, namespace);
+  const res = await post(on, "/v1/sessions", { namespace, ...configs });
   expect(res.status).toBe(201);
   return (await res.json()).id;
 }
@@ -71,7 +62,11 @@ async function seedSession(
 describe("POST /v1/sessions", () => {
   it("creates and returns the materialized session, 201", async () => {
     const configs = await seedConfigs(app);
-    const res = await post(app, "/v1/sessions", { ...configs, agentConfigVersion: 1 });
+    const res = await post(app, "/v1/sessions", {
+      namespace: "default",
+      ...configs,
+      agentConfigVersion: 1,
+    });
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.agentConfigId).toBe(configs.agentConfigId);
@@ -81,28 +76,44 @@ describe("POST /v1/sessions", () => {
     expect(typeof body.id).toBe("string");
   });
 
+  it("defaults the namespace when the body omits it", async () => {
+    const configs = await seedConfigs(app);
+    const res = await post(app, "/v1/sessions", configs);
+    expect(res.status).toBe(201);
+    expect((await res.json()).namespace).toBe("default");
+  });
+
   it("400s a dangling config reference", async () => {
     const { envConfigId } = await seedConfigs(app);
-    const res = await post(app, "/v1/sessions", { agentConfigId: "nope", envConfigId });
+    const res = await post(app, "/v1/sessions", {
+      namespace: "default",
+      agentConfigId: "nope",
+      envConfigId,
+    });
     expect(res.status).toBe(400);
     expect((await res.json()).error.type).toBe("invalid_request_error");
   });
 
   it("400s an unknown agent config version", async () => {
     const configs = await seedConfigs(app);
-    const res = await post(app, "/v1/sessions", { ...configs, agentConfigVersion: 2 });
+    const res = await post(app, "/v1/sessions", {
+      namespace: "default",
+      ...configs,
+      agentConfigVersion: 2,
+    });
     expect(res.status).toBe(400);
     expect((await res.json()).error.type).toBe("invalid_request_error");
   });
 
   it("409s an archived agent config, while sessions already on it keep working", async () => {
     const configs = await seedConfigs(app);
-    const sessionId = (await (await post(app, "/v1/sessions", configs)).json()).id;
+    const create = { namespace: "default", ...configs };
+    const sessionId = (await (await post(app, "/v1/sessions", create)).json()).id;
     expect((await post(app, `/v1/agent-configs/${configs.agentConfigId}/archive`)).status).toBe(
       200,
     );
 
-    const res = await post(app, "/v1/sessions", configs);
+    const res = await post(app, "/v1/sessions", create);
     expect(res.status).toBe(409);
     expect((await res.json()).error.type).toBe("conflict_error");
 
@@ -113,8 +124,8 @@ describe("POST /v1/sessions", () => {
   });
 
   it("400s a foreign-namespace config identically to a dangling one", async () => {
-    const configs = await seedConfigs(scoped, asTenant("tenant-a"));
-    const res = await post(scoped, "/v1/sessions", configs, asTenant("tenant-b"));
+    const configs = await seedConfigs(app, "tenant-a");
+    const res = await post(app, "/v1/sessions", { namespace: "tenant-b", ...configs });
     expect(res.status).toBe(400);
     expect((await res.json()).error.message).toMatch(/^unknown /);
   });
@@ -124,9 +135,9 @@ describe("GET /v1/sessions/:id", () => {
   it("404s unknown and foreign sessions alike", async () => {
     expect((await get(app, "/v1/sessions/nope")).status).toBe(404);
 
-    const sessionId = await seedSession(scoped, asTenant("tenant-a"));
-    expect((await get(scoped, `/v1/sessions/${sessionId}`, asTenant("tenant-b"))).status).toBe(404);
-    expect((await get(scoped, `/v1/sessions/${sessionId}`, asTenant("tenant-a"))).status).toBe(200);
+    const sessionId = await seedSession(app, "tenant-a");
+    expect((await get(app, `/v1/sessions/${sessionId}?namespace=tenant-b`)).status).toBe(404);
+    expect((await get(app, `/v1/sessions/${sessionId}?namespace=tenant-a`)).status).toBe(200);
   });
 });
 
@@ -205,13 +216,8 @@ describe("POST /v1/sessions/:id/cancel", () => {
   });
 
   it("404s a foreign session", async () => {
-    const sessionId = await seedSession(scoped, asTenant("tenant-a"));
-    const res = await post(
-      scoped,
-      `/v1/sessions/${sessionId}/cancel`,
-      undefined,
-      asTenant("tenant-b"),
-    );
+    const sessionId = await seedSession(app, "tenant-a");
+    const res = await post(app, `/v1/sessions/${sessionId}/cancel?namespace=tenant-b`);
     expect(res.status).toBe(404);
   });
 });
@@ -309,8 +315,8 @@ describe("GET /v1/sessions/:id/stream", () => {
   });
 
   it("404s a foreign session before any byte streams", async () => {
-    const sessionId = await seedSession(scoped, asTenant("tenant-a"));
-    const res = await get(scoped, `/v1/sessions/${sessionId}/stream`, asTenant("tenant-b"));
+    const sessionId = await seedSession(app, "tenant-a");
+    const res = await get(app, `/v1/sessions/${sessionId}/stream?namespace=tenant-b`);
     expect(res.status).toBe(404);
   });
 
