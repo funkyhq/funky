@@ -60,9 +60,13 @@ export const DEFAULT_NAMESPACE = "default";
 // --- configs ---
 
 // Agent configs are mutable, with a monotonic version used for optional
-// optimistic concurrency. Env configs update in place. Sessions pin the
-// latest concrete agent version at creation, while retaining an env config
-// reference.
+// optimistic concurrency. Env configs update in place. Both being mutable,
+// a session has to make each one durable at creation — by a different
+// mechanism, because only one of them leaves something immutable to point
+// at. It PINS the agent config's concrete version, and COPIES the env
+// config's resolved recipe (EnvConfigSnapshot below), keeping the env
+// config id beside the copy for provenance rather than resolution. Either
+// way, a later edit cannot reshape a run already under way.
 //
 // Archive is the one terminal transition: it retires an agent config
 // without deleting it — the row stays readable and its versions stay
@@ -136,29 +140,51 @@ export const ListEnvConfigsRequest = z.object({
 });
 export type ListEnvConfigsRequest = z.infer<typeof ListEnvConfigsRequest>;
 
-export const CreateEnvConfigRequest = z.object({
-  namespace: z.string().min(1),
-  network: NetworkPolicy.optional(),
+/**
+ * The recipe proper — the fields that describe the world, resolved, with
+ * no envelope around them. Declared once here and derived from in every
+ * direction: optional in the create and update requests (absence is a
+ * default to resolve), required on the stored row, and required in the
+ * copy a session carries. A capability promoted into the recipe therefore
+ * cannot be half-wired — it becomes requestable, storable, and
+ * snapshotted in one edit — and no session can provision from a recipe
+ * that quietly lost a field.
+ *
+ * A session stores this by COPY rather than by reference: env configs
+ * update in place, so there is no immutable version to pin the way a
+ * session pins one agent config version. The copy is what makes a
+ * session's world deterministic — a later edit can never reshape a run
+ * already under way. envConfigId stays beside it for provenance; nothing
+ * reads through it to provision.
+ */
+export const EnvConfigSnapshot = z.object({
+  network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
   // Presence is guaranteed at create() or creation fails — missing deps
   // surface at provision, not mid-session.
-  packages: Packages.optional(),
+  packages: Packages, // absence resolved to {}
+});
+export type EnvConfigSnapshot = z.infer<typeof EnvConfigSnapshot>;
+
+// The recipe arrives partial and is stored materialized: every field a
+// request may omit is one the store resolves to a decision at create.
+export const CreateEnvConfigRequest = z.object({
+  namespace: z.string().min(1),
+  ...EnvConfigSnapshot.partial().shape,
   metadata: JsonValue.optional(),
 });
 export type CreateEnvConfigRequest = z.infer<typeof CreateEnvConfigRequest>;
 
 /** An in-place partial update; omission preserves the stored field. */
 export const UpdateEnvConfigRequest = z.object({
-  network: NetworkPolicy.optional(),
-  packages: Packages.optional(),
+  ...EnvConfigSnapshot.partial().shape,
   metadata: JsonValue.optional(),
 });
 export type UpdateEnvConfigRequest = z.infer<typeof UpdateEnvConfigRequest>;
 
 export const EnvConfig = EnvConfigRef.extend({
-  ...CreateEnvConfigRequest.omit({ namespace: true }).shape,
-  // Materialized at create — resolved decisions, not restatable defaults:
-  network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
-  packages: Packages, // absence resolved to {}
+  // Materialized at create — resolved decisions, not restatable defaults.
+  ...EnvConfigSnapshot.shape,
+  metadata: JsonValue.optional(),
   createdAt: z.iso.datetime(),
 });
 export type EnvConfig = z.infer<typeof EnvConfig>;
@@ -189,6 +215,10 @@ export const Session = SessionRef.extend({
   ...CreateSessionRequest.omit({ namespace: true }).shape,
   // Materialized from the request or the agent config's latest version.
   agentConfigVersion: z.number().int().min(1),
+  // The env recipe as it read at create (EnvConfigSnapshot above). A
+  // resolved decision, materialized like the version above it, so it is
+  // always present — never restated from the env config row.
+  envConfigSnapshot: EnvConfigSnapshot,
   // The session's one workspace, registered by the driver's first
   // execute_tools claim (Store.bindSandbox); absent until then.
   sandboxId: z.string().optional(),

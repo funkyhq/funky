@@ -74,6 +74,34 @@ describe("POST /v1/sessions", () => {
     expect(body.envConfigId).toBe(configs.envConfigId);
     expect(body.namespace).toBe("default");
     expect(typeof body.id).toBe("string");
+    // The recipe rides along resolved: the wire shows the world this
+    // session will provision, not a pointer to a row that can change.
+    expect(body.envConfigSnapshot).toEqual({
+      network: { type: "unrestricted" },
+      packages: {},
+    });
+  });
+
+  it("returns the snapshot the session was created with, not the env config's current state", async () => {
+    const agent = await (
+      await post(app, "/v1/agent-configs", {
+        inference: { provider: "fake", model: "m" },
+        systemPrompt: "s",
+      })
+    ).json();
+    const env = await (await post(app, "/v1/env-configs", { network: { type: "none" } })).json();
+    const created = await (
+      await post(app, "/v1/sessions", { agentConfigId: agent.id, envConfigId: env.id })
+    ).json();
+
+    const updated = await post(app, `/v1/env-configs/${env.id}`, {
+      network: { type: "allowlist", domains: ["example.com"] },
+    });
+    expect(updated.status).toBe(200);
+
+    const read = await (await get(app, `/v1/sessions/${created.id}`)).json();
+    expect(read.envConfigSnapshot.network).toEqual({ type: "none" });
+    expect(read.envConfigId).toBe(env.id); // provenance survives the edit
   });
 
   it("defaults the namespace when the body omits it", async () => {

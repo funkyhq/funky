@@ -67,6 +67,11 @@ CREATE TABLE sessions (
   -- composite FK below makes that behavior snapshot durable.
   agent_config_version integer NOT NULL,
   env_config_id text NOT NULL,
+  -- The env recipe resolved at create (core/store.ts EnvConfigSnapshot).
+  -- Env configs update in place, so there is no version to pin: the copy
+  -- is what makes a session's world deterministic. Provisioning reads
+  -- this; env_config_id stays for provenance, never for a reload.
+  env_config_snapshot jsonb NOT NULL,
   -- The session's one workspace; null until the driver's first
   -- execute_tools claim registers it (Store.bindSandbox, set-if-null).
   sandbox_id text,

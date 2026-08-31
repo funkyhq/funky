@@ -12,6 +12,12 @@
 //   commits, and archiveAgentConfig's UPDATE takes that row exclusively:
 //   the two serialize, so no session is born against an archived config.
 //   Archive touches nothing else, so this adds no cycle either.
+// - createSession takes the same FOR SHARE on its env config row, held to
+//   the insert, so the snapshot it copies is a committed state and a
+//   racing updateEnvConfig lands strictly before or after it — never
+//   inside. Shared mode: concurrent creates never wait on each other, only
+//   an env update does. Lock order is agent → env, and nothing takes env
+//   → agent, so this adds no cycle either.
 // - claimItem uses FOR UPDATE SKIP LOCKED: contended claimers never
 //   queue behind each other, exactly one wins a given item.
 // - Fencing is token + live lease, symmetric across heartbeat and
@@ -40,6 +46,7 @@ import {
   CreateSessionRequest,
   EnvConfig,
   EnvConfigRef,
+  EnvConfigSnapshot,
   IntakeResult,
   type JsonValue,
   ListAgentConfigsRequest,
@@ -463,6 +470,13 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       // archive either waits behind this transaction or is already committed
       // and read here. "New sessions cannot reference an archived config" is
       // therefore structural, not a window between a check and a write.
+      //
+      // The env recipe is the other mutable fact, and it is not merely
+      // checked but COPIED (core/store.ts EnvConfigSnapshot): env configs
+      // update in place, so a session that reloaded one could have its world
+      // reshaped mid-run. The same FOR SHARE makes the copy a committed
+      // state — a racing update waits behind this insert or is already in
+      // it — and nothing reads env_configs for this session again.
       await db.transaction(async (tx) => {
         const [agent] = await tx
           .select({ version: agentConfigVersions.version, archivedAt: agentConfigs.archivedAt })
@@ -475,15 +489,20 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         if (!agent) throw new Error(`unknown agent config: ${parsed.agentConfigId}`);
         if (agent.archivedAt !== null) throw new ArchivedError(parsed.agentConfigId);
         const [env] = await tx
-          .select({ id: envConfigs.id })
+          .select({ network: envConfigs.network, packages: envConfigs.packages })
           .from(envConfigs)
-          .where(and(eq(envConfigs.id, parsed.envConfigId), eq(envConfigs.namespace, namespace)));
+          .where(and(eq(envConfigs.id, parsed.envConfigId), eq(envConfigs.namespace, namespace)))
+          .for("share");
         if (!env) throw new Error(`unknown env config: ${parsed.envConfigId}`);
         await tx.insert(sessions).values({
           id,
           agentConfigId: parsed.agentConfigId,
           agentConfigVersion: agent.version,
           envConfigId: parsed.envConfigId,
+          envConfigSnapshot: EnvConfigSnapshot.parse({
+            network: env.network,
+            packages: env.packages,
+          }),
           namespace,
           metadata: wrap(parsed.metadata),
           createdAt: now(),
@@ -504,6 +523,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         agentConfigId: row.agentConfigId,
         agentConfigVersion: row.agentConfigVersion,
         envConfigId: row.envConfigId,
+        envConfigSnapshot: row.envConfigSnapshot,
         namespace: row.namespace,
         ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
         ...unwrapped(row.metadata),

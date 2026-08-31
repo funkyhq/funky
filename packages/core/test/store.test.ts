@@ -8,6 +8,7 @@ import {
   CreateSessionRequest,
   EnvConfig,
   EnvConfigRef,
+  EnvConfigSnapshot,
   IntakeResult,
   ListAgentConfigsRequest,
   ListEnvConfigsRequest,
@@ -253,9 +254,61 @@ describe("sessions", () => {
       agentConfigId: "ac1",
       agentConfigVersion: 2,
       envConfigId: "ec1",
+      envConfigSnapshot: {
+        network: { type: "allowlist", domains: ["pypi.org"] },
+        packages: { pip: ["numpy"] },
+      },
       createdAt: "2026-08-11T12:00:00Z",
     };
     expect(roundTrip(Session, session)).toEqual(session);
+  });
+
+  // The recipe is copied, not referenced: env configs update in place, so
+  // a session that resolved one at read time could change under a running
+  // run. The snapshot is a resolved decision, so it is never absent.
+  it("rejects a stored session missing its env config snapshot", () => {
+    const result = Session.safeParse({
+      namespace: "default",
+      sessionId: "s1",
+      agentConfigId: "ac1",
+      agentConfigVersion: 1,
+      envConfigId: "ec1",
+      createdAt: "2026-08-11T12:00:00Z",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // The guard against the drift this derivation exists to prevent: if
+  // anyone re-hand-lists these shapes, a recipe field added in one place
+  // and forgotten in another fails here rather than at provision time.
+  it("derives every env config shape from the one recipe declaration", () => {
+    const recipe = Object.keys(EnvConfigSnapshot.shape) as (keyof EnvConfigSnapshot)[];
+    expect(recipe).toEqual(["network", "packages"]);
+    for (const field of recipe) {
+      // Optional in both requests — absence is a default to resolve…
+      expect(CreateEnvConfigRequest.shape[field].safeParse(undefined).success).toBe(true);
+      expect(UpdateEnvConfigRequest.shape[field].safeParse(undefined).success).toBe(true);
+      // …required on the stored row, which holds decisions, not rules…
+      expect(EnvConfig.shape[field].safeParse(undefined).success).toBe(false);
+      // …and required in the copy a session provisions from.
+      expect(Session.shape.envConfigSnapshot.shape[field].safeParse(undefined).success).toBe(false);
+    }
+    // The row is the recipe plus its envelope, nothing else.
+    expect(Object.keys(EnvConfig.shape).sort()).toEqual(
+      [...recipe, "namespace", "envConfigId", "metadata", "createdAt"].sort(),
+    );
+  });
+
+  it("requires both halves of the recipe in a snapshot", () => {
+    expect(EnvConfigSnapshot.safeParse({ network: { type: "none" }, packages: {} }).success).toBe(
+      true,
+    );
+    expect(EnvConfigSnapshot.safeParse({ network: { type: "none" } }).success).toBe(false);
+    expect(EnvConfigSnapshot.safeParse({ packages: {} }).success).toBe(false);
+    // Intent, not mechanism — an unknown policy shape is not a recipe.
+    expect(EnvConfigSnapshot.safeParse({ network: { type: "vpn" }, packages: {} }).success).toBe(
+      false,
+    );
   });
 
   it("rejects a stored session missing namespace — the row is its own ref", () => {
@@ -264,6 +317,7 @@ describe("sessions", () => {
       agentConfigId: "ac1",
       agentConfigVersion: 1,
       envConfigId: "ec1",
+      envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
       createdAt: "2026-08-11T12:00:00Z",
     });
     expect(result.success).toBe(false);

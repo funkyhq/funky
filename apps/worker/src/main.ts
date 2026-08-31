@@ -38,17 +38,16 @@ const deps: DriverDeps = {
   }),
   toolSpecs: sandboxToolSpecs,
   // Ensure-on-claim: the loop calls this only for an execute_tools item
-  // that will actually execute. The session's env config is the sandbox
-  // recipe — its resolved network policy rides into create. The session
-  // row is its own ref, and structurally contains its env config's.
+  // that will actually execute. The sandbox recipe is the snapshot the
+  // session copied at create, not the env config row it names: env configs
+  // update in place, so reloading one could reshape a running session's
+  // world. The session carries everything provisioning needs.
   bindTools: async (ref) => {
     const session = await store.getSession(ref);
     if (!session) throw new Error(`worker: unknown session ${ref.sessionId}`);
-    const env = await store.getEnvConfig(session);
-    if (!env) throw new Error(`worker: session ${ref.sessionId} has no env config`);
     const sandbox = await ensureSandbox(store, sandboxes, ref, {
       timeoutMs: cfg.sandboxTimeoutMs,
-      network: env.network,
+      network: session.envConfigSnapshot.network,
     });
     return createSandboxTools(sandbox);
   },

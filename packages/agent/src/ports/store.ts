@@ -104,6 +104,11 @@ export interface Store {
    * fields are preserved; an empty request is a read-like no-op. Namespace
    * is immutable and carried by the ref. An unknown or foreign ref is
    * indistinguishable from absence and returns undefined.
+   *
+   * In place means exactly that: there is no version history, and this
+   * reaches no existing session. Sessions carry their own copy of the
+   * recipe (createSession), so an update changes only what sessions
+   * created after it will provision from.
    */
   updateEnvConfig(ref: EnvConfigRef, req: UpdateEnvConfigRequest): Promise<EnvConfig | undefined>;
   /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */
@@ -111,13 +116,19 @@ export interface Store {
 
   // --- sessions ---
 
-  /** Create a session. Namespace must be specified. Pins the requested agent
-   *  version, or the latest when omitted. Rejects unknown configs or versions,
-   *  with namespace-scoped checks so foreign ids
-   *  remain indistinguishable from nonexistent ones, and an archived agent
-   *  config with ArchivedError. Archiving and creating are serialized on the
-   *  agent config row: a session either commits before the archive or sees
-   *  it — never lands after one. */
+  /** Create a session, making both configs durable against later edits:
+   *  PINS the requested agent version (or the latest when omitted), and
+   *  COPIES the env config's resolved recipe onto the row as
+   *  envConfigSnapshot — env configs update in place, so there is no
+   *  version to pin, and an implementation that stored only the reference
+   *  would let an edit reshape a running session's world. Namespace must
+   *  be specified. Rejects unknown configs or versions with
+   *  namespace-scoped checks, so foreign ids remain indistinguishable from
+   *  nonexistent ones, and an archived agent config with ArchivedError.
+   *  Archiving and creating are serialized on the agent config row: a
+   *  session either commits before the archive or sees it — never lands
+   *  after one. The env config row is read under the same discipline, so
+   *  the copy is always of a committed state. */
   createSession(req: CreateSessionRequest): Promise<SessionRef>;
   getSession(ref: SessionRef): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the

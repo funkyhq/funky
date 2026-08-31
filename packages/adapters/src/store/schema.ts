@@ -25,6 +25,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type {
+  EnvConfigSnapshot,
   InferenceConfig,
   JsonValue,
   NetworkPolicy,
@@ -104,6 +105,9 @@ export const sessions = pgTable(
     // composite FK below makes every session's behavior snapshot durable.
     agentConfigVersion: integer("agent_config_version").notNull(),
     envConfigId: text("env_config_id").notNull(),
+    // The env recipe resolved at create (core/store.ts EnvConfigSnapshot).
+    // Provisioning reads this, never the mutable env_configs row.
+    envConfigSnapshot: jsonb("env_config_snapshot").$type<EnvConfigSnapshot>().notNull(),
     // The session's one workspace; null until bindSandbox registers it.
     sandboxId: text("sandbox_id"),
     metadata: jsonb("metadata").$type<WrappedJson>(),
