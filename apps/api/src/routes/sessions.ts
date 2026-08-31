@@ -74,9 +74,9 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
       session = await store.getSession(ref);
       if (!session) throw new Error(`session ${ref.sessionId} missing after create`);
     } catch (err) {
-      // An archived agent config exists and is readable — it just cannot
-      // be referenced by anything new. That is a conflict with its
-      // terminal state (409), not a malformed request (400).
+      // An archived config exists and is readable — it just cannot be
+      // referenced by anything new. That is a conflict with its terminal
+      // state (409), not a malformed request (400).
       if (err instanceof ArchivedError) {
         return errorResponse(c, 409, "conflict_error", err.message);
       }

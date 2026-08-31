@@ -198,6 +198,67 @@ describe("POST /v1/env-configs/:id", () => {
   });
 });
 
+describe("POST /v1/env-configs/:id/archive", () => {
+  it("archives the config and returns the unchanged recipe with its mark", async () => {
+    const created = await (
+      await post(app, "/v1/env-configs", {
+        namespace: "default",
+        network: { type: "none" },
+        packages: { pip: ["numpy"] },
+      })
+    ).json();
+
+    const res = await post(app, `/v1/env-configs/${created.id}/archive`);
+    expect(res.status).toBe(200);
+    const archived = await res.json();
+    expect(archived).toMatchObject({ ...created, archivedAt: expect.any(String) });
+
+    const fetched = await get(app, `/v1/env-configs/${created.id}`);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.json()).toEqual(archived);
+  });
+
+  it("is idempotent and returns the first archivedAt", async () => {
+    const created = await (await post(app, "/v1/env-configs", {})).json();
+    const first = await (await post(app, `/v1/env-configs/${created.id}/archive`)).json();
+    const again = await post(app, `/v1/env-configs/${created.id}/archive`);
+
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual(first);
+  });
+
+  it("409s a later mutation while an empty update remains a read", async () => {
+    const created = await (await post(app, "/v1/env-configs", {})).json();
+    const archived = await (await post(app, `/v1/env-configs/${created.id}/archive`)).json();
+
+    const mutation = await post(app, `/v1/env-configs/${created.id}`, {
+      packages: { npm: ["zod@4"] },
+    });
+    expect(mutation.status).toBe(409);
+    const error = (await mutation.json()).error;
+    expect(error.type).toBe("conflict_error");
+    expect(error.message).toBe(`env config default/${created.id} is archived`);
+
+    const read = await post(app, `/v1/env-configs/${created.id}`, {});
+    expect(read.status).toBe(200);
+    expect(await read.json()).toEqual(archived);
+  });
+
+  it("404s unknown and foreign ids without archiving the owned config", async () => {
+    expect((await post(app, "/v1/env-configs/nope/archive?namespace=arch-a")).status).toBe(404);
+
+    const created = await (
+      await post(app, "/v1/env-configs", { namespace: "arch-a", packages: { pip: ["numpy"] } })
+    ).json();
+    const foreign = await post(app, `/v1/env-configs/${created.id}/archive?namespace=arch-b`);
+    expect(foreign.status).toBe(404);
+    expect((await foreign.json()).error.type).toBe("not_found_error");
+
+    const own = await (await get(app, `/v1/env-configs/${created.id}?namespace=arch-a`)).json();
+    expect("archivedAt" in own).toBe(false);
+  });
+});
+
 describe("namespace scoping", () => {
   it("creates in the namespace the request names and scopes reads by the query", async () => {
     const res = await post(app, "/v1/env-configs", { namespace: "tenant-a" });

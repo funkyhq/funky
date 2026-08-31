@@ -151,6 +151,23 @@ describe("POST /v1/sessions", () => {
     expect((await message.json()).kind).toBe("started");
   });
 
+  it("409s an archived env config, while sessions with its snapshot keep working", async () => {
+    const configs = await seedConfigs(app);
+    const create = { namespace: "default", ...configs };
+    const sessionId = (await (await post(app, "/v1/sessions", create)).json()).id;
+    expect((await post(app, `/v1/env-configs/${configs.envConfigId}/archive`)).status).toBe(200);
+
+    const res = await post(app, "/v1/sessions", create);
+    expect(res.status).toBe(409);
+    const error = (await res.json()).error;
+    expect(error.type).toBe("conflict_error");
+    expect(error.message).toBe(`env config default/${configs.envConfigId} is archived`);
+
+    const message = await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
+    expect(message.status).toBe(202);
+    expect((await message.json()).kind).toBe("started");
+  });
+
   it("400s a foreign-namespace config identically to a dangling one", async () => {
     const configs = await seedConfigs(app, "tenant-a");
     const res = await post(app, "/v1/sessions", { namespace: "tenant-b", ...configs });

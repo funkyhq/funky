@@ -27,4 +27,4 @@ export type {
   SandboxProvider,
 } from "./ports/sandbox-provider";
 export { ArchivedError, FencedError, VersionConflictError } from "./ports/store";
-export type { Claim, CommitStepRequest, LeaseToken, Store } from "./ports/store";
+export type { Claim, CommitStepRequest, ConfigKind, LeaseToken, Store } from "./ports/store";
