@@ -17,7 +17,7 @@
 // Namespace is omitted for a different reason: the console addresses exactly
 // one (see DEFAULT_NAMESPACE in lib/api.ts) and has no switcher, so offering
 // the field would let a config land somewhere the list can't show it.
-import { type ChangeEvent, type FormEvent, type RefObject, useState } from "react";
+import { type FormEvent, type RefObject, useState } from "react";
 import {
   type AgentConfig,
   createAgentConfig,
@@ -25,7 +25,7 @@ import {
   DEFAULT_NAMESPACE,
 } from "../lib/api";
 import { KNOWN_PROVIDERS, type Provider, PROVIDERS } from "../lib/providers";
-import { ChevronDownIcon } from "../components/Icons";
+import { Field } from "../components/Field";
 import { Modal } from "../components/Modal";
 import "./CreateAgentConfig.css";
 
@@ -218,69 +218,3 @@ const onProvider = (provider: Provider, systemPrompt: string): Fields => ({
   model: provider.models[0].id,
   systemPrompt,
 });
-
-/** One labelled control — a select when `options`, a textarea when
- *  `multiline`, an input otherwise. Nothing sits under it: the label says
- *  what the field is, and a form of three says the rest by being three. */
-function Field({
-  label,
-  name,
-  value,
-  onChange,
-  options,
-  multiline,
-  autoFocus,
-  ...control
-}: {
-  label: string;
-  name: string;
-  value: string;
-  onChange: (value: string) => void;
-  /** Turns the field into a closed choice; the id is the stored value. */
-  options?: Array<{ id: string; label: string }>;
-  multiline?: boolean;
-  autoFocus?: boolean;
-  rows?: number;
-  placeholder?: string;
-  required?: boolean;
-}) {
-  const props = {
-    id: name,
-    name,
-    value,
-    className: "control",
-    // Modal focuses this on open rather than React on mount: the dialog
-    // moves focus itself when it opens, and would move it right back off.
-    "data-autofocus": autoFocus ? "" : undefined,
-    onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-      onChange(event.target.value),
-    ...control,
-  };
-
-  return (
-    <div className="field">
-      <label className="field-label" htmlFor={name}>
-        {label}
-        {control.required ? null : <span className="field-optional">optional</span>}
-      </label>
-      {options ? (
-        // The arrow is ours: dropping the native appearance for the shared
-        // control styling takes the platform's with it.
-        <span className="select-wrap">
-          <select {...props}>
-            {options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDownIcon className="select-arrow" />
-        </span>
-      ) : multiline ? (
-        <textarea {...props} />
-      ) : (
-        <input {...props} />
-      )}
-    </div>
-  );
-}
