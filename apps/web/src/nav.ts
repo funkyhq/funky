@@ -4,6 +4,7 @@
 // Kept free of JSX so it can hold both the data and the route resolver.
 import type { ReactElement, SVGProps } from "react";
 import { AgentIcon, BoltIcon, EnvironmentIcon, SessionIcon } from "./components/Icons";
+import { AgentConfigs } from "./pages/AgentConfigs";
 
 export type NavItem = {
   /** The hash route, `#/<id>`, and the item's identity. */
@@ -16,6 +17,9 @@ export type NavItem = {
   chip: string;
   /** Rendered as a caption above the item, when it opens a group. */
   groupLabel?: string;
+  /** The section's page. Absent while a section is unbuilt — those render
+   *  the placeholder from the blurb and chip above. */
+  Page?: () => ReactElement;
 };
 
 /** Non-empty by type: the first section is what an unknown route falls back to. */
@@ -36,6 +40,7 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
       "Agent configs are the model, the system prompt, and the tools a session runs with. Versioned, so an update lands as a new version rather than a rewrite.",
     chip: "/v1/agent-configs",
     groupLabel: "Resources",
+    Page: AgentConfigs,
   },
   {
     id: "environment",

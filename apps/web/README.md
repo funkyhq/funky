@@ -20,8 +20,21 @@ pnpm -F web lint     # oxlint
 | `src/pages/`      | One module per section                                               |
 
 Routing is the URL hash (`#/agent`), so sections are linkable and the browser owns history —
-`src/lib/useHashRoute.ts` is the whole router. Sections are placeholders for now; each gets
-wired to its endpoints in turn.
+`src/lib/useHashRoute.ts` is the whole router. A section renders the page named in its
+`nav.ts` entry, or the placeholder if it has none yet; each gets wired to its endpoints in
+turn.
+
+## Talking to the api
+
+The api has no CORS and is bearer-authed, so the browser never calls it directly. The dev
+server proxies same-origin `/v1` to the api and adds the `Authorization` header itself
+(`vite.config.ts`), reading `FUNKY_AUTH_TOKEN` from the **monorepo root `.env`** — the same
+file `docker compose up` reads, so there is no second copy to keep in sync, and the token
+never enters the client bundle. Point it elsewhere with `FUNKY_API_URL` (default
+`http://localhost:3000`).
+
+So: start the stack (`docker compose up`), then `pnpm -F web dev`. With the api down, the
+proxy answers 502 and the console says it can't reach it.
 
 ## Brand
 
