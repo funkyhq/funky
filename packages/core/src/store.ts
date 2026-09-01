@@ -198,6 +198,14 @@ export const SessionRef = z.object({
 });
 export type SessionRef = z.infer<typeof SessionRef>;
 
+/** Lists one namespace's sessions with keyset pagination. */
+export const ListSessionsRequest = z.object({
+  namespace: z.string().min(1),
+  limit: z.number().int().min(1),
+  after: z.string().min(1).optional(),
+});
+export type ListSessionsRequest = z.infer<typeof ListSessionsRequest>;
+
 export const CreateSessionRequest = z.object({
   namespace: z.string().min(1),
   agentConfigId: z.string(),

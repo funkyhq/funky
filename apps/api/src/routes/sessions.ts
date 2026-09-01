@@ -23,12 +23,18 @@ import { z } from "zod";
 import { CreateSessionRequest, type Session, UserMessage, type WorkItem } from "@funky/core";
 import { ArchivedError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
-import { NamespaceQuery, validate } from "./common";
+import { ListQuery, NamespaceQuery, page, validate } from "./common";
 
 /** The slice of the harness Store this resource needs. */
 export type SessionStore = Pick<
   Store,
-  "createSession" | "getSession" | "intake" | "requestCancel" | "readEntries" | "listItems"
+  | "createSession"
+  | "getSession"
+  | "listSessions"
+  | "intake"
+  | "requestCancel"
+  | "readEntries"
+  | "listItems"
 >;
 
 /** SSE tail pacing — from config in production, shrunk by tests. */
@@ -88,6 +94,23 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
       throw err;
     }
     return c.json(wire(session), 201);
+  });
+
+  // list → one page of this namespace's rows, newest first. The store
+  // is asked for limit + 1: the extra row is hasMore (see page()).
+  r.get("/", validate("query", ListQuery), async (c) => {
+    const { namespace, limit, after } = c.req.valid("query");
+    try {
+      const rows = await store.listSessions({ namespace, limit: limit + 1, after });
+      return c.json(page(rows.map(wire), limit));
+    } catch (err) {
+      // A cursor the store can't resolve — foreign or made-up, the same
+      // "unknown" either way — is the client's mistake, so 400 not 500.
+      if (err instanceof Error && err.message.startsWith("unknown cursor")) {
+        return errorResponse(c, 400, "invalid_request_error", err.message);
+      }
+      throw err;
+    }
   });
 
   r.get("/:id", validate("query", NamespaceQuery), async (c) => {

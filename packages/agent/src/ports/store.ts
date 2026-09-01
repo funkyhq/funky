@@ -13,6 +13,7 @@ import type {
   IntakeResult,
   ListAgentConfigsRequest,
   ListEnvConfigsRequest,
+  ListSessionsRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -139,6 +140,8 @@ export interface Store {
    *  candidate lost learns the winner and discards its own (see
    *  driver/ensure-sandbox.ts). Rejects an unknown or foreign session. */
   bindSandbox(ref: SessionRef, sandboxId: string, previous?: string): Promise<string>;
+  /** One namespace's sessions, newest first — see ListSessionsRequest. */
+  listSessions(req: ListSessionsRequest): Promise<Session[]>;
 
   // --- reads — table-shaped; reads need no atomicity ---
 
