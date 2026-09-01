@@ -233,8 +233,30 @@ describe("GET /v1/sessions", () => {
     expect(body.data.map((s: { id: string }) => s.id).sort()).toEqual([...mine].sort());
   });
 
+  // The switch is an enum, not z.coerce.boolean(): JS truthiness would read
+  // the string "false" as true, so this is the case that pins it.
+  it("treats include_archived=false as the default, not as truthy", async () => {
+    const [archived, active] = await seed("list-false", 2);
+    expect((await post(app, `/v1/sessions/${archived}/archive?namespace=list-false`)).status).toBe(
+      200,
+    );
+
+    for (const q of ["", "&include_archived=false"]) {
+      const body = await (await get(app, `/v1/sessions?namespace=list-false${q}`)).json();
+      expect(body.data.map((s: { id: string }) => s.id)).toEqual([active]);
+    }
+  });
+
   it("400s a limit outside the bounds and a non-numeric one", async () => {
     for (const q of ["limit=0", "limit=101", "limit=abc", "limit=1.5"]) {
+      const res = await get(app, `/v1/sessions?namespace=list-one&${q}`);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
+  });
+
+  it("400s an include_archived that is neither spelling", async () => {
+    for (const q of ["include_archived=1", "include_archived=yes", "include_archived=TRUE"]) {
       const res = await get(app, `/v1/sessions?namespace=list-one&${q}`);
       expect(res.status).toBe(400);
       expect((await res.json()).error.type).toBe("invalid_request_error");
@@ -258,6 +280,97 @@ describe("GET /v1/sessions/:id", () => {
     const sessionId = await seedSession(app, "tenant-a");
     expect((await get(app, `/v1/sessions/${sessionId}?namespace=tenant-b`)).status).toBe(404);
     expect((await get(app, `/v1/sessions/${sessionId}?namespace=tenant-a`)).status).toBe(200);
+  });
+});
+
+describe("POST /v1/sessions/:id/archive", () => {
+  it("archives an idle session, keeps it readable, and closes client writes", async () => {
+    const namespace = "archive-idle";
+    const sessionId = await seedSession(app, namespace);
+
+    const res = await post(app, `/v1/sessions/${sessionId}/archive?namespace=${namespace}`);
+    expect(res.status).toBe(200);
+    const archived = await res.json();
+    expect(archived).toMatchObject({
+      id: sessionId,
+      namespace,
+      archivedAt: expect.any(String),
+    });
+
+    const read = await get(app, `/v1/sessions/${sessionId}?namespace=${namespace}`);
+    expect(await read.json()).toEqual(archived);
+
+    const message = await post(app, `/v1/sessions/${sessionId}/messages?namespace=${namespace}`, {
+      content: "too late",
+    });
+    expect(message.status).toBe(409);
+    expect((await message.json()).error.message).toBe(
+      `session ${namespace}/${sessionId} is archived`,
+    );
+    expect(
+      (await post(app, `/v1/sessions/${sessionId}/cancel?namespace=${namespace}`)).status,
+    ).toBe(409);
+  });
+
+  it("is idempotent and preserves the first archivedAt", async () => {
+    const namespace = "archive-repeat";
+    const sessionId = await seedSession(app, namespace);
+    const path = `/v1/sessions/${sessionId}/archive?namespace=${namespace}`;
+
+    const first = await (await post(app, path)).json();
+    const second = await post(app, path);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(first);
+  });
+
+  it("409s while the session has an active run", async () => {
+    const namespace = "archive-running";
+    const sessionId = await seedSession(app, namespace);
+    await post(app, `/v1/sessions/${sessionId}/messages?namespace=${namespace}`, {
+      content: "start",
+    });
+
+    const res = await post(app, `/v1/sessions/${sessionId}/archive?namespace=${namespace}`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatchObject({
+      type: "conflict_error",
+      message: `session ${namespace}/${sessionId} is not idle`,
+    });
+    const session = await (
+      await get(app, `/v1/sessions/${sessionId}?namespace=${namespace}`)
+    ).json();
+    expect("archivedAt" in session).toBe(false);
+  });
+
+  it("drops archived sessions from the default list and includes them explicitly", async () => {
+    const namespace = "archive-list";
+    const archivedId = await seedSession(app, namespace);
+    const activeId = await seedSession(app, namespace);
+    await post(app, `/v1/sessions/${archivedId}/archive?namespace=${namespace}`);
+
+    const active = await (await get(app, `/v1/sessions?namespace=${namespace}`)).json();
+    expect(active.data.map((session: { id: string }) => session.id)).toEqual([activeId]);
+
+    const all = await (
+      await get(app, `/v1/sessions?namespace=${namespace}&include_archived=true`)
+    ).json();
+    expect(all.data.map((session: { id: string }) => session.id).sort()).toEqual(
+      [archivedId, activeId].sort(),
+    );
+    expect(all.data.find((session: { id: string }) => session.id === archivedId)).toMatchObject({
+      archivedAt: expect.any(String),
+    });
+  });
+
+  it("404s unknown and foreign archive targets without touching the owned row", async () => {
+    expect((await post(app, "/v1/sessions/nope/archive?namespace=archive-a")).status).toBe(404);
+
+    const sessionId = await seedSession(app, "archive-a");
+    expect((await post(app, `/v1/sessions/${sessionId}/archive?namespace=archive-b`)).status).toBe(
+      404,
+    );
+    const own = await (await get(app, `/v1/sessions/${sessionId}?namespace=archive-a`)).json();
+    expect("archivedAt" in own).toBe(false);
   });
 });
 

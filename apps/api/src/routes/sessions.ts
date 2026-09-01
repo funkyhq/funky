@@ -1,10 +1,10 @@
 // apps/api/src/routes/sessions.ts
-// The sessions resource — the intake half of the Store port, plus the
-// inspection reads. Every route under /:id resolves ownership once at
-// the top with a namespace-scoped get: the store answers a foreign
-// session exactly like a nonexistent one, so no route compares
-// namespaces by hand. The row the get returns is its own SessionRef, so
-// it addresses every later call.
+// The sessions resource — lifecycle, intake, and inspection reads. Every
+// non-archive route under /:id resolves ownership once at the top with a
+// namespace-scoped get: the store answers a foreign session exactly like a
+// nonexistent one, so no route compares namespaces by hand. The row the get
+// returns is its own SessionRef, so it addresses every later call. Archive
+// delegates that same scoped absence rule directly to the atomic transition.
 //
 // Namespace is part of the request (the caller holds the root token;
 // tenant authorization lives in the managed layer above): the create
@@ -12,16 +12,16 @@
 // every id-addressed route takes ?namespace=, defaulting for
 // single-tenant self-deploys (common.ts NamespaceQuery).
 //
-// The api writes nothing itself: intake and requestCancel are the only
-// mutations, both Store transactions. Whether a message starts a run or
-// queues as a pending input is intake's in-transaction branch — the
-// IntakeResult (started | queued) is returned verbatim, and both answer
-// 202: the work itself happens in a worker, asynchronously.
+// The api writes nothing itself: archiveSession, intake, and requestCancel
+// are Store transactions. Whether a message starts a run or queues as a
+// pending input is intake's in-transaction branch — the IntakeResult
+// (started | queued) is returned verbatim, and both answer 202: the work
+// itself happens in a worker, asynchronously.
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { CreateSessionRequest, type Session, UserMessage, type WorkItem } from "@funky/core";
-import { ArchivedError, type Store } from "@funky/agent";
+import { ArchivedError, SessionNotIdleError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
 import { ListQuery, NamespaceQuery, page, validate } from "./common";
 
@@ -30,6 +30,7 @@ export type SessionStore = Pick<
   Store,
   | "createSession"
   | "getSession"
+  | "archiveSession"
   | "listSessions"
   | "intake"
   | "requestCancel"
@@ -50,6 +51,16 @@ type Env = { Variables: { requestId: string } };
 // The core request, with the body's namespace defaulted the same way
 // the query's is (common.ts NamespaceQuery).
 const CreateSessionBody = CreateSessionRequest.extend(NamespaceQuery.shape);
+
+// Spelled include_archived: snake_case is the wire's shape for a
+// multi-word query switch. Avoid z.coerce.boolean(): JavaScript truthiness
+// would parse "false" as true, so the two spellings are an enum.
+const SessionListQuery = ListQuery.extend({
+  include_archived: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
+});
 
 /** Store row → wire resource: the ref's qualified id becomes the
  *  resource's `id`; everything else — namespace included — rides
@@ -98,10 +109,15 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
 
   // list → one page of this namespace's rows, newest first. The store
   // is asked for limit + 1: the extra row is hasMore (see page()).
-  r.get("/", validate("query", ListQuery), async (c) => {
-    const { namespace, limit, after } = c.req.valid("query");
+  r.get("/", validate("query", SessionListQuery), async (c) => {
+    const { namespace, limit, after, include_archived: includeArchived } = c.req.valid("query");
     try {
-      const rows = await store.listSessions({ namespace, limit: limit + 1, after });
+      const rows = await store.listSessions({
+        namespace,
+        limit: limit + 1,
+        after,
+        includeArchived,
+      });
       return c.json(page(rows.map(wire), limit));
     } catch (err) {
       // A cursor the store can't resolve — foreign or made-up, the same
@@ -119,6 +135,28 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
     return c.json(wire(session));
   });
 
+  // Archive is permanent and idempotent. It keeps the row and history
+  // readable, removes it from the default list, and closes every client
+  // write. The store serializes this transition with intake and refuses it
+  // while the open-item liveness bit says the session is running. An input
+  // parked by a cancelled run is flushed into the log by that same
+  // transaction, so a message queued before the archive shows up in
+  // /entries afterwards.
+  r.post("/:id/archive", validate("query", NamespaceQuery), async (c) => {
+    const id = c.req.param("id");
+    const { namespace } = c.req.valid("query");
+    try {
+      const session = await store.archiveSession({ namespace, sessionId: id });
+      if (session === undefined) return notFound(c);
+      return c.json(wire(session));
+    } catch (err) {
+      if (err instanceof SessionNotIdleError) {
+        return errorResponse(c, 409, "conflict_error", err.message);
+      }
+      throw err;
+    }
+  });
+
   r.post(
     "/:id/messages",
     validate("query", NamespaceQuery),
@@ -131,7 +169,14 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
         role: "user",
         content: typeof content === "string" ? [{ type: "text", text: content }] : content,
       };
-      return c.json(await store.intake(session, message), 202);
+      try {
+        return c.json(await store.intake(session, message), 202);
+      } catch (err) {
+        if (err instanceof ArchivedError) {
+          return errorResponse(c, 409, "conflict_error", err.message);
+        }
+        throw err;
+      }
     },
   );
 
@@ -140,8 +185,15 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
     if (!session) return notFound(c);
     // Appends a control entry; the worker answers it at a step boundary,
     // so cancellation is accepted here, not completed.
-    await store.requestCancel(session);
-    return c.body(null, 202);
+    try {
+      await store.requestCancel(session);
+      return c.body(null, 202);
+    } catch (err) {
+      if (err instanceof ArchivedError) {
+        return errorResponse(c, 409, "conflict_error", err.message);
+      }
+      throw err;
+    }
   });
 
   r.get("/:id/entries", validate("query", EntriesQuery), async (c) => {
@@ -167,8 +219,9 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
   // stream. Polling, not LISTEN/NOTIFY, by ratified decision: a
   // Notifier would change latency inside this loop, never the wire.
   //
-  // The stream has no server-side end — sessions don't terminate. The
-  // client hangs up; `aborted` stops the loop.
+  // The stream has no server-side EOF marker. Archive preserves the log and
+  // prevents future writes, but does not close an HTTP response already in
+  // flight; the client hangs up and `aborted` stops the loop.
   r.get("/:id/stream", validate("query", EntriesQuery), async (c) => {
     const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);

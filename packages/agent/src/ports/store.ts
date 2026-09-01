@@ -3,7 +3,6 @@ import type {
   AgentConfigRef,
   AgentConfigVersionRef,
   AgentMessage,
-  ConfigId,
   CreateAgentConfigRequest,
   CreateEnvConfigRequest,
   CreateSessionRequest,
@@ -32,10 +31,11 @@ import type { RunEndStatus } from "../engine/next-action";
  * pending inputs in one transaction, and splitting the interface would
  * lie about that atomicity.
  *
- * Two write paths, two callers: the api calls intake, the driver calls
- * commitStep. They are the only status mutations in the system, and work
- * items are born only inside their transactions — which is why there is
- * no createWorkItem.
+ * Two run write paths, two callers: the api calls intake, the driver calls
+ * commitStep. They are the only run-status mutations in the system, and
+ * work items are born only inside their transactions — which is why there
+ * is no createWorkItem. archiveSession is the separate terminal lifecycle
+ * transition and may land only while neither path has left an open item.
  *
  * The load-bearing invariant: at most one open (non-done) item per
  * session. "Busy" IS an open item's existence, and a run's end is the
@@ -142,15 +142,31 @@ export interface Store {
    *  always of a committed, active state. */
   createSession(req: CreateSessionRequest): Promise<SessionRef>;
   getSession(ref: SessionRef): Promise<Session | undefined>;
+  /**
+   * Permanently archive an idle session. The row and its history remain
+   * readable, but intake, cancellation, and sandbox rebinding become
+   * read-only conflicts. A non-done work item is the session's running
+   * state, so attempting the transition while one exists throws
+   * SessionNotIdleError. A cancelled run parks its pending inputs for the
+   * next intake and archive guarantees there is no next one, so the
+   * transition drains them into the log — appended as entries in arrival
+   * order, chaining nothing. The archive check and intake/commit transitions
+   * serialize on the session row: archive cannot race a session from idle
+   * into running. Repeating an archive is an idempotent read of the first
+   * archivedAt; unknown and foreign refs return undefined.
+   */
+  archiveSession(ref: SessionRef): Promise<Session | undefined>;
   /** Register the session's one sandbox: a compare-and-set on the
    *  binding — fills a null binding when `previous` is omitted, or
    *  replaces exactly `previous` when the caller is recovering a dead
    *  sandbox. Returns the bound id either way: the atomic pick that
    *  keeps every claimer executing in one workspace — a racer whose
    *  candidate lost learns the winner and discards its own (see
-   *  driver/ensure-sandbox.ts). Rejects an unknown or foreign session. */
+   *  driver/ensure-sandbox.ts). Rejects an unknown, foreign, or archived
+   *  session. */
   bindSandbox(ref: SessionRef, sandboxId: string, previous?: string): Promise<string>;
-  /** One namespace's sessions, newest first — see ListSessionsRequest. */
+  /** One namespace's active sessions, newest first. includeArchived opts
+   *  terminal rows back in — see ListSessionsRequest. */
   listSessions(req: ListSessionsRequest): Promise<Session[]>;
 
   // --- reads — table-shaped; reads need no atomicity ---
@@ -189,7 +205,8 @@ export interface Store {
    * Appends a cancel ControlEntry to the log — nothing else. Workers
    * check behind the tail at boundaries; seq order scopes which run the
    * cancel addresses (one landing after a run's terminal message
-   * addresses a run that no longer exists and is ignored).
+   * addresses a run that no longer exists and is ignored). An archived
+   * session rejects the write with ArchivedError.
    */
   requestCancel(ref: SessionRef): Promise<void>;
 
@@ -200,7 +217,8 @@ export interface Store {
    * → the message becomes an entry and an inference item starts a run;
    * open item → the message parks as a pending input. Whether a parked
    * input steers or follows up is decided by which boundary drains it,
-   * never by the message itself.
+   * never by the message itself. An archived session rejects intake with
+   * ArchivedError.
    */
   intake(ref: SessionRef, message: UserMessage): Promise<IntakeResult>;
 
@@ -234,25 +252,66 @@ export class FencedError extends Error {
   }
 }
 
-export type ConfigKind = "agent" | "env";
+export type ArchivedResourceKind = "agent" | "env" | "session";
+
+/** What each kind is called in the message; the wording belongs to the
+ *  kind, not to the factory that names it. */
+const ARCHIVED_LABEL: Record<ArchivedResourceKind, string> = {
+  agent: "agent config",
+  env: "env config",
+  session: "session",
+};
 
 /**
- * Thrown when a mutation or new reference targets an archived config.
- * Terminal, unlike VersionConflictError: no retry can ever succeed.
+ * Thrown when a mutation or new reference targets any archived resource.
+ * One type is deliberate: agent configs, env configs, and sessions share
+ * the same terminal verdict and callers normally need one catch path. The
+ * resourceKind/resourceId pair preserves specific identity when it matters.
+ * Terminal, unlike VersionConflictError or SessionNotIdleError: no retry can
+ * ever succeed.
+ *
+ * The thrower names the kind — the factories, never a shape test on the
+ * ref. A Session row is structurally a SessionRef AND carries both config
+ * ids, so inferring the kind would misread the whole-row-as-ref calls the
+ * api makes (store.intake(session, …)); every throw site already knows
+ * which resource it read.
  */
 export class ArchivedError extends Error {
   readonly namespace: string;
-  readonly configId: ConfigId;
-  readonly configKind: ConfigKind;
+  readonly resourceId: string;
+  readonly resourceKind: ArchivedResourceKind;
 
-  constructor(ref: AgentConfigRef | EnvConfigRef) {
-    const configKind = "agentConfigId" in ref ? "agent" : "env";
-    const configId = "agentConfigId" in ref ? ref.agentConfigId : ref.envConfigId;
-    super(`${configKind} config ${ref.namespace}/${configId} is archived`);
+  private constructor(kind: ArchivedResourceKind, namespace: string, resourceId: string) {
+    super(`${ARCHIVED_LABEL[kind]} ${namespace}/${resourceId} is archived`);
     this.name = "ArchivedError";
+    this.namespace = namespace;
+    this.resourceId = resourceId;
+    this.resourceKind = kind;
+  }
+
+  static forAgentConfig(ref: AgentConfigRef): ArchivedError {
+    return new ArchivedError("agent", ref.namespace, ref.agentConfigId);
+  }
+
+  static forEnvConfig(ref: EnvConfigRef): ArchivedError {
+    return new ArchivedError("env", ref.namespace, ref.envConfigId);
+  }
+
+  static forSession(ref: SessionRef): ArchivedError {
+    return new ArchivedError("session", ref.namespace, ref.sessionId);
+  }
+}
+
+/** Thrown when archive is requested while the session has an open item. */
+export class SessionNotIdleError extends Error {
+  readonly namespace: string;
+  readonly sessionId: string;
+
+  constructor(ref: SessionRef) {
+    super(`session ${ref.namespace}/${ref.sessionId} is not idle`);
+    this.name = "SessionNotIdleError";
     this.namespace = ref.namespace;
-    this.configId = configId;
-    this.configKind = configKind;
+    this.sessionId = ref.sessionId;
   }
 }
 

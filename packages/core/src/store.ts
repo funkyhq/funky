@@ -206,6 +206,10 @@ export const ListSessionsRequest = z.object({
   namespace: z.string().min(1),
   limit: z.number().int().min(1),
   after: z.string().min(1).optional(),
+  // The default list is active rows only: archived history grows without
+  // bound, and a caller asking for its sessions means the live ones. The
+  // terminal rows are an explicit opt-in; retrieval by id is unaffected.
+  includeArchived: z.boolean().optional(),
 });
 export type ListSessionsRequest = z.infer<typeof ListSessionsRequest>;
 
@@ -234,6 +238,9 @@ export const Session = SessionRef.extend({
   // execute_tools claim (Store.bindSandbox); absent until then.
   sandboxId: z.string().optional(),
   createdAt: z.iso.datetime(),
+  // Archive is terminal: the session remains readable but accepts no new
+  // client writes. Absence, rather than null, is the active state.
+  archivedAt: z.iso.datetime().optional(),
 });
 export type Session = z.infer<typeof Session>;
 
