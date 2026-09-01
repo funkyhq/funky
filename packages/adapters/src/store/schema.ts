@@ -132,6 +132,15 @@ export const sessions = pgTable(
       columns: [t.namespace, t.envConfigId],
       foreignColumns: [envConfigs.namespace, envConfigs.id],
     }),
+    // The list scan's index (pg.ts listSessions). The PK's second column
+    // is a random id, so it cannot order by time: without this, a page
+    // reads and sorts the namespace's whole history to return one
+    // screenful and the keyset cursor buys nothing. Sessions is the one
+    // listed table that grows without bound — the configs beside it are
+    // a small fixed set, which is why only this one carries the index.
+    // Ascending by choice: a leading equality on namespace lets the
+    // newest-first order walk it backwards, so one index serves both.
+    index("sessions_list_scan").on(t.namespace, t.createdAt, t.id),
   ],
 );
 

@@ -88,6 +88,16 @@ CREATE TABLE sessions (
   FOREIGN KEY (namespace, env_config_id) REFERENCES env_configs (namespace, id)
 );
 
+-- The list scan's index (Store.listSessions). The PK's second column is a
+-- random id, so it cannot order by time: without this, a page reads and
+-- sorts the namespace's whole history to return one screenful, and the
+-- keyset cursor buys nothing. Sessions is the one listed table that grows
+-- without bound — the configs beside it are a small fixed set, which is
+-- why only this one carries the index. Ascending by choice: a leading
+-- equality on namespace lets the newest-first order walk it backwards, so
+-- one index serves both directions.
+CREATE INDEX sessions_list_scan ON sessions (namespace, created_at, id);
+
 CREATE TABLE session_entries (
   namespace text NOT NULL,
   session_id text NOT NULL,

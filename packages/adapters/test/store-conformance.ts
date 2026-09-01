@@ -12,6 +12,7 @@ import {
   type AssistantMessage,
   type CreateAgentConfigRequest,
   type CreateEnvConfigRequest,
+  type CreateSessionRequest,
   DEFAULT_NAMESPACE,
   type EnvConfigRef,
   type SessionRef,
@@ -73,15 +74,20 @@ export function describeStoreConformance(
       });
     }
 
-    async function newSession(): Promise<SessionRef> {
+    async function newSession(overrides: Partial<CreateSessionRequest> = {}): Promise<SessionRef> {
+      // A session and its configs always share one namespace, so the
+      // override steers all three, not just the session.
+      const namespace = overrides.namespace ?? DEFAULT_NAMESPACE;
       const agentConfigRef = await newAgent({
+        namespace,
         inference: { provider: "fake", model: "scripted" },
       });
-      const envConfigRef = await newEnv();
+      const envConfigRef = await newEnv({ namespace });
       return store.createSession({
-        namespace: DEFAULT_NAMESPACE,
+        namespace,
         agentConfigId: agentConfigRef.agentConfigId,
         envConfigId: envConfigRef.envConfigId,
+        ...overrides,
       });
     }
 
@@ -1046,6 +1052,88 @@ export function describeStoreConformance(
             envConfigId: "nope",
           }),
         ).rejects.toThrow();
+      });
+    });
+
+    describe("listing sessions", () => {
+      /** n sessions, each a tick newer than the last, oldest id first. */
+      async function sessionIds(n: number, namespace?: string): Promise<string[]> {
+        const ids: string[] = [];
+        for (let i = 0; i < n; i++) {
+          const ref = await newSession(namespace === undefined ? {} : { namespace });
+          ids.push(ref.sessionId);
+          clock.advance(1_000);
+        }
+        return ids;
+      }
+
+      /** Walk the whole list one small page at a time. */
+      async function walk(namespace: string, limit: number): Promise<string[]> {
+        const ids: string[] = [];
+        let after: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page = await store.listSessions({ namespace, limit, after });
+          expect(page.length).toBeLessThanOrEqual(limit);
+          if (page.length === 0) return ids;
+          ids.push(...page.map((s) => s.sessionId));
+          after = page[page.length - 1]?.sessionId;
+        }
+        throw new Error("walk did not terminate");
+      }
+
+      it("lists a namespace's sessions newest first, whole rows", async () => {
+        const [oldest, middle, newest] = await sessionIds(3);
+        const list = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(list.map((s) => s.sessionId)).toEqual([newest, middle, oldest]);
+        // The same shape a get returns — one row mapping, not two.
+        expect(list[0]).toEqual(
+          await store.getSession({ namespace: DEFAULT_NAMESPACE, sessionId: newest! }),
+        );
+      });
+
+      it("bounds the page at limit and resumes strictly after the cursor", async () => {
+        const [oldest, middle, newest] = await sessionIds(3);
+        const first = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 2 });
+        expect(first.map((s) => s.sessionId)).toEqual([newest, middle]);
+        const second = await store.listSessions({
+          namespace: DEFAULT_NAMESPACE,
+          limit: 2,
+          after: middle,
+        });
+        expect(second.map((s) => s.sessionId)).toEqual([oldest]);
+        expect(
+          await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 2, after: oldest }),
+        ).toEqual([]);
+      });
+
+      it("pages an unadvanced clock without dropping or duplicating a row", async () => {
+        // No clock advance: created_at ties are likely, so this pins the
+        // (createdAt, id) key's total order — walking in pages must equal
+        // the whole list exactly.
+        for (let i = 0; i < 5; i++) {
+          await newSession();
+        }
+        const whole = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(whole).toHaveLength(5);
+        expect(await walk(DEFAULT_NAMESPACE, 2)).toEqual(whole.map((s) => s.sessionId));
+      });
+
+      it("scopes the list to one namespace — a page walk never crosses the boundary", async () => {
+        const a = await sessionIds(3, "tenant-a");
+        const b = await sessionIds(2, "tenant-b");
+        expect(await walk("tenant-a", 2)).toEqual([...a].reverse());
+        expect(await walk("tenant-b", 2)).toEqual([...b].reverse());
+        expect(await store.listSessions({ namespace: "tenant-c", limit: 10 })).toEqual([]);
+      });
+
+      it("rejects a cursor it cannot resolve — a foreign one like a nonexistent one", async () => {
+        const [foreign] = await sessionIds(1, "tenant-b");
+        await expect(
+          store.listSessions({ namespace: "tenant-a", limit: 10, after: "nope" }),
+        ).rejects.toThrow("unknown cursor");
+        await expect(
+          store.listSessions({ namespace: "tenant-a", limit: 10, after: foreign }),
+        ).rejects.toThrow("unknown cursor");
       });
     });
 

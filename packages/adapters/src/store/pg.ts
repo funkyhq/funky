@@ -48,6 +48,7 @@ import {
   type JsonValue,
   ListAgentConfigsRequest,
   ListEnvConfigsRequest,
+  ListSessionsRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -140,6 +141,19 @@ const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
     ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
+const toSession = (row: typeof sessions.$inferSelect): Session =>
+  Session.parse({
+    sessionId: row.id,
+    agentConfigId: row.agentConfigId,
+    agentConfigVersion: row.agentConfigVersion,
+    envConfigId: row.envConfigId,
+    envConfigSnapshot: row.envConfigSnapshot,
+    namespace: row.namespace,
+    ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
+    ...unwrapped(row.metadata),
+    createdAt: iso(row.createdAt),
+  });
+
 export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
   const now = opts.now ?? (() => new Date());
 
@@ -153,7 +167,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
   }
 
   /**
-   * The config lists' page predicate: everything strictly older than the
+   * Every list's page predicate: everything strictly older than the
    * cursor row in (created_at, id) order — a row-value comparison, so the
    * tie-break is one comparison, not a hand-unrolled OR. The cursor is
    * looked up under the caller's `scope`, which makes a foreign id
@@ -161,7 +175,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
    * newest (and drizzle's and() drops it).
    */
   async function olderThanCursor(
-    table: typeof agentConfigs | typeof envConfigs,
+    table: typeof agentConfigs | typeof envConfigs | typeof sessions,
     scope: SQL,
     after: string | undefined,
   ): Promise<SQL | undefined> {
@@ -558,18 +572,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .select()
         .from(sessions)
         .where(and(eq(sessions.id, sessionId), eq(sessions.namespace, namespace)));
-      if (!row) return undefined;
-      return Session.parse({
-        sessionId: row.id,
-        agentConfigId: row.agentConfigId,
-        agentConfigVersion: row.agentConfigVersion,
-        envConfigId: row.envConfigId,
-        envConfigSnapshot: row.envConfigSnapshot,
-        namespace: row.namespace,
-        ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
-        ...unwrapped(row.metadata),
-        createdAt: iso(row.createdAt),
-      });
+      return row === undefined ? undefined : toSession(row);
     },
 
     async bindSandbox(ref, sandboxId, previous) {
@@ -588,6 +591,19 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const [row] = await db.select({ sandboxId: sessions.sandboxId }).from(sessions).where(scope);
       if (!row?.sandboxId) throw new Error(`unknown session: ${sessionId}`);
       return row.sandboxId;
+    },
+
+    async listSessions(req) {
+      const parsed = ListSessionsRequest.parse(req);
+      const scope = eq(sessions.namespace, parsed.namespace);
+      const page = await olderThanCursor(sessions, scope, parsed.after);
+      const rows = await db
+        .select()
+        .from(sessions)
+        .where(and(scope, page))
+        .orderBy(desc(sessions.createdAt), desc(sessions.id))
+        .limit(parsed.limit);
+      return rows.map(toSession);
     },
 
     async readEntries(ref, after) {
