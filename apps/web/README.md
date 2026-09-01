@@ -16,7 +16,7 @@ pnpm -F web lint     # oxlint
 | `src/App.tsx`     | The shell: the sidebar beside one routed pane                        |
 | `src/nav.ts`      | Every section, in one list — the sidebar and the router both read it |
 | `src/lib/`        | What the console knows about the api it fronts                       |
-| `src/components/` | The shell's pieces (sidebar, icons)                                  |
+| `src/components/` | The shell's pieces (sidebar, icons, modal)                           |
 | `src/pages/`      | One module per section                                               |
 
 Routing is the URL hash (`#/agent`), so sections are linkable and the browser owns history —
