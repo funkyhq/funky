@@ -115,6 +115,9 @@ export const sessions = pgTable(
     sandboxId: text("sandbox_id"),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    // Terminal, permanent lifecycle mark. Archived sessions keep their
+    // history but reject every new client-side mutation.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.namespace, t.id] }),
@@ -141,6 +144,11 @@ export const sessions = pgTable(
     // Ascending by choice: a leading equality on namespace lets the
     // newest-first order walk it backwards, so one index serves both.
     index("sessions_list_scan").on(t.namespace, t.createdAt, t.id),
+    // The default list omits archived rows; this partial twin keeps that
+    // scan bounded once archived history dominates the table.
+    index("sessions_active_list_scan")
+      .on(t.namespace, t.createdAt, t.id)
+      .where(sql`${t.archivedAt} is null`),
   ],
 );
 

@@ -9,12 +9,16 @@
 // - Lock order is item → session everywhere an item is involved; no path
 //   takes session → item, so no cycle exists.
 // - createSession holds FOR SHARE locks on both config rows until it
-//   commits, while each archive method's UPDATE takes its row exclusively:
-//   the operations serialize, so no session is born against either archived
-//   config. The env lock also makes the recipe snapshot a committed state:
-//   a racing updateEnvConfig lands strictly before or after it — never
-//   inside. Shared mode lets concurrent creates proceed together. Lock order
-//   is agent → env, and no path takes env → agent, so no cycle exists.
+//   commits, while each config archive method's UPDATE takes its row
+//   exclusively: the operations serialize, so no session is born against
+//   either archived config. The env lock also makes the recipe snapshot a
+//   committed state: a racing updateEnvConfig lands strictly before or after
+//   it — never inside. Shared mode lets concurrent creates proceed together.
+//   Lock order is agent → env, and no path takes env → agent, so no cycle
+//   exists.
+// - archiveSession, intake, and the liveness-changing half of commitStep
+//   serialize on the session row. Archive sees either idle or one open item,
+//   never a stale gap between checking and stamping the terminal state.
 // - claimItem uses FOR UPDATE SKIP LOCKED: contended claimers never
 //   queue behind each other, exactly one wins a given item.
 // - Fencing is token + live lease, symmetric across heartbeat and
@@ -63,6 +67,7 @@ import {
   ArchivedError,
   type CommitStepRequest,
   FencedError,
+  SessionNotIdleError,
   type Store,
   VersionConflictError,
 } from "@funky/agent";
@@ -152,18 +157,27 @@ const toSession = (row: typeof sessions.$inferSelect): Session =>
     ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
     ...unwrapped(row.metadata),
     createdAt: iso(row.createdAt),
+    ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
 export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
   const now = opts.now ?? (() => new Date());
 
-  async function lockSession(tx: Tx, ref: SessionRef): Promise<void> {
-    const rows = await tx
-      .select({ id: sessions.id })
+  async function lockSession(tx: Tx, ref: SessionRef): Promise<{ archivedAt: Date | null }> {
+    const [row] = await tx
+      .select({ archivedAt: sessions.archivedAt })
       .from(sessions)
       .where(and(eq(sessions.id, ref.sessionId), eq(sessions.namespace, ref.namespace)))
       .for("update");
-    if (rows.length === 0) throw new Error(`unknown session: ${ref.sessionId}`);
+    if (row === undefined) throw new Error(`unknown session: ${ref.sessionId}`);
+    return row;
+  }
+
+  async function lockActiveSession(tx: Tx, ref: SessionRef): Promise<void> {
+    const row = await lockSession(tx, ref);
+    if (row.archivedAt !== null) {
+      throw ArchivedError.forSession(ref);
+    }
   }
 
   /**
@@ -359,7 +373,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         // Archived outranks the version verdict: it is terminal, so
         // "retry with the current version" would be a lie.
         if (current.archivedAt !== null) {
-          throw new ArchivedError({ namespace, agentConfigId });
+          throw ArchivedError.forAgentConfig({ namespace, agentConfigId });
         }
         if (parsed.version !== undefined) {
           throw new VersionConflictError(parsed.version, current.version);
@@ -456,7 +470,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .where(scope);
       if (current === undefined) return undefined;
       if (current.archivedAt !== null) {
-        throw new ArchivedError({ namespace, envConfigId });
+        throw ArchivedError.forEnvConfig({ namespace, envConfigId });
       }
       throw new Error(`env config ${envConfigId} was not updated`);
     },
@@ -534,7 +548,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           .for("share", { of: agentConfigs });
         if (!agent) throw new Error(`unknown agent config: ${parsed.agentConfigId}`);
         if (agent.archivedAt !== null) {
-          throw new ArchivedError({ namespace, agentConfigId: parsed.agentConfigId });
+          throw ArchivedError.forAgentConfig({ namespace, agentConfigId: parsed.agentConfigId });
         }
         const [env] = await tx
           .select({
@@ -547,7 +561,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           .for("share", { of: envConfigs });
         if (!env) throw new Error(`unknown env config: ${parsed.envConfigId}`);
         if (env.archivedAt !== null) {
-          throw new ArchivedError({ namespace, envConfigId: parsed.envConfigId });
+          throw ArchivedError.forEnvConfig({ namespace, envConfigId: parsed.envConfigId });
         }
         await tx.insert(sessions).values({
           id,
@@ -575,6 +589,68 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       return row === undefined ? undefined : toSession(row);
     },
 
+    async archiveSession(ref) {
+      const { namespace, sessionId } = SessionRef.parse(ref);
+      const scope = and(eq(sessions.id, sessionId), eq(sessions.namespace, namespace));
+      return db.transaction(async (tx) => {
+        // Every transition that creates or resolves the one open item holds
+        // this same row lock. Archive therefore observes one committed state:
+        // idle and archivable, or running and refused — never a check/write
+        // window in which intake can start a run behind it.
+        const [current] = await tx.select().from(sessions).where(scope).for("update");
+        if (current === undefined) return undefined;
+        if (current.archivedAt !== null) return toSession(current);
+
+        const [open] = await tx
+          .select({ id: workItems.id })
+          .from(workItems)
+          .where(
+            and(
+              eq(workItems.namespace, namespace),
+              eq(workItems.sessionId, sessionId),
+              ne(workItems.status, "done"),
+            ),
+          )
+          .limit(1);
+        if (open !== undefined) throw new SessionNotIdleError({ namespace, sessionId });
+
+        // A cancelled run parks its pending inputs for the next intake, and
+        // archive guarantees there is no next one. Flush them into the log —
+        // end_run's append-and-delete without the chained item — so a message
+        // the api already accepted becomes history instead of a row nothing
+        // can ever read. The session lock appendEntries requires is held.
+        const parked = await tx
+          .select()
+          .from(pendingInputs)
+          .where(
+            and(eq(pendingInputs.namespace, namespace), eq(pendingInputs.sessionId, sessionId)),
+          )
+          .orderBy(asc(pendingInputs.ord));
+        if (parked.length > 0) {
+          await appendEntries(
+            tx,
+            { namespace, sessionId },
+            parked.map((p) => ({ type: "message", message: p.message })),
+          );
+          await tx
+            .delete(pendingInputs)
+            .where(
+              and(eq(pendingInputs.namespace, namespace), eq(pendingInputs.sessionId, sessionId)),
+            );
+        }
+
+        const [archived] = await tx
+          .update(sessions)
+          .set({ archivedAt: now() })
+          .where(and(scope, isNull(sessions.archivedAt)))
+          .returning();
+        if (archived === undefined) {
+          throw new Error(`session ${sessionId} was not archived`);
+        }
+        return toSession(archived);
+      });
+    },
+
     async bindSandbox(ref, sandboxId, previous) {
       const { namespace, sessionId } = SessionRef.parse(ref);
       const scope = and(eq(sessions.id, sessionId), eq(sessions.namespace, namespace));
@@ -585,11 +661,16 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const [bound] = await db
         .update(sessions)
         .set({ sandboxId })
-        .where(and(scope, expected))
+        .where(and(scope, isNull(sessions.archivedAt), expected))
         .returning({ sandboxId: sessions.sandboxId });
       if (bound?.sandboxId) return bound.sandboxId;
-      const [row] = await db.select({ sandboxId: sessions.sandboxId }).from(sessions).where(scope);
-      if (!row?.sandboxId) throw new Error(`unknown session: ${sessionId}`);
+      const [row] = await db
+        .select({ sandboxId: sessions.sandboxId, archivedAt: sessions.archivedAt })
+        .from(sessions)
+        .where(scope);
+      if (row === undefined) throw new Error(`unknown session: ${sessionId}`);
+      if (row.archivedAt !== null) throw ArchivedError.forSession({ namespace, sessionId });
+      if (!row.sandboxId) throw new Error(`unknown session: ${sessionId}`);
       return row.sandboxId;
     },
 
@@ -600,7 +681,13 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const rows = await db
         .select()
         .from(sessions)
-        .where(and(scope, page))
+        .where(
+          and(
+            scope,
+            parsed.includeArchived === true ? undefined : isNull(sessions.archivedAt),
+            page,
+          ),
+        )
         .orderBy(desc(sessions.createdAt), desc(sessions.id))
         .limit(parsed.limit);
       return rows.map(toSession);
@@ -762,7 +849,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async requestCancel(ref) {
       const parsed = SessionRef.parse(ref);
       await db.transaction(async (tx) => {
-        await lockSession(tx, parsed);
+        await lockActiveSession(tx, parsed);
         await appendEntries(tx, parsed, [{ type: "control", control: "cancel" }]);
       });
     },
@@ -771,7 +858,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const { namespace, sessionId } = SessionRef.parse(ref);
       const msg = UserMessage.parse(message);
       return db.transaction(async (tx) => {
-        await lockSession(tx, { namespace, sessionId }); // the race referee
+        await lockActiveSession(tx, { namespace, sessionId }); // the race referee
         const open = await tx
           .select({ id: workItems.id })
           .from(workItems)

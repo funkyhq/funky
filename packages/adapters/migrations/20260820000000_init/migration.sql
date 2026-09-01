@@ -80,6 +80,9 @@ CREATE TABLE sessions (
   sandbox_id text,
   metadata jsonb,
   created_at timestamptz NOT NULL,
+  -- Terminal lifecycle mark. The history stays readable, but the
+  -- session accepts no new client writes; NULL means active.
+  archived_at timestamptz,
   PRIMARY KEY (namespace, id),
   -- Same-namespace, structural, on both references: the pinned version
   -- and the env recipe must live in the session's own namespace.
@@ -97,6 +100,12 @@ CREATE TABLE sessions (
 -- equality on namespace lets the newest-first order walk it backwards, so
 -- one index serves both directions.
 CREATE INDEX sessions_list_scan ON sessions (namespace, created_at, id);
+-- The default list omits archived rows, so it gets its own partial index —
+-- the active scan stays bounded once archived history dominates. The full
+-- index above serves includeArchived=true; the cursor is a PK lookup that
+-- never filters on archived_at, so paging survives an archive mid-walk.
+CREATE INDEX sessions_active_list_scan
+  ON sessions (namespace, created_at, id) WHERE archived_at IS NULL;
 
 CREATE TABLE session_entries (
   namespace text NOT NULL,

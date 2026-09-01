@@ -12,6 +12,7 @@ import {
   IntakeResult,
   ListAgentConfigsRequest,
   ListEnvConfigsRequest,
+  ListSessionsRequest,
   PendingInput,
   Session,
   SessionRef,
@@ -287,6 +288,34 @@ describe("sessions", () => {
     expect(roundTrip(Session, session)).toEqual(session);
   });
 
+  it("round-trips an archived session — the mark is a timestamp, not a flag", () => {
+    const session = {
+      namespace: "default",
+      sessionId: "s1",
+      agentConfigId: "ac1",
+      agentConfigVersion: 2,
+      envConfigId: "ec1",
+      envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
+      createdAt: "2026-08-11T12:00:00Z",
+      archivedAt: "2026-08-13T12:00:00Z",
+    };
+    expect(roundTrip(Session, session)).toEqual(session);
+  });
+
+  it("rejects null or boolean session archivedAt — active is spelled by absence", () => {
+    const session = {
+      namespace: "default",
+      sessionId: "s1",
+      agentConfigId: "ac1",
+      agentConfigVersion: 1,
+      envConfigId: "ec1",
+      envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
+      createdAt: "2026-08-11T12:00:00Z",
+    };
+    expect(Session.safeParse({ ...session, archivedAt: null }).success).toBe(false);
+    expect(Session.safeParse({ ...session, archivedAt: true }).success).toBe(false);
+  });
+
   // The recipe is copied, not referenced: env configs update in place, so
   // a session that resolved one at read time could change under a running
   // run. The snapshot is a resolved decision, so it is never absent.
@@ -351,6 +380,24 @@ describe("sessions", () => {
     expect(SessionRef.safeParse({ namespace: "tenant-a", sessionId: "s1" }).success).toBe(true);
     expect(SessionRef.safeParse({ namespace: "tenant-a", sessionId: "" }).success).toBe(false);
     expect(SessionRef.safeParse({ namespace: "", sessionId: "s1" }).success).toBe(false);
+  });
+
+  it("validates session pagination's archived opt-in", () => {
+    expect(
+      ListSessionsRequest.safeParse({
+        namespace: "tenant-a",
+        limit: 10,
+        after: "s1",
+        includeArchived: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      ListSessionsRequest.safeParse({
+        namespace: "tenant-a",
+        limit: 10,
+        includeArchived: "true",
+      }).success,
+    ).toBe(false);
   });
 
   it("requires an explicit namespace when creating a session", () => {

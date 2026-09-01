@@ -23,6 +23,7 @@ import {
   ArchivedError,
   type CommitStepRequest,
   FencedError,
+  SessionNotIdleError,
   type Store,
   VersionConflictError,
 } from "@funky/agent";
@@ -458,8 +459,8 @@ export function describeStoreConformance(
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
             name: "ArchivedError",
             namespace: ref.namespace,
-            configId: ref.agentConfigId,
-            configKind: "agent",
+            resourceId: ref.agentConfigId,
+            resourceKind: "agent",
           });
         }
         expect(await store.getAgentConfig(ref)).toMatchObject({
@@ -653,8 +654,8 @@ export function describeStoreConformance(
           await expect(store.updateEnvConfig(ref, req)).rejects.toMatchObject({
             name: "ArchivedError",
             namespace: ref.namespace,
-            configId: ref.envConfigId,
-            configKind: "env",
+            resourceId: ref.envConfigId,
+            resourceKind: "env",
           });
         }
         expect((await store.getEnvConfig(ref))?.packages).toEqual({ pip: ["numpy"] });
@@ -690,8 +691,8 @@ export function describeStoreConformance(
         await expect(store.createSession(create)).rejects.toMatchObject({
           name: "ArchivedError",
           namespace: envConfigRef.namespace,
-          configId: envConfigRef.envConfigId,
-          configKind: "env",
+          resourceId: envConfigRef.envConfigId,
+          resourceKind: "env",
         });
         expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
           network: { type: "none" },
@@ -1052,6 +1053,148 @@ export function describeStoreConformance(
             envConfigId: "nope",
           }),
         ).rejects.toThrow();
+      });
+    });
+
+    describe("archiving sessions", () => {
+      it("marks an idle session archived without changing its durable inputs", async () => {
+        const ref = await newSession({ metadata: { purpose: "audit" } });
+        const before = await store.getSession(ref);
+        clock.advance(1_000);
+
+        const archived = await store.archiveSession(ref);
+
+        expect(archived).toMatchObject({ ...before, archivedAt: expect.any(String) });
+        expect(await store.getSession(ref)).toEqual(archived);
+      });
+
+      it("stores active as absence and preserves the first archive time", async () => {
+        const ref = await newSession();
+        const active = await store.getSession(ref);
+        expect(active).toBeDefined();
+        expect("archivedAt" in active!).toBe(false);
+
+        const first = await store.archiveSession(ref);
+        clock.advance(1_000);
+        const second = await store.archiveSession(ref);
+        expect(second).toEqual(first);
+        expect(second?.archivedAt).toBe(first?.archivedAt);
+      });
+
+      it("makes client-side session writes read-only while history remains readable", async () => {
+        const ref = await newSession();
+        await store.requestCancel(ref); // history survives the transition
+        const entries = await store.readEntries(ref);
+        const archived = await store.archiveSession(ref);
+
+        await expect(store.intake(ref, user("after"))).rejects.toMatchObject({
+          name: "ArchivedError",
+          namespace: ref.namespace,
+          resourceId: ref.sessionId,
+          resourceKind: "session",
+        });
+        await expect(store.requestCancel(ref)).rejects.toBeInstanceOf(ArchivedError);
+        await expect(store.bindSandbox(ref, "sbx_after")).rejects.toBeInstanceOf(ArchivedError);
+        expect(await store.getSession(ref)).toEqual(archived);
+        expect(await store.readEntries(ref)).toEqual(entries);
+      });
+
+      it("refuses archive while an open item says the session is not idle", async () => {
+        const ref = await newSession();
+        const { itemRef, token } = await startAndClaim(ref);
+
+        await expect(store.archiveSession(ref)).rejects.toMatchObject({
+          name: "SessionNotIdleError",
+          namespace: ref.namespace,
+          sessionId: ref.sessionId,
+        });
+        expect("archivedAt" in (await store.getSession(ref))!).toBe(false);
+
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        await expect(store.archiveSession(ref)).resolves.toMatchObject({
+          archivedAt: expect.any(String),
+        });
+      });
+
+      it("drains inputs parked by a cancelled run into the log", async () => {
+        const ref = await newSession();
+        const { itemRef, token } = await startAndClaim(ref);
+        const queued = await store.intake(ref, user("queued during run"));
+        expect(queued.kind).toBe("queued");
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [],
+          next: { kind: "end_run", status: "cancelled" },
+        });
+        expect(await store.pendingInputs(ref)).toHaveLength(1); // waiting on an intake
+
+        await store.archiveSession(ref); // the intake it waits for can never come
+
+        expect(await store.pendingInputs(ref)).toEqual([]);
+        const entries = await store.readEntries(ref);
+        expect(entries.at(-1)).toMatchObject({
+          type: "message",
+          message: user("queued during run"),
+        });
+        expect(await store.listItems(ref)).toHaveLength(1); // drained, never chained
+      });
+
+      it("serializes archive with intake into exactly one legal winner", async () => {
+        const ref = await newSession();
+        const [archive, intake] = await Promise.allSettled([
+          store.archiveSession(ref),
+          store.intake(ref, user("race")),
+        ]);
+
+        if (archive.status === "fulfilled") {
+          expect(intake).toMatchObject({ reason: expect.any(ArchivedError) });
+          expect(await store.getSession(ref)).toEqual(archive.value);
+        } else {
+          expect(archive.reason).toBeInstanceOf(SessionNotIdleError);
+          expect(intake).toMatchObject({ status: "fulfilled", value: { kind: "started" } });
+          expect("archivedAt" in (await store.getSession(ref))!).toBe(false);
+        }
+      });
+
+      it("hides archived rows from the default list and includes them on request", async () => {
+        const archivedRef = await newSession();
+        clock.advance(1_000);
+        const activeRef = await newSession();
+        await store.archiveSession(archivedRef);
+
+        const active = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(active.map((session) => session.sessionId)).toContain(activeRef.sessionId);
+        expect(active.map((session) => session.sessionId)).not.toContain(archivedRef.sessionId);
+
+        const all = await store.listSessions({
+          namespace: DEFAULT_NAMESPACE,
+          limit: 10,
+          includeArchived: true,
+        });
+        expect(all.map((session) => session.sessionId)).toEqual([
+          activeRef.sessionId,
+          archivedRef.sessionId,
+        ]);
+        expect(all.find((session) => session.sessionId === archivedRef.sessionId)).toEqual(
+          await store.getSession(archivedRef),
+        );
+      });
+
+      it("treats an unknown or foreign archive target as absent", async () => {
+        const ref = await newSession({ namespace: "tenant-a" });
+        expect(
+          await store.archiveSession({ namespace: "tenant-a", sessionId: "nope" }),
+        ).toBeUndefined();
+        expect(
+          await store.archiveSession({ namespace: "tenant-b", sessionId: ref.sessionId }),
+        ).toBeUndefined();
+        expect("archivedAt" in (await store.getSession(ref))!).toBe(false);
       });
     });
 
