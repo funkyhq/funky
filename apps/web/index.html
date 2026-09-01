@@ -2,9 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Deliberately the .ico, not logo.svg: browsers prefer a declared SVG
+         favicon and would scale the mark down to 16px themselves, averaging it
+         into a smear. The .ico carries frames hinted at 16/32/48. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#1B45E8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>web</title>
+    <meta name="description" content="A browser console for the Funky API." />
+    <title>Funky Console</title>
   </head>
   <body>
     <div id="root"></div>

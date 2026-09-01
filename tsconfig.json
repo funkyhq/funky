@@ -14,5 +14,8 @@
     "apps/worker/test/**/*.ts",
     "packages/**/src/**/*.ts",
     "packages/**/test/**/*.ts"
-  ]
+  ],
+  /* apps/web is a DOM + JSX program with its own tsconfigs; this one is
+     node-typed and jsx-less. `pnpm typecheck` runs that project too. */
+  "exclude": ["apps/web"]
 }

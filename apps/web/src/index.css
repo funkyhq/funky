@@ -1,21 +1,52 @@
+/* apps/web/src/index.css
+   Design tokens + reset for the Funky Console. Every surface, line, and
+   motion value in the app resolves to a token here so light and dark stay
+   in step and nothing hard-codes a colour. */
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* Surfaces */
+  --bg: #fafbff;
+  --bg-elev: #ffffff;
+  --bg-sunken: #f1f3fa;
+  --bg-blur: rgba(250, 251, 255, 0.74);
+  --hover: rgba(16, 20, 38, 0.045);
 
-  --sans: system-ui, "Segoe UI", Roboto, sans-serif;
-  --heading: system-ui, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Lines */
+  --border: #e4e8f2;
+  --border-strong: #d0d6e6;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
+  /* Text */
+  --text: #101426;
+  --text-2: #4d5468;
+  --text-3: #838b9e;
+
+  /* Accent — the logo's palette: cobalt carries every interactive state,
+     saffron echoes the mark's two leaf nodes. */
+  --accent: #1b45e8;
+  --accent-2: #4d76ff;
+  --saffron: #ffc531;
+  --accent-soft: rgba(27, 69, 232, 0.08);
+  --accent-line: rgba(27, 69, 232, 0.24);
+  --accent-glow: rgba(27, 69, 232, 0.13);
+  --brand-shadow: rgba(27, 69, 232, 0.34);
+
+  --dot: rgba(16, 20, 38, 0.07);
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 48, 0.05);
+  --shadow-lg: 0 18px 40px -22px rgba(16, 24, 48, 0.24), 0 2px 8px -4px rgba(16, 24, 48, 0.08);
+
+  /* Shape, motion, layout */
+  --r-sm: 8px;
+  --r-md: 11px;
+  --r-lg: 14px;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur: 220ms;
+  --sidebar-w: 252px;
+
+  --sans: system-ui, "Segoe UI", Roboto, Helvetica, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  font: 15px/1.5 var(--sans);
   color-scheme: light dark;
   color: var(--text);
   background: var(--bg);
@@ -23,40 +54,41 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
+    --bg: #0a0c14;
+    --bg-elev: #141824;
+    --bg-sunken: #0e111b;
+    --bg-blur: rgba(10, 12, 20, 0.72);
+    --hover: rgba(255, 255, 255, 0.05);
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --border: #212637;
+    --border-strong: #2f3650;
+
+    --text: #f2f4fa;
+    --text-2: #a3aabf;
+    --text-3: #6b7288;
+
+    /* Cobalt at full saturation is too dark to read on this background, so
+       the accent lightens; the tile in logo.svg keeps the brand cobalt. */
+    --accent: #829eff;
+    --accent-2: #b6c6ff;
+    --saffron: #ffc531;
+    --accent-soft: rgba(130, 158, 255, 0.13);
+    --accent-line: rgba(130, 158, 255, 0.3);
+    --accent-glow: rgba(45, 85, 230, 0.26);
+    --brand-shadow: rgba(27, 69, 232, 0.55);
+
+    --dot: rgba(255, 255, 255, 0.055);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 18px 40px -22px rgba(0, 0, 0, 0.7), 0 2px 8px -4px rgba(0, 0, 0, 0.5);
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+* {
   box-sizing: border-box;
 }
 
@@ -64,46 +96,37 @@ body {
   margin: 0;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+#root {
+  min-height: 100svh;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
+h1,
+h2,
+h3,
 p {
   margin: 0;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+a {
+  color: inherit;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 5px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

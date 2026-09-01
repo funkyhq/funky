@@ -1,0 +1,254 @@
+.sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 100svh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg-elev), var(--bg-sunken));
+}
+
+/* Ambient wash behind the brand, so the sidebar reads as lit from the top. */
+.sidebar-glow {
+  position: absolute;
+  inset: -110px -45% auto -45%;
+  z-index: 0;
+  height: 340px;
+  pointer-events: none;
+  background: radial-gradient(50% 50% at 50% 50%, var(--accent-glow), transparent 72%);
+}
+
+.sidebar-head,
+.nav,
+.sidebar-foot {
+  position: relative;
+  z-index: 1;
+}
+
+/* Brand ------------------------------------------------------------------ */
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 17px 16px 13px;
+}
+
+.brand-mark {
+  flex: none;
+  display: block;
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 5px 12px var(--brand-shadow));
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.brand-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.15px;
+  color: var(--text);
+}
+
+.brand-sub {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Sections --------------------------------------------------------------- */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 6px 10px 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.nav-slot {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-group {
+  padding: 15px 12px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* One rail for the whole list: it slides to the active item. */
+.nav-rail {
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 2.5px;
+  border-radius: 2px;
+  pointer-events: none;
+  background: var(--accent);
+  transition:
+    transform 340ms var(--ease),
+    height 340ms var(--ease),
+    opacity 160ms linear;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--text-2);
+  animation: nav-in 420ms var(--ease) backwards;
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.nav-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.nav-item[aria-current="page"] {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.nav-icon {
+  flex: none;
+  color: var(--text-3);
+  transition:
+    color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.nav-item:hover .nav-icon {
+  color: var(--text-2);
+  transform: scale(1.08);
+}
+
+.nav-item[aria-current="page"] .nav-icon {
+  color: var(--accent);
+}
+
+@keyframes nav-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+
+/* Namespace -------------------------------------------------------------- */
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ns {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+
+.ns-mark {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-line);
+  border-radius: 8px;
+  font: 600 12px var(--mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ns-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.ns-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.ns-value {
+  overflow: hidden;
+  font: 500 13px var(--mono);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow: the sidebar becomes a header — brand left, namespace right, the
+   sections a scrollable row underneath. */
+@media (max-width: 880px) {
+  .sidebar {
+    /* Relative, not static: the glow is absolute with -45% insets, and it
+       escapes `overflow: hidden` unless this stays its containing block. */
+    position: relative;
+    height: auto;
+    display: grid;
+    grid-template-areas: "head foot" "nav nav";
+    grid-template-columns: 1fr auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-head {
+    grid-area: head;
+  }
+
+  .nav {
+    grid-area: nav;
+    flex-direction: row;
+    align-items: center;
+    padding: 2px 10px 12px;
+    overflow-x: auto;
+  }
+
+  .sidebar-foot {
+    grid-area: foot;
+    margin: 0;
+    padding: 12px 14px;
+    border-top: none;
+  }
+
+  .nav-group,
+  .nav-rail {
+    display: none;
+  }
+}
