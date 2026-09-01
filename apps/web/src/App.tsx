@@ -1,6 +1,7 @@
 // apps/web/src/App.tsx
 // The console shell: a persistent sidebar beside one routed pane. Sections
-// live in nav.ts; the route is the URL hash, so every section is linkable.
+// live in nav.ts — including which page each renders — and the route is the
+// URL hash, so every section is linkable.
 import { useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ExternalLinkIcon } from "./components/Icons";
@@ -37,7 +38,11 @@ function App() {
         </header>
 
         <div className="content">
-          <Placeholder key={active.id} item={active} />
+          {active.Page ? (
+            <active.Page key={active.id} />
+          ) : (
+            <Placeholder key={active.id} item={active} />
+          )}
         </div>
       </main>
     </div>

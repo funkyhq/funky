@@ -72,6 +72,10 @@
   display: grid;
   place-items: center;
   padding: 56px 24px 76px;
+  /* A page's usable width is the pane's, not the window's — the sidebar
+     takes 252px of it. Pages that reflow (a table becoming cards) query
+     this container, so they switch on the space they actually have. */
+  container: pane / inline-size;
 }
 
 /* Dot grid, faded out downward, so the pane has texture without noise. */

@@ -64,6 +64,16 @@ export function SessionIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Reload a list. */
+export function RefreshIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke width={15} height={15} {...props}>
+      <path d="M20.5 12A8.5 8.5 0 1 1 18 6" />
+      <path d="M21.5 2.5V6H18" />
+    </Stroke>
+  );
+}
+
 /** Topbar docs link. */
 export function ExternalLinkIcon(props: SVGProps<SVGSVGElement>) {
   return (
