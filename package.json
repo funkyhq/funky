@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm -F web typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r --if-present test",
