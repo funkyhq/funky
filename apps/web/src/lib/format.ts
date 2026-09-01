@@ -22,7 +22,11 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   const at = new Date(iso).getTime();
   if (Number.isNaN(at)) return iso;
 
-  let value = (at - now) / 1000; // negative = in the past
+  // Every timestamp here describes something that has already happened, so a
+  // positive delta is our clock being behind — a reader on a coarse tick, or
+  // skew against the api's — and never the future. Clamped to 0, which
+  // formats as "now"; the hover text still carries the exact instant.
+  let value = Math.min(at - now, 0) / 1000; // negative = in the past
   for (const [unit, per] of UNITS) {
     if (Math.abs(value) < per) return RELATIVE.format(Math.round(value), unit);
     value /= per;

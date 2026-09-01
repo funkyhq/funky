@@ -11,7 +11,8 @@ import { useEffect, useRef, useState } from "react";
 import { type AgentConfig, listAgentConfigs } from "../lib/api";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { useNow } from "../lib/useNow";
-import { AgentIcon, RefreshIcon } from "../components/Icons";
+import { AgentIcon, PlusIcon, RefreshIcon } from "../components/Icons";
+import { CreateAgentConfig } from "./CreateAgentConfig";
 import "./AgentConfigs.css";
 
 type State =
@@ -41,6 +42,11 @@ export function AgentConfigs() {
   // The in-flight next-page request, if any. Held so a reload can cancel
   // it: its rows belong to the walk being replaced, not to the new one.
   const pagination = useRef<AbortController | null>(null);
+  const [creating, setCreating] = useState(false);
+  // The header's Create button, which every state of this page renders. It
+  // is where the dialog puts focus back when what opened it was the empty
+  // state's button — the row it creates is what replaces that button.
+  const createButton = useRef<HTMLButtonElement>(null);
 
   // The reset lives here rather than in the effect: the click is what makes
   // this loading again, and the effect's job is only to fetch.
@@ -73,6 +79,23 @@ export function AgentConfigs() {
       pagination.current?.abort();
     };
   }, [reloads]);
+
+  // A new config is the newest, and this list is newest-first, so it goes on
+  // the front. The cursor is a keyset rather than an offset, so a row
+  // arriving at the head leaves the rest of the walk exactly where it was —
+  // there is nothing to re-fetch.
+  function added(config: AgentConfig) {
+    setCreating(false);
+    // Off the ready path there is no list to add it to; the load that was
+    // already needed is what will show it.
+    if (state.status !== "ready") {
+      reload();
+      return;
+    }
+    setState((prev) =>
+      prev.status === "ready" ? { ...prev, configs: [config, ...prev.configs] } : prev,
+    );
+  }
 
   // The next page, appended. `cursor` is the previous page's last id — the
   // keyset the api hands back, not an offset, so rows created meanwhile
@@ -109,15 +132,26 @@ export function AgentConfigs() {
     <section className="agents">
       <header className="agents-head">
         <h1 className="agents-title">Agent configs</h1>
-        <button
-          className="btn"
-          type="button"
-          onClick={reload}
-          disabled={state.status === "loading"}
-        >
-          <RefreshIcon />
-          Refresh
-        </button>
+        <div className="agents-actions">
+          <button
+            className="btn"
+            type="button"
+            onClick={reload}
+            disabled={state.status === "loading"}
+          >
+            <RefreshIcon />
+            Refresh
+          </button>
+          <button
+            className="btn btn-primary"
+            type="button"
+            ref={createButton}
+            onClick={() => setCreating(true)}
+          >
+            <PlusIcon />
+            Create
+          </button>
+        </div>
       </header>
 
       {state.status === "error" ? (
@@ -136,9 +170,13 @@ export function AgentConfigs() {
           </span>
           <p className="notice-title">No agent configs yet</p>
           <p className="notice-body">
-            A config is the model and system prompt a session runs with. Create one with{" "}
-            <code>POST /v1/agent-configs</code>.
+            A config is the model and system prompt a session runs with. Create the first one, or
+            post it yourself to <code>/v1/agent-configs</code>.
           </p>
+          <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}>
+            <PlusIcon />
+            Create agent config
+          </button>
         </div>
       ) : (
         <div className="table-wrap">
@@ -192,6 +230,14 @@ export function AgentConfigs() {
           </table>
         </div>
       )}
+
+      {creating ? (
+        <CreateAgentConfig
+          onCreated={added}
+          onClose={() => setCreating(false)}
+          returnFocus={createButton}
+        />
+      ) : null}
 
       {state.status === "ready" && state.hasMore ? (
         <div className="agents-more">

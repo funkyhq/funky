@@ -40,37 +40,15 @@
   color: var(--text-2);
 }
 
-/* Button ----------------------------------------------------------------- */
+/* Actions ---------------------------------------------------------------- */
 
-.btn {
-  display: inline-flex;
+/* .btn itself lives in index.css — the modal uses it too, and a shared
+   control shouldn't be defined by one page's stylesheet. */
+.agents-actions {
+  display: flex;
   flex: none;
   align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-elev);
-  font: 500 13px var(--sans);
-  color: var(--text-2);
-  cursor: pointer;
-  transition:
-    color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease),
-    transform var(--dur) var(--ease);
-}
-
-.btn:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
-}
-
-.btn:disabled {
-  opacity: 0.55;
-  cursor: default;
+  gap: 10px;
 }
 
 /* Table ------------------------------------------------------------------ */

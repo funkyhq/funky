@@ -1,7 +1,8 @@
 /* apps/web/src/index.css
-   Design tokens + reset for the Funky Console. Every surface, line, and
-   motion value in the app resolves to a token here so light and dark stay
-   in step and nothing hard-codes a colour. */
+   Design tokens, reset, and the one control shared app-wide (.btn) for the
+   Funky Console. Every surface, line, and motion value in the app resolves
+   to a token here so light and dark stay in step and nothing hard-codes a
+   colour. */
 
 :root {
   /* Surfaces */
@@ -25,6 +26,8 @@
   --accent: #1b45e8;
   --accent-2: #4d76ff;
   --saffron: #ffc531;
+  --accent-fill: #1b45e8;
+  --accent-fill-hover: #1739c4;
   --accent-soft: rgba(27, 69, 232, 0.08);
   --accent-line: rgba(27, 69, 232, 0.24);
   --accent-glow: rgba(27, 69, 232, 0.13);
@@ -34,6 +37,10 @@
      health signal, not a brand accent, so it does not borrow saffron. */
   --ok: #15a34a;
   --ok-glow: rgba(21, 163, 74, 0.2);
+
+  /* Red is likewise a signal, not a brand colour: it says the api refused,
+     and nothing else in the console is allowed to borrow it. */
+  --bad: #cf2a1e;
 
   --dot: rgba(16, 20, 38, 0.07);
 
@@ -81,6 +88,8 @@
     --accent: #829eff;
     --accent-2: #b6c6ff;
     --saffron: #ffc531;
+    --accent-fill: #2d55e6;
+    --accent-fill-hover: #3d67f5;
     --accent-soft: rgba(130, 158, 255, 0.13);
     --accent-line: rgba(130, 158, 255, 0.3);
     --accent-glow: rgba(45, 85, 230, 0.26);
@@ -88,6 +97,8 @@
 
     --ok: #4ade80;
     --ok-glow: rgba(74, 222, 128, 0.2);
+
+    --bad: #ff8f84;
 
     --dot: rgba(255, 255, 255, 0.055);
 
@@ -127,6 +138,59 @@ a {
 
 ::selection {
   background: var(--accent-soft);
+}
+
+/* Button ------------------------------------------------------------------
+   One pill, two weights: the default reads as secondary, .btn-primary as
+   the action a surface exists to perform. Shared by the pages and the
+   modal, so it sits here rather than in either. */
+
+.btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  font: 500 13px var(--sans);
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Filled with the brand cobalt, which is dark in both schemes — so the
+   label is white in both, not var(--text). */
+.btn-primary {
+  border-color: transparent;
+  background: var(--accent-fill);
+  color: #ffffff;
+  box-shadow: 0 1px 2px var(--brand-shadow);
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--accent-fill-hover);
+  color: #ffffff;
+  box-shadow: 0 6px 16px -6px var(--brand-shadow);
 }
 
 @media (prefers-reduced-motion: reduce) {

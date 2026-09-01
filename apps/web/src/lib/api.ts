@@ -73,7 +73,22 @@ async function failure(res: Response): Promise<ApiError> {
   );
 }
 
-async function get<T>(
+/** One call, with every failure already shaped: an abort stays an abort,
+ *  an unreachable api says so, and anything else carries the api's own
+ *  message (see failure()). */
+async function request<T>(path: string, init: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers: { accept: "application/json", ...init.headers } });
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
+    throw new ApiError(UNREACHABLE);
+  }
+  if (!res.ok) throw await failure(res);
+  return (await res.json()) as T;
+}
+
+function get<T>(
   path: string,
   params: Record<string, string | undefined>,
   signal?: AbortSignal,
@@ -82,16 +97,19 @@ async function get<T>(
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) query.set(key, value);
   }
+  return request<T>(`${path}?${query}`, { signal });
+}
 
-  let res: Response;
-  try {
-    res = await fetch(`${path}?${query}`, { headers: { accept: "application/json" }, signal });
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
-    throw new ApiError(UNREACHABLE);
-  }
-  if (!res.ok) throw await failure(res);
-  return (await res.json()) as T;
+function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    // JSON.stringify drops undefined properties, so an optional field left
+    // unset is absent from the body rather than sent as null — which is
+    // what the api's schemas mean by optional.
+    body: JSON.stringify(body),
+    signal,
+  });
 }
 
 /**
@@ -109,6 +127,29 @@ export function listAgentConfigs(
       limit: opts.limit === undefined ? undefined : String(opts.limit),
       after: opts.after,
     },
+    opts.signal,
+  );
+}
+
+/** The create body, minus the namespace this console pins for every call. */
+export type CreateAgentConfigInput = {
+  inference: InferenceConfig;
+  systemPrompt: string;
+  metadata?: unknown;
+};
+
+/**
+ * Creates an agent config and returns it at version 1. The namespace rides
+ * in the BODY here — the create route takes the core request as its wire
+ * shape — where the other routes take it as ?namespace=.
+ */
+export function createAgentConfig(
+  input: CreateAgentConfigInput,
+  opts: { signal?: AbortSignal } = {},
+): Promise<AgentConfig> {
+  return post<AgentConfig>(
+    "/v1/agent-configs",
+    { namespace: DEFAULT_NAMESPACE, ...input },
     opts.signal,
   );
 }

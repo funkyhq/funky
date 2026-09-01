@@ -74,6 +74,25 @@ export function RefreshIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Create — the one action that adds a row to a list. */
+export function PlusIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke width={15} height={15} {...props}>
+      <path d="M12 5v14M5 12h14" />
+    </Stroke>
+  );
+}
+
+/** The affordance on a <select>, which draws no arrow of its own once its
+ *  native appearance is dropped for the shared control styling. */
+export function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke width={14} height={14} {...props}>
+      <path d="M5.5 9 12 15.5 18.5 9" />
+    </Stroke>
+  );
+}
+
 /** Topbar docs link. */
 export function ExternalLinkIcon(props: SVGProps<SVGSVGElement>) {
   return (
