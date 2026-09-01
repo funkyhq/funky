@@ -143,6 +143,7 @@ const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
     namespace: row.namespace,
     ...unwrapped(row.metadata),
     createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
     ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
@@ -421,6 +422,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async createEnvConfig(req) {
       const parsed = CreateEnvConfigRequest.parse(req);
       const id = randomUUID();
+      const timestamp = now();
       await db.insert(envConfigs).values({
         id,
         // Materialized at create — resolved decisions, not restatable defaults.
@@ -428,7 +430,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         network: parsed.network ?? { type: "unrestricted" },
         packages: parsed.packages ?? {},
         metadata: wrap(parsed.metadata),
-        createdAt: now(),
+        createdAt: timestamp,
+        updatedAt: timestamp,
       });
       return EnvConfigRef.parse({ namespace: parsed.namespace, envConfigId: id });
     },
@@ -458,7 +461,11 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         return row === undefined ? undefined : toEnvConfig(row);
       }
 
-      const [row] = await db.update(envConfigs).set(updates).where(mutable).returning();
+      const [row] = await db
+        .update(envConfigs)
+        .set({ ...updates, updatedAt: now() })
+        .where(mutable)
+        .returning();
       if (row !== undefined) return toEnvConfig(row);
 
       // An unmatched mutation is either unknown/foreign or archived. Rows

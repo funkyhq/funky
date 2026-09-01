@@ -91,6 +91,8 @@ export const envConfigs = pgTable(
     packages: jsonb("packages").$type<Packages>().notNull(),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    // Latest recipe edit; archive is a lifecycle mark, not a recipe edit.
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
     // The terminal state, set once: null = active. Existing sessions use
     // their snapshot, while this mark closes the recipe to new sessions.
     archivedAt: timestamp("archived_at", { withTimezone: true }),

@@ -42,6 +42,7 @@ describe("POST /v1/env-configs", () => {
     expect(body.namespace).toBe("default");
     expect(typeof body.id).toBe("string");
     expect(typeof body.createdAt).toBe("string");
+    expect(body.updatedAt).toBe(body.createdAt);
   });
 
   it("stores an explicit recipe verbatim and GET returns the same row", async () => {
@@ -160,6 +161,7 @@ describe("POST /v1/env-configs/:id", () => {
     expect(updated).toEqual({
       ...created,
       packages: { npm: ["zod@4"] },
+      updatedAt: expect.any(String),
     });
     expect(await (await get(app, `/v1/env-configs/${created.id}`)).json()).toEqual(updated);
   });
