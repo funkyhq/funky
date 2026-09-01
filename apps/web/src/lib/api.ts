@@ -88,20 +88,34 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** The query string for the params that were given, or nothing at all. */
+function search(params: Record<string, string | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, value);
+  }
+  const rendered = query.toString();
+  return rendered === "" ? "" : `?${rendered}`;
+}
+
 function get<T>(
   path: string,
   params: Record<string, string | undefined>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) query.set(key, value);
-  }
-  return request<T>(`${path}?${query}`, { signal });
+  return request<T>(path + search(params), { signal });
 }
 
-function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  return request<T>(path, {
+// Params as well as a body: the create route takes its namespace in the
+// body (the core request IS the wire shape), every id-addressed route takes
+// it as ?namespace=.
+function post<T>(
+  path: string,
+  body: unknown,
+  params: Record<string, string | undefined> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  return request<T>(path + search(params), {
     method: "POST",
     headers: { "content-type": "application/json" },
     // JSON.stringify drops undefined properties, so an optional field left
@@ -150,6 +164,47 @@ export function createAgentConfig(
   return post<AgentConfig>(
     "/v1/agent-configs",
     { namespace: DEFAULT_NAMESPACE, ...input },
+    {},
+    opts.signal,
+  );
+}
+
+/** One config at its current version, by id. What a deep link resolves
+ *  against when the row isn't on a page the list has walked to yet. */
+export function getAgentConfig(
+  id: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<AgentConfig> {
+  return get<AgentConfig>(
+    `/v1/agent-configs/${encodeURIComponent(id)}`,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+/**
+ * A partial update, which lands as the NEXT version rather than a rewrite.
+ * Absent fields are left as they were — so what isn't sent is preserved,
+ * metadata included — and any field that IS sent bumps the version even if
+ * its value is unchanged, which is why callers send only what differs.
+ */
+export type UpdateAgentConfigInput = {
+  inference?: InferenceConfig;
+  systemPrompt?: string;
+  /** Optimistic concurrency: the version this edit was made against. The
+   *  api answers 409 if it is no longer the current one. */
+  version?: number;
+};
+
+export function updateAgentConfig(
+  id: string,
+  input: UpdateAgentConfigInput,
+  opts: { signal?: AbortSignal } = {},
+): Promise<AgentConfig> {
+  return post<AgentConfig>(
+    `/v1/agent-configs/${encodeURIComponent(id)}`,
+    input,
+    { namespace: DEFAULT_NAMESPACE },
     opts.signal,
   );
 }

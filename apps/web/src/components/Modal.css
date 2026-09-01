@@ -95,6 +95,24 @@ body:has(dialog.modal[open]) {
   scrollbar-width: thin;
 }
 
+/* Body copy, for a dialog that has something to say rather than something
+   to collect. */
+.prose {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+/* Any literal in a body — an env var, an endpoint, an id — reads as one. */
+.modal-body code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  font: 500 12px var(--mono);
+  color: var(--text);
+}
+
 .modal-foot {
   display: flex;
   flex: none;
@@ -105,6 +123,15 @@ body:has(dialog.modal[open]) {
   border-top: 1px solid var(--border);
   background: var(--bg-sunken);
   border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+
+/* The api's own refusal, beside the actions that caused it. margin-right
+   takes the footer's spare width so the buttons stay right-aligned. */
+.form-failure {
+  margin-right: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--bad);
 }
 
 @keyframes modal-in {

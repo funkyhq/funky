@@ -8,13 +8,13 @@ import { ExternalLinkIcon } from "./components/Icons";
 import { Placeholder } from "./pages/Placeholder";
 import { useHashRoute } from "./lib/useHashRoute";
 import { DEFAULT_NAMESPACE } from "./lib/api";
-import { DEFAULT_ROUTE, NAV_ITEMS, resolveNavItem } from "./nav";
+import { DEFAULT_ROUTE, NAV_ITEMS, resolveRoute } from "./nav";
 import "./App.css";
 
 const REPO_URL = "https://github.com/funkyhq/funky#readme";
 
 function App() {
-  const active = resolveNavItem(useHashRoute());
+  const { item: active, rest } = resolveRoute(useHashRoute());
 
   // Land on a real route so the first view is shareable. replaceState keeps
   // it out of history; the active item already resolves to the same section.
@@ -39,7 +39,10 @@ function App() {
 
         <div className="content">
           {active.Page ? (
-            <active.Page key={active.id} />
+            // Keyed on the section, not the whole route: addressing something
+            // inside a section is a state of that page, not a new one, so it
+            // must not throw away what the page has already loaded.
+            <active.Page key={active.id} route={rest} />
           ) : (
             <Placeholder key={active.id} item={active} />
           )}

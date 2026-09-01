@@ -12,7 +12,9 @@ import { type AgentConfig, listAgentConfigs } from "../lib/api";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { AgentIcon, PlusIcon, RefreshIcon } from "../components/Icons";
+import type { PageProps } from "../nav";
 import { CreateAgentConfig } from "./CreateAgentConfig";
+import { EditAgentConfig } from "./EditAgentConfig";
 import "./AgentConfigs.css";
 
 type State =
@@ -30,7 +32,16 @@ const TICK_MS = 30_000;
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export function AgentConfigs() {
+/** This section's own route. Rows link into it by id, and closing the editor
+ *  goes back to it — one place that spells the section's hash. */
+const SECTION = "#/agent";
+
+/**
+ * `route` is the config id below this section, so `#/agent/<id>` IS the
+ * editor being open: the dialog is a state of this page rather than a page
+ * of its own, and stays linkable, back-navigable and reloadable.
+ */
+export function AgentConfigs({ route }: PageProps) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [more, setMore] = useState<{ busy: boolean; error?: string }>({ busy: false });
   // Bumped to re-run the effect — refresh and retry both go through
@@ -79,6 +90,48 @@ export function AgentConfigs() {
       pagination.current?.abort();
     };
   }, [reloads]);
+
+  // Whether the editor's history entry is one a row click pushed, rather
+  // than where the page was opened. Closing has to UNDO a push — otherwise
+  // Back returns to the dialog the user just closed — but must not walk out
+  // of the app when there is no entry of ours behind it.
+  const pushed = useRef(false);
+  const previousRoute = useRef(route);
+  useEffect(() => {
+    pushed.current = previousRoute.current === "" && route !== "";
+    previousRoute.current = route;
+  }, [route]);
+
+  // The row the editor is open on, when this page already has it. A deep
+  // link can name one from a page the walk hasn't reached; the dialog
+  // fetches that itself rather than making the list chase it.
+  const editing = state.status === "ready" ? state.configs.find((c) => c.id === route) : undefined;
+
+  /** Leaves `#/agent/<id>` for `#/agent` without leaving a dialog behind
+   *  the Back button. */
+  function closeEditor() {
+    if (pushed.current) {
+      window.history.back();
+      return;
+    }
+    // Opened straight at this route — a deep link or a reload — so there is
+    // nothing of ours to go back to and the entry is rewritten instead.
+    window.history.replaceState(null, "", SECTION);
+    // replaceState fires no hashchange, and the route is read from one.
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  }
+
+  // An update lands as a new version of the same config, so the row is
+  // replaced where it is: this list is ordered by creation, which an edit
+  // does not change.
+  function saved(config: AgentConfig) {
+    setState((prev) =>
+      prev.status === "ready"
+        ? { ...prev, configs: prev.configs.map((c) => (c.id === config.id ? config : c)) }
+        : prev,
+    );
+    closeEditor();
+  }
 
   // A new config is the newest, and this list is newest-first, so it goes on
   // the front. The cursor is a keyset rather than an offset, so a row
@@ -210,7 +263,12 @@ export function AgentConfigs() {
                 : state.configs.map((config) => (
                     <tr key={config.id}>
                       <td>
-                        <span className="id">{config.id}</span>
+                        {/* One real anchor, stretched over the row by CSS:
+                            the whole row is clickable, and it is still a
+                            link — focusable, middle-clickable, copyable. */}
+                        <a className="id row-link" href={`${SECTION}/${config.id}`}>
+                          {config.id}
+                        </a>
                       </td>
                       <td>
                         <span className="model">{config.inference.model}</span>
@@ -238,6 +296,17 @@ export function AgentConfigs() {
           returnFocus={createButton}
         />
       ) : null}
+
+      {route === "" ? null : (
+        <EditAgentConfig
+          key={route}
+          id={route}
+          config={editing}
+          onSaved={saved}
+          onClose={closeEditor}
+          returnFocus={createButton}
+        />
+      )}
 
       {state.status === "ready" && state.hasMore ? (
         <div className="agents-more">
