@@ -102,9 +102,10 @@ export interface Store {
   getEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
   /**
    * Partially update one namespace's environment config in place. Omitted
-   * fields are preserved; an empty request is a read-like no-op. Namespace
-   * is immutable and carried by the ref. An unknown or foreign ref is
-   * indistinguishable from absence and returns undefined.
+   * fields are preserved; a real edit advances updatedAt, while an empty
+   * request is a read-like no-op that preserves it. Namespace is immutable
+   * and carried by the ref. An unknown or foreign ref is indistinguishable
+   * from absence and returns undefined.
    *
    * An archived config is read-only: a mutation throws ArchivedError. An
    * empty request remains a read and returns the archived row unchanged.
@@ -118,8 +119,9 @@ export interface Store {
   /**
    * Archive one namespace's environment config. The row stays readable and
    * sessions that already copied its recipe keep running; future writes and
-   * references from new sessions are refused. There is no unarchive, making
-   * repeat calls idempotent: they return the original archivedAt.
+   * references from new sessions are refused. Archiving does not edit the
+   * recipe, so updatedAt is preserved. There is no unarchive, making repeat
+   * calls idempotent: they return the original archivedAt.
    */
   archiveEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
   /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */

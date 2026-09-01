@@ -172,6 +172,7 @@ describe("env configs", () => {
       namespace: "tenant-a",
       metadata: { envId: "env_014588" },
       createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-12T12:00:00Z",
     };
     expect(roundTrip(EnvConfig, config)).toEqual(config);
   });
@@ -183,6 +184,7 @@ describe("env configs", () => {
       packages: {},
       namespace: "tenant-a",
       createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-12T12:00:00Z",
       archivedAt: "2026-08-13T12:00:00Z",
     };
     expect(roundTrip(EnvConfig, config)).toEqual(config);
@@ -195,6 +197,7 @@ describe("env configs", () => {
       packages: {},
       namespace: "tenant-a",
       createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-11T12:00:00Z",
     };
     expect(EnvConfig.safeParse({ ...config, archivedAt: null }).success).toBe(false);
     expect(EnvConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
@@ -266,6 +269,7 @@ describe("env configs", () => {
       namespace: "tenant-a",
       packages: {},
       createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-11T12:00:00Z",
     });
     expect(result.success).toBe(false);
   });
@@ -348,7 +352,15 @@ describe("sessions", () => {
     }
     // The row is the recipe plus its envelope, nothing else.
     expect(Object.keys(EnvConfig.shape).sort()).toEqual(
-      [...recipe, "namespace", "envConfigId", "metadata", "createdAt", "archivedAt"].sort(),
+      [
+        ...recipe,
+        "namespace",
+        "envConfigId",
+        "metadata",
+        "createdAt",
+        "updatedAt",
+        "archivedAt",
+      ].sort(),
     );
   });
 

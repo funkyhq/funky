@@ -15,7 +15,8 @@ import { InferenceConfig } from "./inference";
  *
  * Request shapes (Create*Request, after InferenceRequest and
  * StreamRequest) become stored rows verbatim, plus store-minted envelope
- * fields (id/createdAt, and version/updatedAt on mutable agent configs).
+ * fields (id/createdAt, updatedAt on mutable configs, and version on agent
+ * configs).
  * Two rules keep every row one-shaped:
  * - Rows store decisions, not rules: a default that is RESOLVED at
  *   creation time is materialized into the stored row (network →
@@ -186,6 +187,9 @@ export const EnvConfig = EnvConfigRef.extend({
   ...EnvConfigSnapshot.shape,
   metadata: JsonValue.optional(),
   createdAt: z.iso.datetime(),
+  // The latest recipe edit. Equal to createdAt until the first update;
+  // archiving retires the recipe without editing it, so it does not move.
+  updatedAt: z.iso.datetime(),
   // Set once when the recipe is retired. Absence is the active state;
   // archive is terminal, so there is no boolean state to toggle back.
   archivedAt: z.iso.datetime().optional(),

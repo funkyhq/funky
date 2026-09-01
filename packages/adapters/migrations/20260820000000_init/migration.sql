@@ -56,6 +56,9 @@ CREATE TABLE env_configs (
   packages jsonb NOT NULL,
   metadata jsonb,
   created_at timestamptz NOT NULL,
+  -- Latest recipe edit; equal to created_at until the first update.
+  -- Archive is a lifecycle mark rather than an edit, so it does not move.
+  updated_at timestamptz NOT NULL,
   -- Retires the recipe without deleting it. Existing sessions have their
   -- own copy; NULL means no archive event, and the mark is never cleared.
   archived_at timestamptz,

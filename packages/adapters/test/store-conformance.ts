@@ -303,6 +303,7 @@ export function describeStoreConformance(
         const config = await store.getEnvConfig(ref);
         expect(config?.network).toEqual({ type: "unrestricted" });
         expect(config?.packages).toEqual({});
+        expect(config?.updatedAt).toBe(config?.createdAt);
       });
 
       it("preserves a provided recipe verbatim", async () => {
@@ -322,6 +323,7 @@ export function describeStoreConformance(
           metadata: { stage: "initial" },
         });
         const before = await store.getEnvConfig(ref);
+        clock.advance(1_000);
 
         const withPackages = await store.updateEnvConfig(ref, {
           packages: { npm: ["zod@4"] },
@@ -329,7 +331,10 @@ export function describeStoreConformance(
         expect(withPackages).toEqual({
           ...before,
           packages: { npm: ["zod@4"] },
+          updatedAt: withPackages?.updatedAt,
         });
+        expect(Date.parse(withPackages!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
+        clock.advance(1_000);
 
         const updated = await store.updateEnvConfig(ref, {
           network: { type: "none" },
@@ -339,7 +344,9 @@ export function describeStoreConformance(
           ...withPackages,
           network: { type: "none" },
           metadata: null,
+          updatedAt: updated?.updatedAt,
         });
+        expect(Date.parse(updated!.updatedAt)).toBeGreaterThan(Date.parse(withPackages!.updatedAt));
         expect(await store.getEnvConfig(ref)).toEqual(updated);
       });
 
@@ -623,6 +630,7 @@ export function describeStoreConformance(
         const archived = await store.archiveEnvConfig(ref);
 
         expect(archived).toMatchObject({ ...before, archivedAt: expect.any(String) });
+        expect(archived?.updatedAt).toBe(before?.updatedAt);
         expect(await store.getEnvConfig(ref)).toEqual(archived);
       });
 
