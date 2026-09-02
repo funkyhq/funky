@@ -3,6 +3,7 @@ import type {
   AssistantMessage,
   JsonValue,
   ProviderEvent,
+  ProviderMetadata,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -87,6 +88,7 @@ export async function inference(
           partAt(event.contentIndex, "text").text += event.delta;
           break;
         case "text_end":
+          attach(partAt(event.contentIndex, "text"), event.providerMetadata);
           break;
         case "thinking_start":
           parts[event.contentIndex] = { type: "thinking", thinking: "" };
@@ -94,17 +96,9 @@ export async function inference(
         case "thinking_delta":
           partAt(event.contentIndex, "thinking").thinking += event.delta;
           break;
-        case "thinking_end": {
-          const part = partAt(event.contentIndex, "thinking");
-          if (event.signature !== undefined) part.thinkingSignature = event.signature;
-          if (event.redacted) {
-            // Redacted blocks carry no visible thinking; the opaque payload
-            // rides in the signature so replay reconstructs redacted_thinking.
-            part.redacted = true;
-            part.thinking = "";
-          }
+        case "thinking_end":
+          attach(partAt(event.contentIndex, "thinking"), event.providerMetadata);
           break;
-        }
         case "toolcall_start":
           parts[event.contentIndex] = {
             type: "toolCall",
@@ -123,6 +117,7 @@ export async function inference(
         case "toolcall_end": {
           const part = partAt(event.contentIndex, "toolCall");
           part.arguments = parseArguments(argBuffers.get(event.contentIndex) ?? "");
+          attach(part, event.providerMetadata);
           break;
         }
         case "done":
@@ -145,6 +140,11 @@ export async function inference(
   // (SDK throw, clean stream end) — the partial draft is the message.
   if (signal.aborted) return { ...base, stopReason: "aborted" };
   return { ...base, stopReason: "error", errorMessage: failure ?? "unknown provider failure" };
+}
+
+/** The vendor's continuity data rides on the finished part, verbatim; absent stays absent. */
+function attach(part: DraftPart, metadata: ProviderMetadata | undefined): void {
+  if (metadata !== undefined) part.providerMetadata = metadata;
 }
 
 /** Providers stream tool arguments as JSON text; an empty buffer means no arguments. */

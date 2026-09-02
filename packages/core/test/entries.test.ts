@@ -26,6 +26,36 @@ describe("SessionEntry", () => {
     expect(SessionEntry.parse(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
   });
 
+  it("round-trips a part's provider metadata verbatim, beside the legacy thinking fields", () => {
+    const google = { google: { thoughtSignature: "ts-1" } };
+    const entry = {
+      ...envelope,
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "thinking",
+            thinking: "because",
+            providerMetadata: { openai: { itemId: "rs_1", reasoningEncryptedContent: null } },
+          },
+          { type: "thinking", thinking: "", thinkingSignature: "opaque", redacted: true },
+          { type: "text", text: "checking", providerMetadata: google },
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "read",
+            arguments: { path: "a.ts" },
+            providerMetadata: google,
+          },
+        ],
+        model: "gemini-3.7-flash",
+        stopReason: "tool_use",
+      },
+    };
+    expect(SessionEntry.parse(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
+  });
+
   it("round-trips a custom entry with a nested payload", () => {
     const entry = {
       ...envelope,

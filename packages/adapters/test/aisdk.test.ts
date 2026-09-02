@@ -2,14 +2,16 @@
 // streamText pipeline runs between the mock and the adapter, so these
 // tests cover the adapter's actual seam: spec stream parts in,
 // ProviderEvents out, and the request mapping the mock records
-// (doStreamCalls) on the way in. The Anthropic thinking-signature
-// shapes mirror what @ai-sdk/anthropic actually emits and reads
-// (signature as an empty reasoning-delta's metadata, redactedData on
-// reasoning-start, providerOptions on replayed reasoning parts).
+// (doStreamCalls) on the way in. The metadata shapes mirror what the
+// vendor SDKs actually emit and read: Anthropic's signature as an empty
+// reasoning-delta's metadata and redactedData on reasoning-start,
+// OpenAI's reasoning item filled in at reasoning-end, Gemini's thought
+// signature on every chunk of a block, and providerOptions on replayed
+// parts.
 
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3, convertArrayToReadableStream, simulateReadableStream } from "ai/test";
-import type { AgentMessage, ProviderEvent } from "@funky/core";
+import { type AgentMessage, type ProviderEvent, ProviderMetadata } from "@funky/core";
 import type { InferenceProvider, StreamRequest } from "@funky/agent";
 import { createAiSdkProvider } from "../src";
 
@@ -61,6 +63,12 @@ const request = (overrides: Partial<StreamRequest> = {}): StreamRequest => ({
 
 const live = (): AbortSignal => new AbortController().signal;
 
+const echoSpec = {
+  name: "echo",
+  description: "echoes",
+  inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+};
+
 async function collect(provider: InferenceProvider, req: StreamRequest): Promise<ProviderEvent[]> {
   const events: ProviderEvent[] = [];
   for await (const event of provider.stream(req, live())) events.push(event);
@@ -96,10 +104,11 @@ describe("aisdk adapter: stream mapping", () => {
       { type: "tool-input-delta", id: "call_9", delta: '{"text":' },
       { type: "tool-input-delta", id: "call_9", delta: '"hi"}' },
       { type: "tool-input-end", id: "call_9" },
+      { type: "tool-call", toolCallId: "call_9", toolName: "echo", input: '{"text":"hi"}' },
       finish("tool-calls"),
     ]);
 
-    const events = await collect(provider, request());
+    const events = await collect(provider, request({ tools: [echoSpec] }));
     expect(events).toEqual([
       { type: "toolcall_start", contentIndex: 0, toolCallId: "call_9", toolName: "echo" },
       { type: "toolcall_delta", contentIndex: 0, argsDelta: '{"text":' },
@@ -130,7 +139,11 @@ describe("aisdk adapter: stream mapping", () => {
     expect(events.slice(0, 3)).toEqual([
       { type: "thinking_start", contentIndex: 0 },
       { type: "thinking_delta", contentIndex: 0, delta: "because" },
-      { type: "thinking_end", contentIndex: 0, signature: "sig-1" },
+      {
+        type: "thinking_end",
+        contentIndex: 0,
+        providerMetadata: { anthropic: { signature: "sig-1" } },
+      },
     ]);
     // The following text block gets the next contentIndex.
     expect(events[3]).toEqual({ type: "text_start", contentIndex: 1 });
@@ -150,7 +163,157 @@ describe("aisdk adapter: stream mapping", () => {
     const events = await collect(provider, request());
     expect(events.slice(0, 2)).toEqual([
       { type: "thinking_start", contentIndex: 0 },
-      { type: "thinking_end", contentIndex: 0, signature: "opaque-payload", redacted: true },
+      {
+        type: "thinking_end",
+        contentIndex: 0,
+        providerMetadata: { anthropic: { redactedData: "opaque-payload" } },
+      },
+    ]);
+  });
+
+  it("merges metadata across a block's chunks — Gemini attaches its signature to every one", async () => {
+    const google = { google: { thoughtSignature: "ts-1" } };
+    const { provider } = providerWith([
+      { type: "text-start", id: "0", providerMetadata: google },
+      { type: "text-delta", id: "0", delta: "Hi", providerMetadata: google },
+      { type: "text-end", id: "0" },
+      { type: "tool-input-start", id: "call_1", toolName: "echo", providerMetadata: google },
+      { type: "tool-input-delta", id: "call_1", delta: '{"text":"hi"}', providerMetadata: google },
+      { type: "tool-input-end", id: "call_1", providerMetadata: google },
+      {
+        type: "tool-call",
+        toolCallId: "call_1",
+        toolName: "echo",
+        input: '{"text":"hi"}',
+        providerMetadata: google,
+      },
+      finish("tool-calls"),
+    ]);
+
+    const events = await collect(provider, request({ tools: [echoSpec] }));
+    expect(events).toEqual([
+      { type: "text_start", contentIndex: 0 },
+      { type: "text_delta", contentIndex: 0, delta: "Hi" },
+      { type: "text_end", contentIndex: 0, providerMetadata: google },
+      { type: "toolcall_start", contentIndex: 1, toolCallId: "call_1", toolName: "echo" },
+      { type: "toolcall_delta", contentIndex: 1, argsDelta: '{"text":"hi"}' },
+      { type: "toolcall_end", contentIndex: 1, providerMetadata: google },
+      expect.objectContaining({ type: "done", stopReason: "tool_use" }),
+    ]);
+  });
+
+  it("lets later chunks win — OpenAI fills the encrypted reasoning in at reasoning-end", async () => {
+    const { provider } = providerWith([
+      {
+        type: "reasoning-start",
+        id: "0",
+        providerMetadata: { openai: { itemId: "rs_1", reasoningEncryptedContent: null } },
+      },
+      { type: "reasoning-delta", id: "0", delta: "hmm" },
+      {
+        type: "reasoning-end",
+        id: "0",
+        providerMetadata: { openai: { itemId: "rs_1", reasoningEncryptedContent: "enc" } },
+      },
+      finish("stop"),
+    ]);
+
+    const events = await collect(provider, request());
+    expect(events[2]).toEqual({
+      type: "thinking_end",
+      contentIndex: 0,
+      providerMetadata: { openai: { itemId: "rs_1", reasoningEncryptedContent: "enc" } },
+    });
+  });
+
+  it("drops undefined at any depth before metadata reaches the log — the Anthropic package emits some", async () => {
+    const { provider } = providerWith([
+      { type: "tool-input-start", id: "call_1", toolName: "echo" },
+      { type: "tool-input-delta", id: "call_1", delta: '{"text":"hi"}' },
+      { type: "tool-input-end", id: "call_1" },
+      {
+        type: "tool-call",
+        toolCallId: "call_1",
+        toolName: "echo",
+        input: '{"text":"hi"}',
+        providerMetadata: {
+          anthropic: {
+            caller: { type: "direct", toolId: undefined },
+            tags: [{ id: "a", note: undefined }],
+          },
+          empty: { nothing: undefined },
+        },
+      },
+      finish("tool-calls"),
+    ]);
+
+    const events = await collect(provider, request({ tools: [echoSpec] }));
+    const end = events.find((event) => event.type === "toolcall_end");
+    // toStrictEqual: an `undefined`-valued key is a difference here.
+    expect(end).toStrictEqual({
+      type: "toolcall_end",
+      contentIndex: 0,
+      providerMetadata: { anthropic: { caller: { type: "direct" }, tags: [{ id: "a" }] } },
+    });
+    expect(ProviderMetadata.safeParse(end?.providerMetadata).success).toBe(true);
+  });
+
+  it("leaves provider-executed calls to the vendor — streamed or assembled, nothing is surfaced", async () => {
+    const { provider } = providerWith([
+      { type: "tool-input-start", id: "srv_1", toolName: "web_search", providerExecuted: true },
+      { type: "tool-input-delta", id: "srv_1", delta: '{"q":"x"}' },
+      { type: "tool-input-end", id: "srv_1" },
+      {
+        type: "tool-call",
+        toolCallId: "srv_1",
+        toolName: "web_search",
+        input: '{"q":"x"}',
+        providerExecuted: true,
+      },
+      {
+        type: "tool-call",
+        toolCallId: "srv_2",
+        toolName: "code_execution",
+        input: "{}",
+        providerExecuted: true,
+      },
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", delta: "done" },
+      { type: "text-end", id: "0" },
+      finish("stop"),
+    ]);
+
+    const events = await collect(provider, request());
+    expect(events.map((event) => event.type)).toEqual([
+      "text_start",
+      "text_delta",
+      "text_end",
+      "done",
+    ]);
+  });
+
+  it("closes a call from the assembled tool-call alone — openai-compatible providers stream no input parts", async () => {
+    const { provider } = providerWith([
+      {
+        type: "tool-call",
+        toolCallId: "call_t",
+        toolName: "echo",
+        input: '{"text":"hi"}',
+        providerMetadata: { openaiCompatible: { thoughtSignature: "ts-2" } },
+      },
+      finish("tool-calls"),
+    ]);
+
+    const events = await collect(provider, request({ tools: [echoSpec] }));
+    expect(events).toEqual([
+      { type: "toolcall_start", contentIndex: 0, toolCallId: "call_t", toolName: "echo" },
+      { type: "toolcall_delta", contentIndex: 0, argsDelta: '{"text":"hi"}' },
+      {
+        type: "toolcall_end",
+        contentIndex: 0,
+        providerMetadata: { openaiCompatible: { thoughtSignature: "ts-2" } },
+      },
+      expect.objectContaining({ type: "done", stopReason: "tool_use" }),
     ]);
   });
 
@@ -251,15 +414,23 @@ describe("aisdk adapter: request mapping", () => {
     expect(call.temperature).toBeUndefined();
   });
 
-  it("round-trips the context: thinking signatures, tool pairs, redacted blocks", async () => {
+  it("round-trips each part's metadata verbatim, and legacy thinking fields as Anthropic's", async () => {
+    const openai = { openai: { itemId: "rs_1", reasoningEncryptedContent: "enc" } };
+    const google = { google: { thoughtSignature: "ts-1" } };
     const context: AgentMessage[] = [
       { role: "user", content: [{ type: "text", text: "go" }] },
       {
         role: "assistant",
         content: [
-          { type: "thinking", thinking: "because", thinkingSignature: "sig-1" },
-          { type: "text", text: "running echo" },
-          { type: "toolCall", id: "call_1", name: "echo", arguments: { text: "hi" } },
+          { type: "thinking", thinking: "because", providerMetadata: openai },
+          { type: "text", text: "running echo", providerMetadata: google },
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "echo",
+            arguments: { text: "hi" },
+            providerMetadata: google,
+          },
         ],
         model: "model-1",
         stopReason: "tool_use",
@@ -275,6 +446,7 @@ describe("aisdk adapter: request mapping", () => {
         role: "assistant",
         content: [
           { type: "thinking", thinking: "", thinkingSignature: "opaque", redacted: true },
+          { type: "thinking", thinking: "legacy", thinkingSignature: "sig-1" },
           { type: "text", text: "done" },
         ],
         model: "model-1",
@@ -292,13 +464,15 @@ describe("aisdk adapter: request mapping", () => {
       {
         role: "assistant",
         content: [
+          { type: "reasoning", text: "because", providerOptions: openai },
+          { type: "text", text: "running echo", providerOptions: google },
           {
-            type: "reasoning",
-            text: "because",
-            providerOptions: { anthropic: { signature: "sig-1" } },
+            type: "tool-call",
+            toolCallId: "call_1",
+            toolName: "echo",
+            input: { text: "hi" },
+            providerOptions: google,
           },
-          { type: "text", text: "running echo" },
-          { type: "tool-call", toolCallId: "call_1", toolName: "echo", input: { text: "hi" } },
         ],
       },
       {
@@ -319,6 +493,11 @@ describe("aisdk adapter: request mapping", () => {
             type: "reasoning",
             text: "",
             providerOptions: { anthropic: { redactedData: "opaque" } },
+          },
+          {
+            type: "reasoning",
+            text: "legacy",
+            providerOptions: { anthropic: { signature: "sig-1" } },
           },
           { type: "text", text: "done" },
         ],

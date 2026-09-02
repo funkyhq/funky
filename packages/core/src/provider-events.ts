@@ -1,4 +1,4 @@
-import type { StopReason, Usage } from "./messages";
+import type { ProviderMetadata, StopReason, Usage } from "./messages";
 
 /**
  * Streaming increments from a model provider.
@@ -20,21 +20,25 @@ import type { StopReason, Usage } from "./messages";
 /** Outcomes a provider can report. `aborted`/`error` are assigned by the engine, never by a provider. */
 export type ProviderStopReason = Extract<StopReason, "end_turn" | "tool_use" | "max_tokens">;
 
+/**
+ * The `*_end` events may carry the vendor's continuity data for the
+ * finished part (`ProviderMetadata` in messages): the adapter merges
+ * whatever the vendor attached across the part's chunks, the fold
+ * attaches it to the part, replay hands it back verbatim. A redacted
+ * thinking block never streams deltas — an empty start/end pair whose
+ * metadata carries the opaque payload.
+ */
 export type ProviderEvent =
   | { type: "text_start"; contentIndex: number }
   | { type: "text_delta"; contentIndex: number; delta: string }
-  | { type: "text_end"; contentIndex: number }
+  | { type: "text_end"; contentIndex: number; providerMetadata?: ProviderMetadata }
   | { type: "thinking_start"; contentIndex: number }
   | { type: "thinking_delta"; contentIndex: number; delta: string }
-  /** Anthropic delivers the signature at block end; the fold attaches it to the part.
-   *  Redacted blocks never stream deltas: adapters emit an empty start/end pair with
-   *  `redacted: true` and the opaque encrypted payload in `signature`; the fold sets
-   *  the part's `redacted` flag so replay reconstructs a `redacted_thinking` block. */
-  | { type: "thinking_end"; contentIndex: number; signature?: string; redacted?: boolean }
+  | { type: "thinking_end"; contentIndex: number; providerMetadata?: ProviderMetadata }
   /** Tool identity is known before arguments stream — required here, so UIs can show the call early. */
   | { type: "toolcall_start"; contentIndex: number; toolCallId: string; toolName: string }
   /** Arguments stream as partial JSON text; the fold buffers and parses at `toolcall_end`. */
   | { type: "toolcall_delta"; contentIndex: number; argsDelta: string }
-  | { type: "toolcall_end"; contentIndex: number }
+  | { type: "toolcall_end"; contentIndex: number; providerMetadata?: ProviderMetadata }
   /** Terminal marker. Carries the provider outcome and usage — never a message. */
   | { type: "done"; stopReason: ProviderStopReason; usage: Usage };
