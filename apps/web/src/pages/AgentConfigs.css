@@ -1,156 +1,11 @@
 /* apps/web/src/pages/AgentConfigs.css
-   The first data page: a header, a table, and the states around it. Sits at
-   the top of the routed pane rather than its centre (the pane centres the
-   hero placeholder), and every colour resolves to a token in index.css. */
-
-.agents {
-  align-self: start;
-  width: 100%;
-  max-width: 900px;
-  /* A grid item's auto min-width is min-content — which the table's own
-     min-width sets. Without this the section grows past the pane and the
-     page overflows sideways, instead of .table-wrap scrolling. */
-  min-width: 0;
-  animation: agents-in 420ms var(--ease);
-}
-
-/* Header ----------------------------------------------------------------- */
-
-.agents-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.agents-title {
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: -0.35px;
-  color: var(--text);
-}
-
-.notice-body code {
-  padding: 1px 5px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-elev);
-  font: 500 12px var(--mono);
-  color: var(--text-2);
-}
-
-/* Actions ---------------------------------------------------------------- */
-
-/* .btn itself lives in index.css — the modal uses it too, and a shared
-   control shouldn't be defined by one page's stylesheet. */
-.agents-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Table ------------------------------------------------------------------ */
-
-/* The id column is a uuid: rather than truncate it, the table keeps its
-   natural width and this scrolls when the pane is narrower. */
-.table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--bg-elev);
-  box-shadow: var(--shadow-sm);
-  scrollbar-width: thin;
-}
-
-.table {
-  width: 100%;
-  min-width: 700px;
-  border-collapse: collapse;
-}
-
-.table th {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-sunken);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  text-align: left;
-  color: var(--text-3);
-  white-space: nowrap;
-}
+   What only the agent list draws: the model column, and where the four
+   columns land once the pane is too narrow for a table. The header, the
+   table, the pill, the skeleton and the empty/error notices are
+   pages/list.css — every section's list is that one. */
 
 .col-model {
   width: 26%;
-}
-
-.col-status {
-  width: 122px;
-}
-
-.col-when {
-  width: 138px;
-}
-
-.table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13.5px;
-  color: var(--text-2);
-  white-space: nowrap;
-  transition: background-color var(--dur) var(--ease);
-}
-
-.table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.table tbody tr:hover td {
-  background: var(--hover);
-}
-
-.id {
-  font: 500 12.5px var(--mono);
-  color: var(--text);
-}
-
-/* A row is one link, stretched. The anchor lives in the id cell — so the
-   link's text is the id, which is what it addresses — and its ::after
-   covers the row, making the whole row the hit area without nesting
-   anything clickable inside anything else clickable. */
-.table tbody tr {
-  position: relative;
-}
-
-.row-link {
-  text-decoration: none;
-}
-
-.row-link::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  /* Above the cells, below nothing: no other control lives in a row. */
-  z-index: 1;
-}
-
-.table tbody tr:hover .row-link {
-  text-decoration: underline;
-  text-underline-offset: 2.5px;
-}
-
-/* The row is the target, so it is the row that shows the focus ring. */
-.row-link:focus-visible {
-  outline: none;
-}
-
-.table tbody tr:has(.row-link:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  border-radius: 4px;
 }
 
 .model {
@@ -164,235 +19,46 @@
   color: var(--text-3);
 }
 
-/* Status ----------------------------------------------------------------- */
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 11px 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.pill-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.pill-active {
-  color: var(--text-2);
-}
-
-.pill-active .pill-dot {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-glow);
-}
-
-.pill-archived {
-  color: var(--text-3);
-  background: var(--bg-sunken);
-}
-
-.pill-archived .pill-dot {
-  background: var(--text-3);
-  opacity: 0.6;
-}
-
-/* Loading ---------------------------------------------------------------- */
-
-.bar {
-  display: block;
-  height: 11px;
-  border-radius: 5.5px;
-  background: linear-gradient(90deg, var(--bg-sunken), var(--hover), var(--bg-sunken));
-  background-size: 220% 100%;
-  animation: bar-shimmer 1.5s linear infinite;
-}
-
-.bar-id {
-  width: 268px;
-}
-
 .bar-model {
   width: 60%;
 }
 
-.bar-status {
-  width: 72px;
-}
-
-.bar-when {
-  width: 84px;
-}
-
-/* Error / empty ---------------------------------------------------------- */
-
-.notice {
-  display: grid;
-  justify-items: center;
-  gap: 9px;
-  padding: 46px 24px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--r-lg);
-  background: var(--bg-elev);
-  text-align: center;
-}
-
-.notice-icon {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  margin-bottom: 2px;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  background: linear-gradient(180deg, var(--bg-elev), var(--accent-soft));
-  color: var(--accent);
-}
-
-.notice-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.notice-body {
-  max-width: 52ch;
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: var(--text-2);
-}
-
-.notice .btn {
-  margin-top: 8px;
-}
-
-/* Pagination ------------------------------------------------------------- */
-
-.agents-more {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.agents-more-error {
-  font-size: 12.5px;
-  color: var(--text-3);
-}
-
-@keyframes agents-in {
-  from {
-    opacity: 0;
-    transform: translateY(9px);
-  }
-}
-
-@keyframes bar-shimmer {
-  from {
-    background-position: 130% 0;
-  }
-  to {
-    background-position: -30% 0;
-  }
-}
-
-/* Narrow pane: the four columns need about 790px before Created starts
-   getting clipped, and reaching it would mean scrolling the card sideways.
-   Under that, each row becomes a stacked card instead — the id, then the
-   model beside its status, then when it was created. The header row has
-   nothing left to label, so it goes with them.
-
-   Keyed to the pane rather than the window (see .content in App.css): a
-   1000px window still leaves this only ~700px once the sidebar is out. */
+/* Card layout (list.css turns the rows into cards at this width; this says
+   where this table's cells go): the id, then the model beside its status,
+   then when it was created. */
 @container pane (max-width: 790px) {
-  .table {
-    min-width: 0;
-  }
-
-  .table thead {
-    display: none;
-  }
-
-  .table,
-  .table tbody,
-  .table td {
-    display: block;
-  }
-
-  .table tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
+  .agents .table tr {
     grid-template-areas:
       "id id"
       "model status"
       "when when";
-    gap: 5px 12px;
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
   }
 
-  .table tbody tr:last-child {
-    border-bottom: none;
-  }
-
-  .table td {
-    padding: 0;
-    border: none;
-    white-space: normal;
-  }
-
-  /* Hover lands on the whole card now, not one cell of it. */
-  .table tbody tr:hover {
-    background: var(--hover);
-  }
-
-  .table tbody tr:hover td {
-    background: none;
-  }
-
-  .table td:nth-child(1) {
+  .agents .table td:nth-child(1) {
     grid-area: id;
   }
 
-  .table td:nth-child(2) {
+  .agents .table td:nth-child(2) {
     grid-area: model;
   }
 
-  .table td:nth-child(3) {
+  .agents .table td:nth-child(3) {
     grid-area: status;
     align-self: center;
     justify-self: end;
   }
 
-  .table td:nth-child(4) {
+  .agents .table td:nth-child(4) {
     grid-area: when;
     font-size: 12.5px;
     color: var(--text-3);
-  }
-
-  /* A uuid is 36 characters: let it break rather than push the card wide. */
-  .id {
-    overflow-wrap: anywhere;
-  }
-
-  .bar-id {
-    width: 100%;
-  }
-
-  .notice {
-    padding: 38px 18px;
   }
 }
 
 /* A card with room for two columns: the status and the age sit beside the
    id and the model rather than under them, so the row stays two lines. */
 @container pane (min-width: 520px) and (max-width: 790px) {
-  .table tr {
+  .agents .table tr {
     grid-template-areas:
       "id status"
       "model when";
@@ -400,7 +66,7 @@
     gap: 7px 16px;
   }
 
-  .table td:nth-child(4) {
+  .agents .table td:nth-child(4) {
     justify-self: end;
   }
 }

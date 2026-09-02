@@ -1,0 +1,39 @@
+/* apps/web/src/components/Status.css
+   The lifecycle pill. Two states, because archive is terminal: live, or
+   retired. Every colour resolves to a token in index.css. */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 11px 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.pill-active {
+  color: var(--text-2);
+}
+
+.pill-active .pill-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-glow);
+}
+
+.pill-archived {
+  color: var(--text-3);
+  background: var(--bg-sunken);
+}
+
+.pill-archived .pill-dot {
+  background: var(--text-3);
+  opacity: 0.6;
+}

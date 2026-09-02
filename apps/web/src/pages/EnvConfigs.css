@@ -1,0 +1,36 @@
+/* apps/web/src/pages/EnvConfigs.css
+   What only the env list draws: where its three columns land once the pane
+   is too narrow for a table. Everything else — the header, the table, the
+   pill, the skeleton, the notices — is pages/list.css.
+
+   Three columns fit further down than the agent list's four, but they
+   reflow at the same width all the same (see the breakpoint's note in
+   list.css). */
+
+/* Card layout: the id on its own line, then the status with the age
+   opposite it — two short cells that stay side by side at any width the
+   pane reaches. */
+@container pane (max-width: 790px) {
+  .envs .table tr {
+    grid-template-areas:
+      "id id"
+      "status when";
+    align-items: center;
+    gap: 7px 16px;
+  }
+
+  .envs .table td:nth-child(1) {
+    grid-area: id;
+  }
+
+  .envs .table td:nth-child(2) {
+    grid-area: status;
+  }
+
+  .envs .table td:nth-child(3) {
+    grid-area: when;
+    justify-self: end;
+    font-size: 12.5px;
+    color: var(--text-3);
+  }
+}

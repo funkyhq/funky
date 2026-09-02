@@ -17,6 +17,11 @@ const UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ["month", 12],
 ];
 
+/** How often a view showing relative times must re-read the clock. Fine
+ *  enough that the coarsest thing relativeTime prints — "1 minute ago" — is
+ *  never a minute stale. */
+export const RELATIVE_TICK_MS = 30_000;
+
 /** e.g. "3 hours ago". Returns the input unchanged if it isn't a date. */
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const at = new Date(iso).getTime();

@@ -37,6 +37,34 @@ export type AgentConfig = {
   metadata?: unknown;
 };
 
+/** Reachability as intent, not mechanism: an adapter that cannot enforce
+ *  what this asks for must refuse to provision rather than run more open. */
+export type NetworkPolicy =
+  { type: "unrestricted" } | { type: "none" } | { type: "allowlist"; domains: string[] };
+
+/** Specs keyed by package manager ("pip", "npm", "apt", …), each spec left
+ *  in its own ecosystem's syntax — the key names the interpreter. */
+export type Packages = Record<string, string[]>;
+
+/**
+ * One env config: the sandbox recipe a session's commands run inside.
+ * Unlike an agent config it is updated IN PLACE — there is no version to
+ * pin, which is why a session copies the recipe instead of referencing it.
+ */
+export type EnvConfig = {
+  id: string;
+  namespace: string;
+  network: NetworkPolicy;
+  packages: Packages;
+  createdAt: string;
+  /** The latest edit to the recipe. Equal to createdAt until the first
+   *  update; archiving retires it without editing it, so it does not move. */
+  updatedAt: string;
+  /** Set once retired. Archive is terminal, so absence is the active state. */
+  archivedAt?: string;
+  metadata?: unknown;
+};
+
 /** The envelope every collection route returns (api routes/common.ts). */
 export type Page<T> = {
   data: T[];
@@ -227,6 +255,25 @@ export function archiveAgentConfig(
     // fetch sends as no body at all.
     undefined,
     { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+/**
+ * One page of the namespace's env configs, newest first. Archived recipes
+ * are listed beside live ones — they stay readable, and the sessions that
+ * copied them keep running — so a row's status is worth a column.
+ */
+export function listEnvConfigs(
+  opts: { after?: string; limit?: number; signal?: AbortSignal } = {},
+): Promise<Page<EnvConfig>> {
+  return get<Page<EnvConfig>>(
+    "/v1/env-configs",
+    {
+      namespace: DEFAULT_NAMESPACE,
+      limit: opts.limit === undefined ? undefined : String(opts.limit),
+      after: opts.after,
+    },
     opts.signal,
   );
 }
