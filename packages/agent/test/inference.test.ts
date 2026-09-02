@@ -97,17 +97,45 @@ describe("inference", () => {
   });
 
   it("folds a redacted thinking block into an empty part carrying the opaque payload", async () => {
+    const redacted = { anthropic: { redactedData: "opaque-payload" } };
     const message = await run([
       { type: "thinking_start", contentIndex: 0 },
-      { type: "thinking_end", contentIndex: 0, signature: "opaque-payload", redacted: true },
+      { type: "thinking_end", contentIndex: 0, providerMetadata: redacted },
       { type: "text_start", contentIndex: 1 },
       { type: "text_delta", contentIndex: 1, delta: "ok" },
       { type: "text_end", contentIndex: 1 },
       { type: "done", stopReason: "end_turn", usage },
     ]);
     expect(message.content).toEqual([
-      { type: "thinking", thinking: "", thinkingSignature: "opaque-payload", redacted: true },
+      { type: "thinking", thinking: "", providerMetadata: redacted },
       { type: "text", text: "ok" },
+    ]);
+  });
+
+  it("attaches each end event's provider metadata to its part, verbatim, and nothing when absent", async () => {
+    const google = { google: { thoughtSignature: "ts-1" } };
+    const message = await run([
+      { type: "text_start", contentIndex: 0 },
+      { type: "text_delta", contentIndex: 0, delta: "Hi" },
+      { type: "text_end", contentIndex: 0, providerMetadata: google },
+      { type: "toolcall_start", contentIndex: 1, toolCallId: "call_1", toolName: "bash" },
+      { type: "toolcall_delta", contentIndex: 1, argsDelta: '{"command":"ls"}' },
+      { type: "toolcall_end", contentIndex: 1, providerMetadata: google },
+      { type: "text_start", contentIndex: 2 },
+      { type: "text_delta", contentIndex: 2, delta: "bye" },
+      { type: "text_end", contentIndex: 2 },
+      { type: "done", stopReason: "tool_use", usage },
+    ]);
+    expect(message.content).toEqual([
+      { type: "text", text: "Hi", providerMetadata: google },
+      {
+        type: "toolCall",
+        id: "call_1",
+        name: "bash",
+        arguments: { command: "ls" },
+        providerMetadata: google,
+      },
+      { type: "text", text: "bye" },
     ]);
   });
 

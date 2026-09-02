@@ -25,11 +25,24 @@ export const JsonValue: z.ZodType<JsonValue> = z.lazy(() =>
   ]),
 );
 
+/**
+ * A vendor's own continuity data for one content part — thinking
+ * signatures, reasoning item ids, encrypted reasoning, thought
+ * signatures — keyed by vendor namespace, exactly as the vendor SDK
+ * attached it. Opaque here: core never reads it. The inference adapter
+ * captures it verbatim on the way in and hands it back verbatim on
+ * replay, so every vendor's multi-turn requirements are met without
+ * core knowing what any of them are.
+ */
+export const ProviderMetadata = z.record(z.string(), z.record(z.string(), JsonValue));
+export type ProviderMetadata = z.infer<typeof ProviderMetadata>;
+
 // --- content parts ---
 
 export const TextContent = z.object({
   type: z.literal("text"),
   text: z.string(),
+  providerMetadata: ProviderMetadata.optional(),
 });
 export type TextContent = z.infer<typeof TextContent>;
 
@@ -42,10 +55,13 @@ export type ImageContent = z.infer<typeof ImageContent>;
 
 export const ThinkingContent = z.object({
   type: z.literal("thinking"),
+  // Empty for a redacted block: the vendor keeps the text and hands back
+  // only the opaque payload, which rides in `providerMetadata`.
   thinking: z.string(),
-  // Anthropic extended thinking: the signature must round-trip to the API
-  // for multi-turn continuity. When `redacted` is true, `thinking` is empty
-  // and the opaque encrypted payload rides in `thinkingSignature`.
+  providerMetadata: ProviderMetadata.optional(),
+  // Legacy, Anthropic-only, no longer written: rows stored before
+  // `providerMetadata` carry the signature here — or, when `redacted`,
+  // the opaque encrypted payload. Replay still reads them.
   thinkingSignature: z.string().optional(),
   redacted: z.boolean().optional(),
 });
@@ -56,6 +72,7 @@ export const ToolCall = z.object({
   id: z.string(),
   name: z.string(),
   arguments: z.record(z.string(), JsonValue),
+  providerMetadata: ProviderMetadata.optional(),
 });
 export type ToolCall = z.infer<typeof ToolCall>;
 

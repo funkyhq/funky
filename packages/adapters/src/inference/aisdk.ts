@@ -13,13 +13,21 @@
 // in order of first appearance, which is also the block order the
 // engine's fold reconstructs.
 //
-// The one vendor-specific patch: Anthropic's extended-thinking protocol
-// requires signatures (and redacted payloads) to round-trip verbatim,
-// and the AI SDK carries them in the `anthropic` provider-metadata
-// namespace — signatures arrive as empty reasoning deltas, redacted
-// blocks as reasoning-start metadata, and replay wants the same values
-// back as reasoning-part providerOptions. Capturing and re-attaching
-// that namespace is inert for every other vendor.
+// Vendor continuity data — Anthropic's thinking signatures, OpenAI's
+// reasoning items, Gemini's thought signatures — arrives as
+// `providerMetadata` on a block's chunks, on whichever chunks the vendor
+// chose (Anthropic: an empty reasoning delta; Gemini: every chunk). The
+// adapter merges it per block, later chunks winning, hands the merge to
+// the engine on the block's end event, and on replay attaches each
+// stored part's metadata back as `providerOptions`, verbatim. No vendor
+// is named in the process: whatever an SDK attaches is what it gets
+// back.
+//
+// A tool call closes on the SDK's assembled `tool-call` part, not on
+// `tool-input-end`: the assembled part is where the metadata lands, and
+// some providers (openai-compatible, so Together) stream no input parts
+// at all — for those the start and a single delta are synthesized from
+// it.
 
 import {
   type AssistantModelMessage,
@@ -28,7 +36,7 @@ import {
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
-  type ProviderMetadata,
+  type ProviderMetadata as SdkProviderMetadata,
   streamText,
   tool,
   type ToolResultPart,
@@ -36,6 +44,8 @@ import {
 } from "ai";
 import type {
   AgentMessage,
+  JsonValue,
+  ProviderMetadata,
   ProviderStopReason,
   ThinkingContent,
   ToolResultMessage,
@@ -68,21 +78,30 @@ export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvid
 
       interface Block {
         index: number;
-        signature?: string;
-        redactedData?: string;
+        /** The vendor's continuity data, merged across the block's chunks. */
+        metadata?: ProviderMetadata;
       }
       const blocks = new Map<string, Block>();
       let nextIndex = 0;
-      const open = (kind: string, id: string): Block => {
+      const open = (kind: string, id: string, metadata?: SdkProviderMetadata): Block => {
         const block: Block = { index: nextIndex++ };
         blocks.set(`${kind}:${id}`, block);
+        absorb(block, metadata);
         return block;
       };
-      const at = (kind: string, id: string): Block => {
+      const at = (kind: string, id: string, metadata?: SdkProviderMetadata): Block => {
         const block = blocks.get(`${kind}:${id}`);
         if (!block) throw new Error(`aisdk: ${kind} part for unopened block ${id}`);
+        absorb(block, metadata);
         return block;
       };
+      const ended = (block: Block): { providerMetadata?: ProviderMetadata } =>
+        block.metadata === undefined ? {} : { providerMetadata: block.metadata };
+      // Provider-executed tools (server-side search, code execution) are
+      // never declared by this adapter, so no vendor should run one. If
+      // one does, the call and its result are the vendor's affair, not a
+      // local tool for the driver to schedule: skipped, never surfaced.
+      const foreign = new Set<string>();
 
       let finish:
         | { finishReason: FinishReason; raw: string | undefined; usage: LanguageModelUsage }
@@ -91,28 +110,32 @@ export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvid
       for await (const part of result.stream) {
         switch (part.type) {
           case "text-start":
-            yield { type: "text_start" as const, contentIndex: open("text", part.id).index };
+            yield {
+              type: "text_start" as const,
+              contentIndex: open("text", part.id, part.providerMetadata).index,
+            };
             break;
           case "text-delta":
             yield {
               type: "text_delta" as const,
-              contentIndex: at("text", part.id).index,
+              contentIndex: at("text", part.id, part.providerMetadata).index,
               delta: part.text,
             };
             break;
-          case "text-end":
-            yield { type: "text_end" as const, contentIndex: at("text", part.id).index };
-            break;
-          case "reasoning-start": {
-            const block = open("reasoning", part.id);
-            block.redactedData = anthropicString(part.providerMetadata, "redactedData");
-            yield { type: "thinking_start" as const, contentIndex: block.index };
+          case "text-end": {
+            const block = at("text", part.id, part.providerMetadata);
+            yield { type: "text_end" as const, contentIndex: block.index, ...ended(block) };
             break;
           }
+          case "reasoning-start":
+            yield {
+              type: "thinking_start" as const,
+              contentIndex: open("reasoning", part.id, part.providerMetadata).index,
+            };
+            break;
           case "reasoning-delta": {
-            const block = at("reasoning", part.id);
-            const signature = anthropicString(part.providerMetadata, "signature");
-            if (signature !== undefined) block.signature = signature;
+            // An empty delta is metadata only (Anthropic's signature).
+            const block = at("reasoning", part.id, part.providerMetadata);
             if (part.text !== "") {
               yield {
                 type: "thinking_delta" as const,
@@ -123,38 +146,59 @@ export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvid
             break;
           }
           case "reasoning-end": {
-            const block = at("reasoning", part.id);
-            const signature =
-              anthropicString(part.providerMetadata, "signature") ?? block.signature;
-            yield block.redactedData !== undefined
-              ? {
-                  type: "thinking_end" as const,
-                  contentIndex: block.index,
-                  signature: block.redactedData,
-                  redacted: true,
-                }
-              : { type: "thinking_end" as const, contentIndex: block.index, signature };
+            const block = at("reasoning", part.id, part.providerMetadata);
+            yield { type: "thinking_end" as const, contentIndex: block.index, ...ended(block) };
             break;
           }
           case "tool-input-start":
+            if (part.providerExecuted) {
+              foreign.add(part.id);
+              break;
+            }
             // The part's id IS the vendor's tool call id.
             yield {
               type: "toolcall_start" as const,
-              contentIndex: open("tool", part.id).index,
+              contentIndex: open("tool", part.id, part.providerMetadata).index,
               toolCallId: part.id,
               toolName: part.toolName,
             };
             break;
           case "tool-input-delta":
+            if (foreign.has(part.id)) break;
             yield {
               type: "toolcall_delta" as const,
-              contentIndex: at("tool", part.id).index,
+              contentIndex: at("tool", part.id, part.providerMetadata).index,
               argsDelta: part.delta,
             };
             break;
           case "tool-input-end":
-            yield { type: "toolcall_end" as const, contentIndex: at("tool", part.id).index };
+            if (foreign.has(part.id)) break;
+            // Metadata only; the assembled tool-call below closes the block.
+            at("tool", part.id, part.providerMetadata);
             break;
+          case "tool-call": {
+            if (part.providerExecuted || foreign.has(part.toolCallId)) break;
+            let block = blocks.get(`tool:${part.toolCallId}`);
+            if (block === undefined) {
+              // No input parts were streamed: the assembled call is all
+              // there is, so it becomes the start and a single delta.
+              block = open("tool", part.toolCallId);
+              yield {
+                type: "toolcall_start" as const,
+                contentIndex: block.index,
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+              };
+              yield {
+                type: "toolcall_delta" as const,
+                contentIndex: block.index,
+                argsDelta: typeof part.input === "string" ? part.input : JSON.stringify(part.input),
+              };
+            }
+            absorb(block, part.providerMetadata);
+            yield { type: "toolcall_end" as const, contentIndex: block.index, ...ended(block) };
+            break;
+          }
           case "finish":
             finish = {
               finishReason: part.finishReason,
@@ -167,8 +211,8 @@ export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvid
           case "abort":
             throw new DOMException("The operation was aborted.", "AbortError");
           default:
-            // start / step markers, assembled tool-call parts (already
-            // streamed as input parts), sources, files, raw chunks.
+            // start / step markers, tool results and errors of
+            // provider-executed tools, sources, files, raw chunks.
             break;
         }
       }
@@ -186,6 +230,49 @@ export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvid
   };
 }
 
+/** Merge one chunk's metadata into its block: per vendor namespace,
+ *  later keys win. An absent value or an empty namespace says nothing
+ *  and leaves nothing behind. */
+function absorb(
+  block: { metadata?: ProviderMetadata },
+  metadata: SdkProviderMetadata | undefined,
+): void {
+  if (metadata === undefined) return;
+  for (const [vendor, values] of Object.entries(metadata)) {
+    const json = toJsonObject(values);
+    if (Object.keys(json).length === 0) continue;
+    const merged = (block.metadata ??= {});
+    merged[vendor] = { ...merged[vendor], ...json };
+  }
+}
+
+/** The SDK's JSON allows `undefined` at any depth (the Anthropic package
+ *  emits `caller: { toolId: undefined }` on tool calls); the log's
+ *  JsonValue does not, and the store validates before it writes. Drop
+ *  such keys and null such array slots — what JSON.stringify would do. */
+function toJsonObject(values: object): Record<string, JsonValue> {
+  const out: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(values)) {
+    const json = toJson(value);
+    if (json !== undefined) out[key] = json;
+  }
+  return out;
+}
+
+function toJson(value: unknown): JsonValue | undefined {
+  if (value === null) return null;
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+      return value;
+    case "object":
+      return Array.isArray(value) ? value.map((item) => toJson(item) ?? null) : toJsonObject(value);
+    default:
+      return undefined;
+  }
+}
+
 function toToolSet(specs: ToolSpec[]): ToolSet {
   return Object.fromEntries(
     specs.map((spec) => [
@@ -201,6 +288,12 @@ function toToolSet(specs: ToolSpec[]): ToolSet {
 }
 
 type AssistantPart = Exclude<AssistantModelMessage["content"], string>[number];
+
+/** A stored part's metadata, back on the SDK part as `providerOptions`. */
+const replayed = (
+  metadata: ProviderMetadata | undefined,
+): { providerOptions?: ProviderMetadata } =>
+  metadata === undefined ? {} : { providerOptions: metadata };
 
 function toModelMessages(context: AgentMessage[]): ModelMessage[] {
   const out: ModelMessage[] = [];
@@ -221,15 +314,22 @@ function toModelMessages(context: AgentMessage[]): ModelMessage[] {
         for (const part of message.content) {
           if (part.type === "text") {
             // Vendors reject empty text blocks; an empty part carries nothing.
-            if (part.text !== "") parts.push({ type: "text", text: part.text });
+            if (part.text !== "") {
+              parts.push({ type: "text", text: part.text, ...replayed(part.providerMetadata) });
+            }
           } else if (part.type === "thinking") {
-            parts.push(toReasoningPart(part));
+            parts.push({
+              type: "reasoning",
+              text: part.thinking,
+              ...replayed(part.providerMetadata ?? legacyAnthropicMetadata(part)),
+            });
           } else {
             parts.push({
               type: "tool-call",
               toolCallId: part.id,
               toolName: part.name,
               input: part.arguments,
+              ...replayed(part.providerMetadata),
             });
           }
         }
@@ -254,26 +354,14 @@ function toModelMessages(context: AgentMessage[]): ModelMessage[] {
   return out;
 }
 
-/** Replay of a thinking part: signed → an Anthropic thinking block,
- *  redacted → redacted_thinking (the opaque payload rides in
- *  `thinkingSignature`, see core). @ai-sdk/anthropic reads exactly these
- *  providerOptions keys; unsigned parts ride as plain reasoning text. */
-function toReasoningPart(part: ThinkingContent): AssistantPart {
-  if (part.redacted && part.thinkingSignature !== undefined) {
-    return {
-      type: "reasoning",
-      text: "",
-      providerOptions: { anthropic: { redactedData: part.thinkingSignature } },
-    };
-  }
-  if (part.thinkingSignature !== undefined) {
-    return {
-      type: "reasoning",
-      text: part.thinking,
-      providerOptions: { anthropic: { signature: part.thinkingSignature } },
-    };
-  }
-  return { type: "reasoning", text: part.thinking };
+/** Rows stored before `providerMetadata` existed (Anthropic only): the
+ *  signature, or a redacted block's opaque payload, in the shape
+ *  @ai-sdk/anthropic reads. New rows never take this path. */
+function legacyAnthropicMetadata(part: ThinkingContent): ProviderMetadata | undefined {
+  if (part.thinkingSignature === undefined) return undefined;
+  return part.redacted
+    ? { anthropic: { redactedData: part.thinkingSignature } }
+    : { anthropic: { signature: part.thinkingSignature } };
 }
 
 function toToolOutput(message: ToolResultMessage): ToolResultPart["output"] {
@@ -318,9 +406,4 @@ function toUsage(usage: LanguageModelUsage): Usage {
     cacheWrite: usage.inputTokenDetails.cacheWriteTokens ?? 0,
     ...(reasoning !== undefined ? { reasoning } : {}),
   };
-}
-
-function anthropicString(metadata: ProviderMetadata | undefined, key: string): string | undefined {
-  const value = metadata?.["anthropic"]?.[key];
-  return typeof value === "string" ? value : undefined;
 }
