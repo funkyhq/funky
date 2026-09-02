@@ -1,6 +1,7 @@
 // apps/web/src/pages/EditAgentConfig.tsx
 // The Edit Agent dialog, at `#/agent/<id>`: the same three fields the create
-// dialog writes, over POST /v1/agent-configs/:id.
+// dialog writes, over POST /v1/agent-configs/:id — plus Archive, the one
+// action on a config that isn't an edit.
 //
 // Two things the api's update semantics dictate, both load-bearing:
 //
@@ -15,10 +16,13 @@
 //
 // An archived config is read-only — the store matches no mutation against
 // it — so the dialog shows it and says so rather than offering a Save the
-// api would refuse.
+// api would refuse. Archiving is what puts a config there, and it archives
+// on the click: no confirmation step, so the red label on its button is the
+// whole of the warning.
 import { type FormEvent, type RefObject, useEffect, useState } from "react";
 import {
   type AgentConfig,
+  archiveAgentConfig,
   getAgentConfig,
   type UpdateAgentConfigInput,
   updateAgentConfig,
@@ -55,7 +59,7 @@ function withCurrent(options: FieldOption[], current: string): FieldOption[] {
 export function EditAgentConfig({
   id,
   config,
-  onSaved,
+  onChanged,
   onClose,
   returnFocus,
 }: {
@@ -63,7 +67,10 @@ export function EditAgentConfig({
   /** The row, when the list already has it. Absent on a deep link into a
    *  page the walk hasn't reached, which is what the fetch below is for. */
   config?: AgentConfig;
-  onSaved: (config: AgentConfig) => void;
+  /** The config as the api now holds it — a new version after a save, the
+   *  same one carrying its mark after an archive. Either way the caller's
+   *  row is stale and this is what replaces it. */
+  onChanged: (config: AgentConfig) => void;
   onClose: () => void;
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
@@ -108,7 +115,7 @@ export function EditAgentConfig({
   return (
     <EditForm
       config={loaded}
-      onSaved={onSaved}
+      onChanged={onChanged}
       onClose={onClose}
       returnFocus={returnFocus}
       // A save replaces the config the form was built from, so the form
@@ -120,18 +127,22 @@ export function EditAgentConfig({
 
 function EditForm({
   config,
-  onSaved,
+  onChanged,
   onClose,
   returnFocus,
 }: {
   config: AgentConfig;
-  onSaved: (config: AgentConfig) => void;
+  onChanged: (config: AgentConfig) => void;
   onClose: () => void;
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const [fields, setFields] = useState<Fields>(() => fieldsOf(config));
-  const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
+  // WHICH write is in flight, not merely whether one is. The two paths out
+  // of this dialog are mutually exclusive and every control is disabled by
+  // either, so one value says it — and each button can still name its own.
+  const [pending, setPending] = useState<"saving" | "archiving">();
+  const busy = pending !== undefined;
 
   const archived = config.archivedAt !== undefined;
   const saved = fieldsOf(config);
@@ -182,12 +193,27 @@ function EditForm({
     };
 
     setFailure(undefined);
-    setBusy(true);
+    setPending("saving");
     try {
-      onSaved(await updateAgentConfig(config.id, input));
+      onChanged(await updateAgentConfig(config.id, input));
     } catch (err) {
       setFailure(messageOf(err));
-      setBusy(false);
+      setPending(undefined);
+    }
+  }
+
+  // The terminal transition, taken on the click. It reaches the api the
+  // same way a save does — and reports a refusal in the same place — but
+  // it costs no version and, unlike a save, it cannot be revisited.
+  async function archive() {
+    if (busy || archived) return;
+    setFailure(undefined);
+    setPending("archiving");
+    try {
+      onChanged(await archiveAgentConfig(config.id));
+    } catch (err) {
+      setFailure(messageOf(err));
+      setPending(undefined);
     }
   }
 
@@ -252,7 +278,15 @@ function EditForm({
           />
         </div>
 
+        {/* Archive sits away from the two buttons that answer the form:
+            it is the one action here that doesn't write a version, and
+            the one with nothing on the other side of it. */}
         <footer className="modal-foot">
+          {archived ? null : (
+            <button className="btn btn-archive" type="button" onClick={archive} disabled={busy}>
+              {pending === "archiving" ? "Archiving…" : "Archive"}
+            </button>
+          )}
           {failure ? (
             <p className="form-failure" role="alert">
               {failure}
@@ -263,7 +297,7 @@ function EditForm({
           </button>
           {archived ? null : (
             <button className="btn btn-primary" type="submit" disabled={busy || !changed}>
-              {busy ? "Saving…" : `Save as version ${config.version + 1}`}
+              {pending === "saving" ? "Saving…" : `Save as version ${config.version + 1}`}
             </button>
           )}
         </footer>

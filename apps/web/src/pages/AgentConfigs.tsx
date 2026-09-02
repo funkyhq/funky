@@ -121,10 +121,10 @@ export function AgentConfigs({ route }: PageProps) {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }
 
-  // An update lands as a new version of the same config, so the row is
-  // replaced where it is: this list is ordered by creation, which an edit
-  // does not change.
-  function saved(config: AgentConfig) {
+  // An update lands as a new version of the same config and an archive
+  // marks that same config terminal, so either way the row is replaced
+  // where it is: this list is ordered by creation, which neither changes.
+  function changed(config: AgentConfig) {
     setState((prev) =>
       prev.status === "ready"
         ? { ...prev, configs: prev.configs.map((c) => (c.id === config.id ? config : c)) }
@@ -302,7 +302,7 @@ export function AgentConfigs({ route }: PageProps) {
           key={route}
           id={route}
           config={editing}
-          onSaved={saved}
+          onChanged={changed}
           onClose={closeEditor}
           returnFocus={createButton}
         />

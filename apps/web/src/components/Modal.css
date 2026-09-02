@@ -158,3 +158,36 @@ body:has(dialog.modal[open]) {
     padding-right: 16px;
   }
 }
+
+/* Its own threshold, not the padding one above: a row of buttons has no
+   give — .btn is flex: none and this row does not wrap — so the widest
+   footer in the console (Archive + Cancel + "Save as version 12", ~316px
+   of buttons and gaps) needs about 380px of viewport before it stops
+   fitting. Below that the row overflows, and since it is justified to
+   flex-end the overflow leaves by the LEFT edge, taking whichever button
+   leads the footer off the panel with it. 440px keeps a margin over the
+   380 without stacking footers that still had room.
+
+   column-reverse rather than column: source order leads with the least-used
+   action (the one the row wants on the left), which is the last place it
+   belongs in a thumb-ordered column. */
+@media (max-width: 440px) {
+  .modal-foot {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  /* Stretched, so the label needs telling where to sit — a content-width
+     pill never had to say. */
+  .modal-foot .btn {
+    justify-content: center;
+  }
+
+  /* The api's refusal reads above the buttons, not between them: highest
+     order is topmost under column-reverse. Its auto margin has no free
+     space to take in a stretched column, so it goes too. */
+  .modal-foot .form-failure {
+    order: 1;
+    margin-right: 0;
+  }
+}

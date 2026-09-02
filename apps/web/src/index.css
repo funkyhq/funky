@@ -38,8 +38,10 @@
   --ok: #15a34a;
   --ok-glow: rgba(21, 163, 74, 0.2);
 
-  /* Red is likewise a signal, not a brand colour: it says the api refused,
-     and nothing else in the console is allowed to borrow it. */
+  /* Red is likewise a signal, not a brand colour, and it carries exactly
+     two meanings: the api refused, and this action destroys something.
+     Nothing decorative may borrow it. Text-only by design — it is never a
+     fill, so it always reads against a surface, never under a label. */
   --bad: #cf2a1e;
 
   --dot: rgba(16, 20, 38, 0.07);
@@ -98,6 +100,7 @@
     --ok: #4ade80;
     --ok-glow: rgba(74, 222, 128, 0.2);
 
+    /* Lightened for the dark background, the same way --accent is. */
     --bad: #ff8f84;
 
     --dot: rgba(255, 255, 255, 0.055);
@@ -142,8 +145,10 @@ a {
 
 /* Button ------------------------------------------------------------------
    One pill, two weights: the default reads as secondary, .btn-primary as
-   the action a surface exists to perform. Shared by the pages and the
-   modal, so it sits here rather than in either. */
+   the action a surface exists to perform. A destructive action stays on the
+   default weight and says so in var(--bad) instead (see .btn-archive) — the
+   filled red was tried and cut, because it out-shouted the Save beside it.
+   Shared by the pages and the modal, so it sits here rather than in either. */
 
 .btn {
   display: inline-flex;
