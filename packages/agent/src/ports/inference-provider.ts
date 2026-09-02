@@ -7,10 +7,7 @@ import type { AgentMessage, ProviderEvent, ToolSpec } from "@funky/core";
  * Contract for implementations:
  * - Map the request's sampling fields (`maxTokens`, `temperature`, …) to
  *   vendor parameters; an absent field means the vendor's own default,
- *   never a harness default. The config's `provider` field is consumed
- *   before this port — it picks the adapter (the composition root today;
- *   a registry or mux when a second vendor exists) and stops there, so a
- *   stream() implementation never sees it.
+ *   never a harness default.
  * - Translate `req` to the vendor wire format and the vendor's stream events
  *   to `ProviderEvent`s, one by one, as they arrive. Nothing else: no fold
  *   (the engine assembles the message), no retries (driver policy), no

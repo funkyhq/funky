@@ -33,9 +33,15 @@ const sandboxes = createE2bProvider({ apiKey: cfg.e2bApiKey });
 
 const deps: DriverDeps = {
   store,
-  provider: createAiSdkProvider({
-    languageModel: createAnthropic({ apiKey: cfg.anthropicApiKey }),
-  }),
+  // The registry the driver routes each claim's `inference.provider`
+  // on: its keys are the providers this worker serves. Anthropic only,
+  // today — a second vendor is a second entry and its key.
+  providers: new Map([
+    [
+      "anthropic",
+      createAiSdkProvider({ languageModel: createAnthropic({ apiKey: cfg.anthropicApiKey }) }),
+    ],
+  ]),
   toolSpecs: sandboxToolSpecs,
   // Ensure-on-claim: the loop calls this only for an execute_tools item
   // that will actually execute. The sandbox recipe is the snapshot the
@@ -53,5 +59,8 @@ const deps: DriverDeps = {
   },
 };
 
-console.log(`worker: claiming (lease=${cfg.leaseMs}ms idlePoll=${cfg.idlePollMs}ms)`);
+console.log(
+  `worker: claiming (providers=${[...deps.providers.keys()].join(",")} ` +
+    `lease=${cfg.leaseMs}ms idlePoll=${cfg.idlePollMs}ms)`,
+);
 await runDriver(deps, { leaseMs: cfg.leaseMs, idlePollMs: cfg.idlePollMs });

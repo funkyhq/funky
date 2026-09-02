@@ -132,10 +132,15 @@ const inferenceConfig = {
   temperature: 0.2,
 };
 
-async function newSession(): Promise<SessionRef> {
+/** The registry as a worker wires it: this adapter under the id the
+ *  config names, and nothing else. */
+const serving = (provider: InferenceProvider): ReadonlyMap<string, InferenceProvider> =>
+  new Map([[inferenceConfig.provider, provider]]);
+
+async function newSession(inference = inferenceConfig): Promise<SessionRef> {
   const agentConfigRef = await store.createAgentConfig({
     namespace: DEFAULT_NAMESPACE,
-    inference: inferenceConfig,
+    inference,
     systemPrompt: "be brief",
   });
   const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
@@ -181,7 +186,7 @@ describe("driver steps over the pg store", () => {
     const provider = scriptedProvider([callEcho("hi"), sayText("done!")]);
     const deps: StepDeps = {
       store,
-      provider,
+      providers: serving(provider),
       toolSpecs: [...echoOnly.values()].map(toToolSpec),
     };
 
@@ -223,7 +228,11 @@ describe("driver steps over the pg store", () => {
     expect(queued.kind).toBe("queued");
 
     const provider = scriptedProvider([sayText("ok")]);
-    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionRef), 60_000);
+    await runStep(
+      { store, providers: serving(provider), toolSpecs: [] },
+      await claim(sessionRef),
+      60_000,
+    );
 
     // Steering shaped the context (appended at the tail)…
     expect(provider.requests[0]?.context.map((m) => m.role)).toEqual(["user", "user"]);
@@ -244,7 +253,7 @@ describe("driver steps over the pg store", () => {
       [...sayText("first").slice(0, 3), { wait: gate.promise }, sayText("first")[3] as Step],
       sayText("second"),
     ]);
-    const deps: StepDeps = { store, provider, toolSpecs: [] };
+    const deps: StepDeps = { store, providers: serving(provider), toolSpecs: [] };
 
     const inFlight = runStep(deps, await claim(sessionRef), 60_000);
     // Arrive after run 1's inference prep: too late to steer this step.
@@ -272,7 +281,7 @@ describe("driver steps over the pg store", () => {
     expect(queued.kind).toBe("queued");
 
     const provider = scriptedProvider([sayText("fresh")]);
-    const deps: StepDeps = { store, provider, toolSpecs: [] };
+    const deps: StepDeps = { store, providers: serving(provider), toolSpecs: [] };
     await runStep(deps, await claim(sessionRef), 60_000);
 
     // The run ended without inference, appending nothing; the queued
@@ -296,12 +305,43 @@ describe("driver steps over the pg store", () => {
     const sessionRef = await newSession();
     await store.intake(sessionRef, user("go"));
     const provider = scriptedProvider([[{ throw: new Error("provider exploded") }]]);
-    await runStep({ store, provider, toolSpecs: [] }, await claim(sessionRef), 60_000);
+    await runStep(
+      { store, providers: serving(provider), toolSpecs: [] },
+      await claim(sessionRef),
+      60_000,
+    );
 
     const log = messages(await store.readEntries(sessionRef));
     expect(log).toHaveLength(2);
     expect(log[1]).toMatchObject({ role: "assistant", stopReason: "error" });
     expect(provider.requests).toHaveLength(1);
+    expect(await store.claimItem({ leaseMs: 60_000, session: sessionRef })).toBeUndefined();
+  });
+
+  it("commits an error and ends the run when the config names a provider this worker does not serve", async () => {
+    const sessionRef = await newSession({ ...inferenceConfig, provider: "elsewhere" });
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([sayText("never asked")]);
+    await runStep(
+      { store, providers: serving(provider), toolSpecs: [] },
+      await claim(sessionRef),
+      60_000,
+    );
+
+    // The step's own outcome, committed — not routed to whatever IS wired,
+    // and not left uncommitted for the next claimer to refuse again.
+    const log = messages(await store.readEntries(sessionRef));
+    expect(log).toHaveLength(2);
+    expect(log[1]).toMatchObject({
+      role: "assistant",
+      content: [],
+      model: inferenceConfig.model,
+      stopReason: "error",
+      errorMessage: expect.stringContaining('"elsewhere"'),
+    });
+    // …and the message names what this worker would have served.
+    expect(log[1]).toMatchObject({ errorMessage: expect.stringContaining("scripted") });
+    expect(provider.requests).toHaveLength(0);
     expect(await store.claimItem({ leaseMs: 60_000, session: sessionRef })).toBeUndefined();
   });
 
@@ -316,7 +356,11 @@ describe("driver steps over the pg store", () => {
         return echo.execute(args, ctx);
       },
     };
-    const deps: StepDeps = { store, provider, toolSpecs: [...echoOnly.values()].map(toToolSpec) };
+    const deps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [...echoOnly.values()].map(toToolSpec),
+    };
 
     await store.intake(sessionRef, user("go"));
     await runStep(deps, await claim(sessionRef), 60_000); // inference → tool call
@@ -350,7 +394,7 @@ describe("driver steps over the pg store", () => {
     const sessionRef = await newSession();
     await store.intake(sessionRef, user("go"));
     const provider = scriptedProvider([sayText("later")]);
-    const deps: StepDeps = { store, provider, toolSpecs: [] };
+    const deps: StepDeps = { store, providers: serving(provider), toolSpecs: [] };
 
     // The lease dies between claim and runStep — the window the loop's
     // sandbox bind occupies. The awaited first beat must catch it.
@@ -372,7 +416,7 @@ describe("driver steps over the pg store", () => {
     const sessionRef = await newSession();
     await store.intake(sessionRef, user("go"));
     const provider = scriptedProvider([["untilAborted"], sayText("recovered")]);
-    const deps: StepDeps = { store, provider, toolSpecs: [] };
+    const deps: StepDeps = { store, providers: serving(provider), toolSpecs: [] };
 
     const inFlight = runStep(deps, await claim(sessionRef, 500), 500);
     await until(() => provider.requests.length === 1);
@@ -406,7 +450,7 @@ describe("driver steps over the pg store", () => {
     };
 
     const provider = scriptedProvider([sayText("a"), sayText("b")]);
-    const deps: StepDeps = { store: fencingStore, provider, toolSpecs: [] };
+    const deps: StepDeps = { store: fencingStore, providers: serving(provider), toolSpecs: [] };
 
     // First step's commit is fenced: runStep swallows it and drops the work.
     await runStep(deps, await claim(sessionRef, 300), 300);

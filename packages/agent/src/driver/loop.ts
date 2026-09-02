@@ -30,6 +30,8 @@
 
 import type {
   AgentMessage,
+  AssistantMessage,
+  InferenceConfig,
   ProviderEvent,
   SessionEntry,
   SessionRef,
@@ -55,7 +57,11 @@ import {
  *  bound map as an argument, because binding is the loop's job. */
 export interface StepDeps {
   store: Store;
-  provider: InferenceProvider;
+  /** The inference adapters this worker wired, keyed by the id a
+   *  config's `inference.provider` names. Resolved per claim, so
+   *  sessions on one worker run on different vendors; the keys are the
+   *  whole of what this worker serves (see unservedProvider). */
+  providers: ReadonlyMap<string, InferenceProvider>;
   /** Static tool declarations for the inference branch. Declaring tools
    *  never needs a sandbox, so an inference-only turn never pays for
    *  one — the ensure-on-claim half of the ratified lifecycle. */
@@ -187,21 +193,25 @@ export async function runStep(
       // and are consumed by it.
       const pending = await store.pendingInputs(item);
       const steering = pending.map((input) => input.message);
-      // config.inference.provider picked the adapter at composition and
-      // is not part of the request.
-      // StepDeps is structurally an InferenceDeps; no re-wrapping.
-      const message = await inference(
-        deps,
-        {
-          model: config.inference.model,
-          maxTokens: config.inference.maxTokens,
-          temperature: config.inference.temperature,
-          system: config.systemPrompt,
-          context: buildContext(entries, steering),
-          tools: deps.toolSpecs,
-        },
-        step.signal,
-      );
+      // `provider` is read here and nowhere else: it picks the adapter
+      // and stops — it never joins the request (see the port). A
+      // provider this worker did not wire fails the step in the commit,
+      // not in a throw (see unservedProvider).
+      const provider = deps.providers.get(config.inference.provider);
+      const message = provider
+        ? await inference(
+            { provider, onDelta: deps.onDelta },
+            {
+              model: config.inference.model,
+              maxTokens: config.inference.maxTokens,
+              temperature: config.inference.temperature,
+              system: config.systemPrompt,
+              context: buildContext(entries, steering),
+              tools: deps.toolSpecs,
+            },
+            step.signal,
+          )
+        : unservedProvider(config.inference, deps.providers);
       append = [...steering, message];
       consumeInputs = pending.map((input) => input.id);
       tail = message;
@@ -249,6 +259,26 @@ export async function runStep(
   } finally {
     heartbeat.stop();
   }
+}
+
+/**
+ * The step's outcome for a provider this worker didn't wire: an
+ * error-stopped message, committed, so the run ends "error" with the
+ * reason in the log. Not a throw — an uncommitted item is re-claimed on
+ * lease expiry by workers with the same env, and would cycle forever.
+ */
+function unservedProvider(
+  inference: InferenceConfig,
+  providers: ReadonlyMap<string, InferenceProvider>,
+): AssistantMessage {
+  const served = [...providers.keys()].sort().join(", ") || "none";
+  return {
+    role: "assistant",
+    content: [],
+    model: inference.model,
+    stopReason: "error",
+    errorMessage: `no inference provider "${inference.provider}" on this worker (it serves: ${served})`,
+  };
 }
 
 /**

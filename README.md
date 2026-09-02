@@ -86,10 +86,7 @@ scheduler; nothing else changes.
 ### Other model providers
 
 Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
-port — one adapter, any AI SDK provider. The shipped stack wires Anthropic; to run on
-another vendor, swap the provider factory in the worker's composition root
-([`apps/worker/src/main.ts`](apps/worker/src/main.ts)) — `createOpenAI` fits exactly where
-`createAnthropic` sits — and supply that vendor's key instead.
+port — one adapter, any AI SDK provider.
 
 ## Why Funky?
 
