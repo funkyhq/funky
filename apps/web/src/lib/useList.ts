@@ -29,6 +29,25 @@ export const SKELETON = [0, 1, 2];
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
+ * Whether an answer may still land when its token TIES the one already held
+ * — the other half of a `supersedes` test (see replace()).
+ *
+ * The tie is not hypothetical: archiving mints no token of its own. An env
+ * config's updatedAt marks the last edit and archiving is not one; an agent
+ * config's archive writes no version. So the archived answer and the update
+ * just before it carry the same token, and whichever arrived second would
+ * otherwise win — letting a late update answer show a retired row as active.
+ * Archive is terminal, so at a tie it is the later fact, and the only answer
+ * that may still land is one that does not undo it.
+ */
+export function keepsArchive(
+  incoming: { archivedAt?: string },
+  held: { archivedAt?: string },
+): boolean {
+  return incoming.archivedAt !== undefined || held.archivedAt === undefined;
+}
+
+/**
  * Rows keyed by `id`, newest first, with `prepend`/`replace` for the ones a
  * page changes itself: this console's lists are ordered by creation, and no
  * edit it can make moves a row, so a changed row is replaced where it is
@@ -123,11 +142,34 @@ export function useList<T extends { id: string }>(fetchPage: FetchPage<T>) {
     );
   }
 
-  /** A row that changed, put back where it was — see the header. */
-  function replace(item: T) {
+  /**
+   * A row that changed, put back where it was — unless the copy already held
+   * is the fresher one.
+   *
+   * Writes to a single row can overlap: an editor is not the only thing that
+   * can have one in flight, and a save outliving the dialog that sent it can
+   * land after a later one. Their answers need not arrive in the order the
+   * api committed them, so a list that always took the newest ANSWER would
+   * settle on a row the api no longer holds — and the next editor would
+   * start from it.
+   *
+   * `supersedes` is how a caller says which of two copies is the later one,
+   * using whatever monotonic token its resource has; only the caller knows
+   * what that is — and keepsArchive() below settles the ties that token
+   * cannot. Without one the incoming row wins, which is right for a list
+   * whose rows are replaced only by writes that cannot overlap.
+   */
+  function replace(item: T, supersedes?: (incoming: T, held: T) => boolean) {
     setState((prev) =>
       prev.status === "ready"
-        ? { ...prev, items: prev.items.map((row) => (row.id === item.id ? item : row)) }
+        ? {
+            ...prev,
+            items: prev.items.map((row) =>
+              row.id !== item.id || (supersedes !== undefined && !supersedes(item, row))
+                ? row
+                : item,
+            ),
+          }
         : prev,
     );
   }

@@ -20,41 +20,12 @@ import {
   createEnvConfig,
   DEFAULT_NAMESPACE,
   type EnvConfig,
-  type NetworkPolicy,
 } from "../lib/api";
-import { Field } from "../components/Field";
+import { type NetworkFields, toPolicy } from "../lib/network";
+import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { Modal } from "../components/Modal";
 
-/** The three policies core defines, in the order they narrow: reach
- *  anything, reach a named few, reach nothing. */
-const POLICIES = [
-  { id: "unrestricted", label: "Unrestricted — reach anything" },
-  { id: "allowlist", label: "Allowlist — reach only these domains" },
-  { id: "none", label: "None — no network at all" },
-];
-
-/** Only the allowlist carries anything beyond its own name, so `domains` is
- *  held beside the type rather than inside it: switching policies twice
- *  comes back to what was typed. */
-type Fields = { type: NetworkPolicy["type"]; domains: string };
-
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
-
-/**
- * The domains as typed, one per line or comma-separated, in the order they
- * were written. Blanks are dropped and repeats collapsed — neither is a
- * domain the sandbox could be told about twice — but nothing else is
- * touched: the api takes these as strings and this console is in no
- * position to decide what a hostname may look like.
- */
-function parseDomains(text: string): string[] {
-  const seen = new Set<string>();
-  for (const entry of text.split(/[\n,]/)) {
-    const domain = entry.trim();
-    if (domain !== "") seen.add(domain);
-  }
-  return [...seen];
-}
 
 export function CreateEnvConfig({
   onCreated,
@@ -70,25 +41,19 @@ export function CreateEnvConfig({
 }) {
   // The api's own default is where the form starts: an unrestricted recipe
   // is what posting an empty body would have made.
-  const [fields, setFields] = useState<Fields>({ type: "unrestricted", domains: "" });
+  const [fields, setFields] = useState<NetworkFields>({ type: "unrestricted", domains: "" });
   const [busy, setBusy] = useState(false);
   // The api's refusal — a 400, or an api that isn't there.
   const [failure, setFailure] = useState<string>();
 
-  const allowlist = fields.type === "allowlist";
-  const domains = allowlist ? parseDomains(fields.domains) : [];
-  // An allowlist of nothing reaches nothing, which is what `none` already
-  // says — and says legibly. So the form asks for the domain rather than
-  // taking a recipe whose type and effect disagree.
-  const incomplete = allowlist && domains.length === 0;
+  // Absent while the allowlist has no domain on it — the one state of this
+  // form that isn't a policy yet (see toPolicy).
+  const network = toPolicy(fields);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || incomplete) return;
+    if (busy || network === undefined) return;
 
-    const network: NetworkPolicy = allowlist
-      ? { type: "allowlist", domains }
-      : { type: fields.type as "unrestricted" | "none" };
     const input: CreateEnvConfigInput = { network };
 
     setFailure(undefined);
@@ -121,33 +86,9 @@ export function CreateEnvConfig({
     >
       <form className="modal-form" onSubmit={submit} noValidate>
         <div className="modal-body form-fields">
-          <Field
-            label="Network"
-            name="network"
-            value={fields.type}
-            onChange={(type) =>
-              setFields((prev) => ({ ...prev, type: type as NetworkPolicy["type"] }))
-            }
-            options={POLICIES}
-            autoFocus
-            required
-          />
-
-          {/* The one policy with anything to say beyond its name. Keyed to
-              nothing and mounted only here: a recipe that isn't an allowlist
-              has no domains to show, and an empty box would suggest it did. */}
-          {allowlist ? (
-            <Field
-              label="Domains"
-              name="domains"
-              value={fields.domains}
-              onChange={(text) => setFields((prev) => ({ ...prev, domains: text }))}
-              placeholder={"pypi.org\nfiles.pythonhosted.org"}
-              rows={4}
-              multiline
-              required
-            />
-          ) : null}
+          {/* The body went to the api when the click did, so a form still
+              taking edits would be collecting what the close discards. */}
+          <NetworkFieldset fields={fields} onChange={setFields} disabled={busy} />
         </div>
 
         <footer className="modal-foot">
@@ -159,7 +100,11 @@ export function CreateEnvConfig({
           <button className="btn" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button className="btn btn-primary" type="submit" disabled={busy || incomplete}>
+          <button
+            className="btn btn-primary"
+            type="submit"
+            disabled={busy || network === undefined}
+          >
             {busy ? "Creating…" : "Create"}
           </button>
         </footer>

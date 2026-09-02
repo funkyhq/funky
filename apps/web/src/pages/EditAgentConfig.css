@@ -1,32 +1,8 @@
 /* apps/web/src/pages/EditAgentConfig.css
-   What only the edit dialog draws. The panel, body and footer are
-   components/Modal.css; the fields are components/Field.css. Every colour
+   What only the agent edit dialog draws — Archive, the one action here that
+   isn't an edit. The panel, body and footer are components/Modal.css (.note
+   and .mono-id with them); the fields are components/Field.css. Every colour
    resolves to a token in index.css. */
-
-/* The id and what version it is at, under the title — the two facts an edit
-   is made against. */
-.mono-id {
-  font: 500 12px var(--mono);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
-.meta {
-  display: block;
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-/* A config with no way back to editable says so above the fields it has
-   disabled, not after a Save the api would refuse. */
-.archived-note {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-sunken);
-  font-size: 12.5px;
-}
 
 /* Archive is the footer's left-hand action, so the two buttons that answer
    the form — Cancel and Save — stay together on the right, and the one that

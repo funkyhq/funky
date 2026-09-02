@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type AgentConfig, listAgentConfigs } from "../lib/api";
 import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
-import { SKELETON, useList } from "../lib/useList";
+import { keepsArchive, SKELETON, useList } from "../lib/useList";
 import { useNow } from "../lib/useNow";
 import { AgentIcon, PlusIcon, RefreshIcon } from "../components/Icons";
 import { Status } from "../components/Status";
@@ -74,9 +74,23 @@ export function AgentConfigs({ route }: PageProps) {
   // An update lands as a new version of the same config and an archive
   // marks that same config terminal, so either way the row is replaced
   // where it is.
+  //
+  // Only the row: closing is the dialog's own to do. A write is not aborted
+  // when its editor goes away, and the route it was sent from does not
+  // identify that editor — reopening the same config gives the same route a
+  // different dialog. Only the dialog knows whether it is still the one
+  // open, so it is the one that decides whether to close (see
+  // EditAgentConfig).
   function changed(config: AgentConfig) {
-    replace(config);
-    closeEditor();
+    // Never older than what is already held — see EnvConfigs for why answers
+    // can arrive out of commit order. Here the token is the version, which is
+    // monotonic by construction; an archive writes no version, so it ties
+    // with the update before it and keepsArchive() settles which one wins.
+    replace(config, (incoming, held) =>
+      incoming.version === held.version
+        ? keepsArchive(incoming, held)
+        : incoming.version > held.version,
+    );
   }
 
   function added(config: AgentConfig) {

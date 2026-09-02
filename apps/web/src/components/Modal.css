@@ -103,6 +103,32 @@ body:has(dialog.modal[open]) {
   color: var(--text-2);
 }
 
+/* A boxed aside above the fields — what a dialog has to say about the
+   thing before offering it, like a config that takes no more updates. */
+.note {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+}
+
+/* The id under the title, and whatever fact sits under that — what an edit
+   is being made against. Both belong to Modal's `description` slot, so they
+   live with it rather than in whichever dialog used them first. */
+.mono-id {
+  font: 500 12px var(--mono);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 /* Any literal in a body — an env var, an endpoint, an id — reads as one. */
 .modal-body code {
   padding: 1px 5px;
