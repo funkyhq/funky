@@ -1,0 +1,160 @@
+/* apps/web/src/pages/Transcript.css
+   The conversation itself: two kinds of bubble, the folds that hold what
+   happened between them, and the asides for a log row that is neither.
+   The frame around all of it — the header, the scroller, the composer —
+   is pages/SessionDetail.css. Every colour resolves to a token in
+   index.css. */
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 100%;
+}
+
+/* The side a turn sits on is who is speaking, which is the one thing a
+   transcript should never make you read to know. */
+.turn-user {
+  align-items: flex-end;
+}
+
+.turn-agent {
+  align-items: flex-start;
+}
+
+.bubble {
+  max-width: min(80%, 660px);
+  padding: 11px 14px;
+  border-radius: var(--r-lg);
+  font-size: 14px;
+  line-height: 1.62;
+  color: var(--text);
+  /* A url or a stack frame breaks rather than stretching the column. */
+  overflow-wrap: anywhere;
+}
+
+.bubble-user {
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  /* What was typed, newlines included. Only the user's side: an agent's
+     text is markdown, and its own blocks carry their own whitespace
+     (components/Markdown.css). */
+  white-space: pre-wrap;
+  /* The corner nearest its own edge, squared off, so the two sides read as
+     addressed rather than merely aligned. */
+  border-bottom-right-radius: var(--r-sm);
+}
+
+.bubble-agent {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+  border-bottom-left-radius: var(--r-sm);
+}
+
+/* Everything a turn is made of stacks the same way — a fold, a paragraph, a
+   code block, the line saying how it ended. The markdown blocks are children
+   of the bubble too (Markdown renders a fragment, not a wrapper), so one
+   rule spaces all of it and no block has to know what follows it. */
+.bubble-agent > * + * {
+  margin-top: 11px;
+}
+
+/* A heading earns a little more air above it than between two paragraphs;
+   that is most of what makes it read as a heading here. */
+.bubble-agent > * + .md-h {
+  margin-top: 15px;
+}
+
+/* Why a turn ended, when that isn't simply "it answered". */
+.turn-outcome {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.turn-outcome.bad {
+  color: var(--bad);
+}
+
+.turn-meta,
+.turn-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 3px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.turn-model {
+  font: 500 11px var(--mono);
+}
+
+/* Folds ------------------------------------------------------------------
+   Thinking, tool calls and tool results: real rows of the log, and the
+   reason an answer says what it says. One line each until asked, so the
+   conversation stays a conversation. */
+
+.fold {
+  align-self: stretch;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+
+.fold-head {
+  padding: 7px 12px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  cursor: pointer;
+  /* The disclosure triangle is the affordance; the row is the target. */
+  list-style-position: inside;
+}
+
+.fold-head:hover {
+  color: var(--text-2);
+}
+
+.fold-name {
+  font: 500 12px var(--mono);
+  color: var(--text-2);
+}
+
+.fold-error .fold-head {
+  color: var(--bad);
+}
+
+.fold-body {
+  margin: 0;
+  padding: 0 12px 11px 12px;
+  max-height: 320px;
+  overflow: auto;
+  font: 400 12px var(--mono);
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+/* Asides ----------------------------------------------------------------- */
+
+/* A log row a conversation has no line for — a cancel, a compaction, an
+   app's own payload. Marked rather than dropped: the log is additive, so
+   an unrecognised row means this reader is behind, not that nothing
+   happened. */
+.aside {
+  align-self: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+@container pane (max-width: 620px) {
+  .bubble {
+    max-width: 92%;
+  }
+}

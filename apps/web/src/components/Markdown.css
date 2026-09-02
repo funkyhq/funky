@@ -1,0 +1,105 @@
+/* apps/web/src/components/Markdown.css
+   A model's answer, styled as prose inside a chat bubble — so everything
+   here is scaled to sit in one, not to be a document. The gaps between
+   blocks are the bubble's own (see .bubble-agent in pages/Transcript.css),
+   which is what lets a fold and a paragraph stack the same way. Every
+   colour resolves to a token in index.css. */
+
+.md-p {
+  /* A single newline is a line break, the way the parser reads it — a model
+     that wrote two lines meant two. */
+  white-space: pre-wrap;
+}
+
+/* Not <h1>–<h6> (see Markdown.tsx): a heading here is emphasis inside one
+   message, so it reads as one step louder than the text and no more. */
+.md-h {
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.md-h1,
+.md-h2 {
+  font-size: 15.5px;
+}
+
+.md-h3,
+.md-h4,
+.md-h5,
+.md-h6 {
+  font-size: 14.5px;
+}
+
+.md-code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  font: 500 12px var(--mono);
+  /* An identifier shouldn't stretch the bubble; it breaks like a url. */
+  overflow-wrap: anywhere;
+}
+
+/* A fence is the one block that keeps its own whitespace exactly, so it is
+   the one that scrolls sideways rather than wrapping: a wrapped line of code
+   reads as two lines of code. */
+.md-pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.md-pre code {
+  font: 400 12px/1.6 var(--mono);
+  color: var(--text-2);
+}
+
+.md-list {
+  margin: 0;
+  /* Room for the marker inside the bubble rather than hanging out of it. */
+  padding-left: 22px;
+}
+
+.md-li::marker {
+  color: var(--text-3);
+}
+
+/* Nested content — a second paragraph, a nested list — stacks the way the
+   bubble's own children do. */
+.md-li > * + * {
+  margin-top: 7px;
+}
+
+.md-li + .md-li {
+  margin-top: 4px;
+}
+
+.md-quote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-2);
+}
+
+.md-quote > * + * {
+  margin-top: 8px;
+}
+
+.md-rule {
+  height: 0;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2.5px;
+  overflow-wrap: anywhere;
+}
