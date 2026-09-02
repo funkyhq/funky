@@ -7,25 +7,37 @@
 // and a session that already started carries its own copy of the one it
 // provisioned from.
 //
-// Three columns, and no row link: there is nothing to open yet. Creating
-// and editing recipes from here comes next, the way the agent section got
-// them — the list first, alone.
+// Three columns, and no row link: there is nothing to open yet. Create
+// writes the network policy only; packages are the recipe's other half and
+// come later (see CreateEnvConfig).
+import { useRef, useState } from "react";
 import { type EnvConfig, listEnvConfigs } from "../lib/api";
 import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
 import { SKELETON, useList } from "../lib/useList";
 import { useNow } from "../lib/useNow";
-import { EnvironmentIcon, RefreshIcon } from "../components/Icons";
+import { EnvironmentIcon, PlusIcon, RefreshIcon } from "../components/Icons";
 import { Status } from "../components/Status";
+import { CreateEnvConfig } from "./CreateEnvConfig";
 import "./list.css";
 import "./EnvConfigs.css";
 
 /** Takes no route: this section is one view, so `#/environment` addresses
  *  all of it. */
 export function EnvConfigs() {
-  const { state, more, reload, loadMore } = useList<EnvConfig>(listEnvConfigs);
+  const { state, more, reload, loadMore, prepend } = useList<EnvConfig>(listEnvConfigs);
   // Relative timestamps are only true at the moment they render, so the
   // clock they read has to keep moving.
   const now = useNow(RELATIVE_TICK_MS);
+  const [creating, setCreating] = useState(false);
+  // The header's Create button, which every state of this page renders. It
+  // is where the dialog puts focus back when what opened it was the empty
+  // state's button — the row it creates is what replaces that button.
+  const createButton = useRef<HTMLButtonElement>(null);
+
+  function added(config: EnvConfig) {
+    setCreating(false);
+    prepend(config);
+  }
 
   return (
     <section className="list envs">
@@ -40,6 +52,15 @@ export function EnvConfigs() {
           >
             <RefreshIcon />
             Refresh
+          </button>
+          <button
+            className="btn btn-primary"
+            type="button"
+            ref={createButton}
+            onClick={() => setCreating(true)}
+          >
+            <PlusIcon />
+            Create
           </button>
         </div>
       </header>
@@ -61,9 +82,12 @@ export function EnvConfigs() {
           <p className="notice-title">No env configs yet</p>
           <p className="notice-body">
             A recipe is the sandbox a session&rsquo;s commands run inside — its network policy and
-            its packages. Post one to <code>/v1/env-configs</code> — creating them from here comes
-            next.
+            its packages. Create the first one, or post it yourself to <code>/v1/env-configs</code>.
           </p>
+          <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}>
+            <PlusIcon />
+            Create env config
+          </button>
         </div>
       ) : (
         <div className="table-wrap">
@@ -109,6 +133,14 @@ export function EnvConfigs() {
           </table>
         </div>
       )}
+
+      {creating ? (
+        <CreateEnvConfig
+          onCreated={added}
+          onClose={() => setCreating(false)}
+          returnFocus={createButton}
+        />
+      ) : null}
 
       {state.status === "ready" && state.hasMore ? (
         <div className="list-more">

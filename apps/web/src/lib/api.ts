@@ -260,6 +260,35 @@ export function archiveAgentConfig(
 }
 
 /**
+ * The create body, minus the namespace this console pins for every call.
+ * Every field is optional because every one has a default the api resolves
+ * at create — an absent network is unrestricted, absent packages are none —
+ * so what this omits is a decision left to the api, not one left unmade.
+ */
+export type CreateEnvConfigInput = {
+  network?: NetworkPolicy;
+  packages?: Packages;
+  metadata?: unknown;
+};
+
+/**
+ * Creates an env config and returns it MATERIALIZED: the defaults resolved,
+ * so the answer is the recipe as stored rather than the request that was
+ * sent. The namespace rides in the body here, as it does for agent configs.
+ */
+export function createEnvConfig(
+  input: CreateEnvConfigInput = {},
+  opts: { signal?: AbortSignal } = {},
+): Promise<EnvConfig> {
+  return post<EnvConfig>(
+    "/v1/env-configs",
+    { namespace: DEFAULT_NAMESPACE, ...input },
+    {},
+    opts.signal,
+  );
+}
+
+/**
  * One page of the namespace's env configs, newest first. Archived recipes
  * are listed beside live ones — they stay readable, and the sessions that
  * copied them keep running — so a row's status is worth a column.
