@@ -5,6 +5,7 @@
 import type { ReactElement, SVGProps } from "react";
 import { AgentIcon, BoltIcon, EnvironmentIcon, SessionIcon } from "./components/Icons";
 import { AgentConfigs } from "./pages/AgentConfigs";
+import { EnvConfigs } from "./pages/EnvConfigs";
 
 /** What a page is handed: the part of the route below its own section, so
  *  a section can address something inside itself (`#/agent/<id>`) without
@@ -54,6 +55,7 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     blurb:
       "Env configs are the sandbox recipe: the base image a session's commands execute inside. One sandbox per session, bound in the store so it outlives any worker.",
     chip: "/v1/env-configs",
+    Page: EnvConfigs,
   },
   {
     id: "session",

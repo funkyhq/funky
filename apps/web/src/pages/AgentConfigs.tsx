@@ -9,28 +9,16 @@
 // make this a changelog rather than an inventory.
 import { useEffect, useRef, useState } from "react";
 import { type AgentConfig, listAgentConfigs } from "../lib/api";
-import { absoluteTime, relativeTime } from "../lib/format";
+import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
+import { SKELETON, useList } from "../lib/useList";
 import { useNow } from "../lib/useNow";
 import { AgentIcon, PlusIcon, RefreshIcon } from "../components/Icons";
+import { Status } from "../components/Status";
 import type { PageProps } from "../nav";
 import { CreateAgentConfig } from "./CreateAgentConfig";
 import { EditAgentConfig } from "./EditAgentConfig";
+import "./list.css";
 import "./AgentConfigs.css";
-
-type State =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; configs: AgentConfig[]; hasMore: boolean; cursor?: string };
-
-/** Placeholder rows while the first page is in flight — same shape, so
- *  arriving data replaces them without the layout jumping. */
-const SKELETON = [0, 1, 2];
-
-/** How often the Created column re-reads the clock. Fine enough that the
- *  coarsest thing it prints — "1 minute ago" — is never a minute stale. */
-const TICK_MS = 30_000;
-
-const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /** This section's own route. Rows link into it by id, and closing the editor
  *  goes back to it — one place that spells the section's hash. */
@@ -42,54 +30,16 @@ const SECTION = "#/agent";
  * of its own, and stays linkable, back-navigable and reloadable.
  */
 export function AgentConfigs({ route }: PageProps) {
-  const [state, setState] = useState<State>({ status: "loading" });
-  const [more, setMore] = useState<{ busy: boolean; error?: string }>({ busy: false });
-  // Bumped to re-run the effect — refresh and retry both go through
-  // reload(), so a reload is one code path.
-  const [reloads, setReloads] = useState(0);
+  const { state, more, reload, loadMore, prepend, replace } =
+    useList<AgentConfig>(listAgentConfigs);
   // Relative timestamps are only true at the moment they render, so the
   // clock they read has to keep moving.
-  const now = useNow(TICK_MS);
-  // The in-flight next-page request, if any. Held so a reload can cancel
-  // it: its rows belong to the walk being replaced, not to the new one.
-  const pagination = useRef<AbortController | null>(null);
+  const now = useNow(RELATIVE_TICK_MS);
   const [creating, setCreating] = useState(false);
   // The header's Create button, which every state of this page renders. It
   // is where the dialog puts focus back when what opened it was the empty
   // state's button — the row it creates is what replaces that button.
   const createButton = useRef<HTMLButtonElement>(null);
-
-  // The reset lives here rather than in the effect: the click is what makes
-  // this loading again, and the effect's job is only to fetch.
-  function reload() {
-    setState({ status: "loading" });
-    setMore({ busy: false });
-    setReloads((n) => n + 1);
-  }
-
-  useEffect(() => {
-    const abort = new AbortController();
-    listAgentConfigs({ signal: abort.signal }).then(
-      (page) =>
-        setState({
-          status: "ready",
-          configs: page.data,
-          hasMore: page.hasMore,
-          cursor: page.lastId,
-        }),
-      (err: unknown) => {
-        if (abort.signal.aborted) return;
-        setState({ status: "error", message: messageOf(err) });
-      },
-    );
-    return () => {
-      abort.abort();
-      // Same generation, same fate: a page still arriving would otherwise
-      // append itself to — and move the cursor of — a list it is no longer
-      // part of, dropping or duplicating rows on the next Load more.
-      pagination.current?.abort();
-    };
-  }, [reloads]);
 
   // Whether the editor's history entry is one a row click pushed, rather
   // than where the page was opened. Closing has to UNDO a push — otherwise
@@ -105,7 +55,7 @@ export function AgentConfigs({ route }: PageProps) {
   // The row the editor is open on, when this page already has it. A deep
   // link can name one from a page the walk hasn't reached; the dialog
   // fetches that itself rather than making the list chase it.
-  const editing = state.status === "ready" ? state.configs.find((c) => c.id === route) : undefined;
+  const editing = state.status === "ready" ? state.items.find((c) => c.id === route) : undefined;
 
   /** Leaves `#/agent/<id>` for `#/agent` without leaving a dialog behind
    *  the Back button. */
@@ -123,69 +73,22 @@ export function AgentConfigs({ route }: PageProps) {
 
   // An update lands as a new version of the same config and an archive
   // marks that same config terminal, so either way the row is replaced
-  // where it is: this list is ordered by creation, which neither changes.
+  // where it is.
   function changed(config: AgentConfig) {
-    setState((prev) =>
-      prev.status === "ready"
-        ? { ...prev, configs: prev.configs.map((c) => (c.id === config.id ? config : c)) }
-        : prev,
-    );
+    replace(config);
     closeEditor();
   }
 
-  // A new config is the newest, and this list is newest-first, so it goes on
-  // the front. The cursor is a keyset rather than an offset, so a row
-  // arriving at the head leaves the rest of the walk exactly where it was —
-  // there is nothing to re-fetch.
   function added(config: AgentConfig) {
     setCreating(false);
-    // Off the ready path there is no list to add it to; the load that was
-    // already needed is what will show it.
-    if (state.status !== "ready") {
-      reload();
-      return;
-    }
-    setState((prev) =>
-      prev.status === "ready" ? { ...prev, configs: [config, ...prev.configs] } : prev,
-    );
-  }
-
-  // The next page, appended. `cursor` is the previous page's last id — the
-  // keyset the api hands back, not an offset, so rows created meanwhile
-  // never shift the walk.
-  async function loadMore() {
-    if (state.status !== "ready" || state.cursor === undefined || more.busy) return;
-    const abort = new AbortController();
-    pagination.current = abort;
-    setMore({ busy: true });
-    try {
-      const page = await listAgentConfigs({ after: state.cursor, signal: abort.signal });
-      setState((prev) =>
-        prev.status === "ready"
-          ? {
-              ...prev,
-              configs: [...prev.configs, ...page.data],
-              hasMore: page.hasMore,
-              cursor: page.lastId,
-            }
-          : prev,
-      );
-      setMore({ busy: false });
-    } catch (err) {
-      // Superseded by a reload, which has already reset this — nothing to
-      // report, and nothing of this walk left to report it against.
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      // The rows already on screen are still good: only the page that
-      // failed is news, so it reports beside the button, not over the list.
-      setMore({ busy: false, error: messageOf(err) });
-    }
+    prepend(config);
   }
 
   return (
-    <section className="agents">
-      <header className="agents-head">
-        <h1 className="agents-title">Agent configs</h1>
-        <div className="agents-actions">
+    <section className="list agents">
+      <header className="list-head">
+        <h1 className="list-title">Agent configs</h1>
+        <div className="list-actions">
           <button
             className="btn"
             type="button"
@@ -216,7 +119,7 @@ export function AgentConfigs({ route }: PageProps) {
             Try again
           </button>
         </div>
-      ) : state.status === "ready" && state.configs.length === 0 ? (
+      ) : state.status === "ready" && state.items.length === 0 ? (
         <div className="notice">
           <span className="notice-icon" aria-hidden="true">
             <AgentIcon width={22} height={22} strokeWidth={1.6} />
@@ -260,7 +163,7 @@ export function AgentConfigs({ route }: PageProps) {
                       </td>
                     </tr>
                   ))
-                : state.configs.map((config) => (
+                : state.items.map((config) => (
                     <tr key={config.id}>
                       <td>
                         {/* One real anchor, stretched over the row by CSS:
@@ -309,30 +212,13 @@ export function AgentConfigs({ route }: PageProps) {
       )}
 
       {state.status === "ready" && state.hasMore ? (
-        <div className="agents-more">
+        <div className="list-more">
           <button className="btn" type="button" onClick={loadMore} disabled={more.busy}>
             {more.busy ? "Loading…" : "Load more"}
           </button>
-          {more.error ? <span className="agents-more-error">{more.error}</span> : null}
+          {more.error ? <span className="list-more-error">{more.error}</span> : null}
         </div>
       ) : null}
     </section>
-  );
-}
-
-/** Archive is the one terminal transition, so this is a state, not a toggle. */
-function Status({ archivedAt }: { archivedAt?: string }) {
-  return (
-    <span
-      className={archivedAt ? "pill pill-archived" : "pill pill-active"}
-      title={
-        archivedAt
-          ? `Archived ${absoluteTime(archivedAt)} — read-only, and no new session can use it`
-          : "Accepts updates and new sessions"
-      }
-    >
-      <span className="pill-dot" aria-hidden="true" />
-      {archivedAt ? "Archived" : "Active"}
-    </span>
   );
 }
