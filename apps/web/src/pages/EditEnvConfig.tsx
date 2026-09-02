@@ -14,12 +14,14 @@
 //    there first; this one cannot, and the later write simply wins. That is
 //    the api's model, not an omission here.
 //
-// An archived recipe is read-only — the api answers 409 rather than reviving
-// it — so the dialog shows it and says so rather than offering a Save that
-// would be refused. Archiving is not offered here yet; it is its own action,
-// the way it was for agent configs.
+// Archive is the other way out, and the one that isn't an edit: it retires
+// the recipe without writing it, moving no updatedAt, and there is no route
+// back. An archived recipe is read-only — the api answers 409 rather than
+// reviving it — so the dialog shows it and says so rather than offering a
+// Save that would be refused.
 import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 import {
+  archiveEnvConfig,
   type EnvConfig,
   getEnvConfig,
   type UpdateEnvConfigInput,
@@ -123,8 +125,12 @@ function EditForm({
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const [fields, setFields] = useState<NetworkFields>(() => fieldsOf(config.network));
-  const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
+  // WHICH write is in flight, not merely whether one is. The two paths out
+  // of this dialog are mutually exclusive and every control is disabled by
+  // either, so one value says it — and each button can still name its own.
+  const [pending, setPending] = useState<"saving" | "archiving">();
+  const busy = pending !== undefined;
 
   // Whether this editor is still the one on screen. Nothing aborts a write
   // when its dialog goes away — pressing Back, leaving the section, or
@@ -165,13 +171,30 @@ function EditForm({
     const input: UpdateEnvConfigInput = { network };
 
     setFailure(undefined);
-    setBusy(true);
+    setPending("saving");
     try {
       onChanged(await updateEnvConfig(config.id, input));
       if (live.current) onClose();
     } catch (err) {
       setFailure(messageOf(err));
-      setBusy(false);
+      setPending(undefined);
+    }
+  }
+
+  // The terminal transition, taken on the click. It reaches the api the same
+  // way a save does — and reports a refusal in the same place — but it edits
+  // nothing, so it moves no updatedAt, and unlike a save it cannot be
+  // revisited.
+  async function archive() {
+    if (busy || archived) return;
+    setFailure(undefined);
+    setPending("archiving");
+    try {
+      onChanged(await archiveEnvConfig(config.id));
+      if (live.current) onClose();
+    } catch (err) {
+      setFailure(messageOf(err));
+      setPending(undefined);
     }
   }
 
@@ -214,7 +237,15 @@ function EditForm({
           ) : null}
         </div>
 
+        {/* Archive sits away from the two buttons that answer the form: it
+            is the one action here that doesn't write the recipe, and the one
+            with nothing on the other side of it. */}
         <footer className="modal-foot">
+          {archived ? null : (
+            <button className="btn btn-archive" type="button" onClick={archive} disabled={busy}>
+              {pending === "archiving" ? "Archiving…" : "Archive"}
+            </button>
+          )}
           {failure ? (
             <p className="form-failure" role="alert">
               {failure}
@@ -229,7 +260,7 @@ function EditForm({
               type="submit"
               disabled={busy || network === undefined || !changed}
             >
-              {busy ? "Saving…" : "Save"}
+              {pending === "saving" ? "Saving…" : "Save"}
             </button>
           )}
         </footer>

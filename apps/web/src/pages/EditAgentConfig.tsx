@@ -14,6 +14,10 @@
 //    at some version; sending it back means a config someone else has since
 //    updated answers 409 instead of quietly overwriting their work.
 //
+// Everything this dialog draws is shared chrome: components/Modal.css for
+// the panel, the footer and Archive's place in it, components/Field.css
+// for the fields.
+//
 // An archived config is read-only — the store matches no mutation against
 // it — so the dialog shows it and says so rather than offering a Save the
 // api would refuse. Archiving is what puts a config there, and it archives
@@ -31,7 +35,6 @@ import { PROVIDERS } from "../lib/providers";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
 import { absoluteTime } from "../lib/format";
-import "./EditAgentConfig.css";
 
 type Fields = { provider: string; model: string; systemPrompt: string };
 

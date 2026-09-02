@@ -160,6 +160,45 @@ body:has(dialog.modal[open]) {
   color: var(--bad);
 }
 
+/* Archive is the footer's left-hand action, so the two buttons that answer
+   the form — Cancel and Save — stay together on the right, and the one that
+   ends the config isn't sitting among them.
+
+   Red in the label, not in a fill: this button archives on the click, but a
+   filled red beside the filled cobalt Save would fight it, and the
+   destructive one is the wrong one to win. The hue is the warning. */
+.btn-archive {
+  margin-right: auto;
+  color: var(--bad);
+}
+
+/* .btn's hover resolves the label to var(--text), which would drop the one
+   thing this button says about itself. The surface is left alone, so the
+   label holds 5.25:1 (light) / 8.02:1 (dark) in every state. */
+.btn-archive:hover:not(:disabled) {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+/* Modal.css gives .form-failure the auto margin that pushes it left. With
+   an Archive button already taking the footer's spare width there is none
+   left to share, and the refusal belongs beside the action that caused it
+   rather than spread away from it. */
+.btn-archive ~ .form-failure {
+  margin-right: 0;
+}
+
+/* Modal.css stacks the footer below 440px and stretches every button. An
+   auto margin in the cross axis takes precedence over align-items, so
+   leaving this one would strand Archive at content width beside two
+   full-width buttons — the placement it buys is a row concept only. Keep
+   this threshold in step with that one. */
+@media (max-width: 440px) {
+  .btn-archive {
+    margin-right: 0;
+  }
+}
+
 @keyframes modal-in {
   from {
     opacity: 0;
