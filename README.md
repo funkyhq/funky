@@ -11,14 +11,14 @@ lost and no side effect run twice.
 
 ## Quickstart
 
-Requires Docker, an [Anthropic API key](https://console.anthropic.com), and an
-[E2B](https://e2b.dev) API key. (Anthropic is what the shipped stack wires — the inference
-port itself takes any [Vercel AI SDK](https://ai-sdk.dev) provider; see
-[Other model providers](#other-model-providers).)
+Requires Docker, an [E2B](https://e2b.dev) API key, and a key for at least one model
+provider: [Anthropic](https://console.anthropic.com), [OpenAI](https://platform.openai.com),
+[Google](https://aistudio.google.com/apikey), or [Together AI](https://api.together.ai). A
+config's `inference.provider` names which one runs it; see [Model providers](#model-providers).
 
 ```bash
 git clone https://github.com/funkyhq/funky && cd funky
-cp .env.example .env        # fill in the three values
+cp .env.example .env        # the auth token, a model-provider key, and the E2B key
 docker compose up --build
 ```
 
@@ -83,10 +83,21 @@ also wipes the database).
 Scale workers with `docker compose up -d --scale worker=3` — claiming is the only
 scheduler; nothing else changes.
 
-### Other model providers
+### Model providers
+
+A config's `inference.provider` picks the vendor that serves it. At boot the worker wires
+one inference adapter per model-provider key it finds and routes each step to the adapter
+the session's config names, so one stack runs sessions on different vendors side by side:
+
+| `inference.provider` | key                            |
+| -------------------- | ------------------------------ |
+| `anthropic`          | `ANTHROPIC_API_KEY`            |
+| `openai`             | `OPENAI_API_KEY`               |
+| `google`             | `GOOGLE_GENERATIVE_AI_API_KEY` |
+| `togetherai`         | `TOGETHER_API_KEY`             |
 
 Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
-port — one adapter, any AI SDK provider.
+port.
 
 ## Why Funky?
 

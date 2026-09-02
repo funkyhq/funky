@@ -10,6 +10,9 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.0",
+    "@ai-sdk/google": "^4.0.0",
+    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/togetherai": "^3.0.0",
     "@funky/adapters": "workspace:*",
     "@funky/agent": "workspace:*",
     "@funky/core": "workspace:*",
