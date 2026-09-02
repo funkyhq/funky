@@ -11,7 +11,13 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { type DriverDeps, runDriver, type Store, toToolSpec } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../../src";
-import { createProvider, createTools, type KillSpec, stallForever } from "./crash-script";
+import {
+  createProvider,
+  createTools,
+  inferenceConfig,
+  type KillSpec,
+  stallForever,
+} from "./crash-script";
 
 const dataDir = process.env["CRASH_DATA_DIR"];
 if (!dataDir) throw new Error("crash-driver: CRASH_DATA_DIR is required");
@@ -56,7 +62,7 @@ const wrapped: Store = {
 const tools = createTools({ spec, onStall });
 const deps: DriverDeps = {
   store: wrapped,
-  provider: createProvider({ spec, onStall }),
+  providers: new Map([[inferenceConfig.provider, createProvider({ spec, onStall })]]),
   toolSpecs: [...tools.values()].map(toToolSpec),
   bindTools: async () => tools,
 };

@@ -8,12 +8,12 @@
 //    it starts and injects the ids it found a non-empty key for. Only the
 //    IDS cross into the bundle — no key value ever does, same rule as
 //    FUNKY_AUTH_TOKEN.
-//  - The worker can route to it. apps/worker/src/main.ts constructs ONE
-//    inference adapter at composition (`createAnthropic`), and the driver
-//    never reads config.inference.provider — "picked the adapter at
-//    composition and is not part of the request"
-//    (packages/agent/src/driver/loop.ts). A config naming a provider the
-//    worker didn't wire would still run on the one it did.
+//  - The worker can route to it. apps/worker/src/main.ts wires one
+//    inference adapter per vendor into a registry keyed by provider id,
+//    and the driver resolves config.inference.provider against it on
+//    every claim (packages/agent/src/driver/loop.ts). A config naming a
+//    provider the worker didn't wire ends its run in error — it never
+//    runs on some other vendor.
 //
 // The second fact is why this is a registry and not a scan of whatever keys
 // happen to be in .env: an entry here is a claim that the worker serves it.

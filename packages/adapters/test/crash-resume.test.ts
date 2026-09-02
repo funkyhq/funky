@@ -85,7 +85,7 @@ async function driveToIdle(store: Store): Promise<void> {
   const tools = createTools();
   const deps: StepDeps = {
     store,
-    provider: createProvider(),
+    providers: new Map([[inferenceConfig.provider, createProvider()]]),
     toolSpecs: [...tools.values()].map(toToolSpec),
   };
   for (;;) {
