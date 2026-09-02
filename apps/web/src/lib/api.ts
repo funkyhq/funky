@@ -208,3 +208,25 @@ export function updateAgentConfig(
     opts.signal,
   );
 }
+
+/**
+ * Archives a config and returns it carrying the mark. Terminal, and the
+ * api has no route back: the row stays readable at every version and the
+ * sessions that already pinned one keep running, but it takes no further
+ * update and no new session can name it. Idempotent by consequence — a
+ * second call answers with the first one's archivedAt rather than failing.
+ */
+export function archiveAgentConfig(
+  id: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<AgentConfig> {
+  return post<AgentConfig>(
+    `/v1/agent-configs/${encodeURIComponent(id)}/archive`,
+    // No body, because the route takes none — there is nothing to say
+    // beyond "retire this". JSON.stringify(undefined) is undefined, which
+    // fetch sends as no body at all.
+    undefined,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
