@@ -44,6 +44,38 @@ export const KNOWN_PROVIDERS: Provider[] = [
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
     ],
   },
+  {
+    id: "openai",
+    label: "OpenAI",
+    envKey: "OPENAI_API_KEY",
+    models: [
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    ],
+  },
+  {
+    id: "google",
+    label: "Google",
+    envKey: "GOOGLE_GENERATIVE_AI_API_KEY",
+    models: [
+      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview)" },
+      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
+    ],
+  },
+  {
+    // Together's catalog is open-ended; these are current open models
+    // with tool calling. Any Together model id works through the api.
+    id: "togetherai",
+    label: "Together AI",
+    envKey: "TOGETHER_API_KEY",
+    models: [
+      { id: "deepseek-ai/DeepSeek-V4-Pro-0813", label: "DeepSeek V4 Pro" },
+      { id: "zai-org/GLM-5.3", label: "GLM-5.3" },
+      { id: "moonshotai/Kimi-K3", label: "Kimi K3" },
+    ],
+  },
 ];
 
 // Replaced at build time by vite.config.ts (`define`), so this is a literal

@@ -18,6 +18,9 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 // imported because tsconfig.node.json's program is just this file.
 const PROVIDER_ENV_KEYS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_GENERATIVE_AI_API_KEY",
+  togetherai: "TOGETHER_API_KEY",
 };
 
 export default defineConfig(({ mode }) => {

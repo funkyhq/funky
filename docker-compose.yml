@@ -1,8 +1,9 @@
 # docker-compose.yml (repo root) — the funky stack: postgres + migrate +
 # api + worker, all four from the topology the harness was designed around.
 #
-# Bring up:   FUNKY_AUTH_TOKEN=... ANTHROPIC_API_KEY=... E2B_API_KEY=... \
-#             docker compose up --build           (or put them in .env)
+# Bring up:   FUNKY_AUTH_TOKEN=... E2B_API_KEY=... ANTHROPIC_API_KEY=... \
+#             docker compose up --build   (or put them in .env; any model-provider
+#             key the worker knows serves in place of, or beside, Anthropic's)
 # Scale out:  docker compose up --build --scale worker=3
 # Tear down:  docker compose down                 (-v to also wipe the database)
 
@@ -67,7 +68,14 @@ services:
     command: ["node", "apps/worker/dist/main.mjs"]
     environment:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      # Model-provider keys: the worker serves every one that is set and
+      # refuses to boot with none. Compose can't say "at least one", so
+      # each is forwarded as-is — unset arrives empty, which the worker
+      # reads as unset — and the worker's own check names what's missing.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY in .env}
     depends_on:
       migrate:
