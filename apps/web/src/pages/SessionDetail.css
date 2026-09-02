@@ -1,0 +1,340 @@
+/* apps/web/src/pages/SessionDetail.css
+   The frame around one session: the header that identifies it, the card
+   that holds the log, and the composer pinned to the bottom of that card.
+   What goes INSIDE the log — the bubbles and the folds — is
+   pages/Transcript.css. Every colour resolves to a token in index.css. */
+
+/* The shell scrolls the WINDOW: .app is min-height: 100svh, so a page
+   taller than the viewport makes the whole document taller. A conversation
+   must not do that — its composer belongs at the bottom of the view, with
+   the log scrolling behind it — so while one is open the shell is pinned to
+   the viewport and .chat-log takes the overflow instead.
+
+   Written here, scoped with :has(), rather than changed in App.css: it is
+   this page's requirement and no other page's, the same way Modal.css locks
+   body scroll only while a dialog is open. The height goes on .app so the
+   narrow layout gets it too — there the sidebar is a row of that same grid,
+   and .main is what's left. */
+.app:has(.chat) {
+  height: 100svh;
+}
+
+/* Grid and flex items floor at their content size; both have to be told
+   they may be shorter than the log inside them, or the pinning above just
+   moves the overflow rather than containing it. */
+.app:has(.chat) .main {
+  min-height: 0;
+}
+
+.app:has(.chat) .content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The pane centres and tops its page; this one takes the height instead, so
+   the composer sits at the bottom of the view rather than wherever the log
+   happens to end. */
+.chat {
+  align-self: stretch;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 900px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Head ------------------------------------------------------------------- */
+
+.chat-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* A back link that looks like the button it behaves as, but stays an
+   anchor: the browser's history, middle-click and focus ring come free. */
+.chat-back {
+  text-decoration: none;
+}
+
+/* Whether the tail is connected. Dimmed until it is — a reconnect is
+   ordinary, so this reports rather than warns. */
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  opacity: 0.55;
+}
+
+.live-on .live-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-glow);
+  opacity: 1;
+}
+
+.chat-id {
+  flex: none;
+  font: 500 13px var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* What this session was made of, on one wrapping line: the ids are the
+   point of a console, so they are shown whole rather than shortened into
+   something you can't paste back. */
+.chat-meta {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 5px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.chat-meta code {
+  font: 500 11.5px var(--mono);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* Card ------------------------------------------------------------------- */
+
+/* min-height: 0, or the log refuses to shrink below its content and pushes
+   the composer off the bottom of the pane instead of scrolling. */
+.chat-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
+  scrollbar-width: thin;
+}
+
+.chat-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Loading, failed, and empty — all of them the card with a line in the
+   middle rather than a block over the page, because the card is already
+   the thing that would be holding the log. */
+.chat-state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  min-height: 100%;
+  padding: 24px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-3);
+}
+
+.chat-state-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.chat-state .btn {
+  margin-top: 6px;
+}
+
+/* Composer --------------------------------------------------------------- */
+
+.chat-compose {
+  flex: none;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+
+/* The queue: sent, not in the log yet. It belongs to the composer rather
+   than the transcript — a queued message hasn't reached the agent at all
+   until the current turn ends, so drawing it as a line of the conversation
+   would be claiming something the log doesn't say.
+
+   One line each, with the whole text on hover: this is an acknowledgement
+   that the message is on its way, and a long one shouldn't eat the log it
+   is waiting to join. */
+.chat-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-queued {
+  min-width: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.chat-queued-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* A refusal is the one state of a queued message that needs answering, so
+   it is the one that gets a border you can find. */
+.chat-queued-bad {
+  border-color: var(--bad);
+}
+
+.chat-queued-state {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.chat-queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-queued-bad .chat-queued-state {
+  color: var(--bad);
+}
+
+/* Two words, not two pills: this row is already an interruption, and a
+   pair of buttons styled like the Send beside it would read as more
+   important than the message they belong to. */
+.chat-queued-actions {
+  display: flex;
+  flex: none;
+  gap: 12px;
+}
+
+.chat-queued-actions button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: 500 12px var(--sans);
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2.5px;
+  cursor: pointer;
+}
+
+.chat-queued-actions button:hover {
+  color: var(--text);
+}
+
+.chat-queued-error {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--bad);
+}
+
+.chat-compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* The box grows with its content up to the cap SessionDetail.tsx sets, so
+   the height is written on the element and this only says where to start.
+   field-sizing would replace both, once Safari has it. */
+.compose-box {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  font: 400 13.5px/1.55 var(--sans);
+  color: var(--text);
+  /* The height is scripted; a drag handle would fight it. */
+  resize: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.compose-box::placeholder {
+  color: var(--text-3);
+}
+
+.compose-box:hover:not(:focus) {
+  border-color: var(--text-3);
+}
+
+.compose-box:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.compose-box:disabled {
+  background: var(--bg-sunken);
+  color: var(--text-3);
+}
+
+/* Aligned to the box's bottom edge (the row is flex-end), so a box that has
+   grown leaves the button where the thumb last saw it. */
+.compose-send {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+/* An archived session takes no message, so it gets no box — saying why is
+   more use than a disabled control that doesn't. */
+.chat-closed {
+  flex: none;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+@container pane (max-width: 620px) {
+  .chat-log {
+    padding: 16px 14px;
+  }
+}

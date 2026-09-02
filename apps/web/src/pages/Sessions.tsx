@@ -1,25 +1,32 @@
 // apps/web/src/pages/Sessions.tsx
-// The Session section: the namespace's sessions, newest first.
+// The Session section: the namespace's sessions, newest first, and the
+// conversation behind any one of them.
 //
-// A session is one agent config version, one copy of an env recipe, and the
-// durable entry log the two run against. This is an inventory read — three
-// columns, no row link, nothing to open — because what makes a session
-// worth clicking into is its log and its message box, and those come later.
-// Nothing here creates one either: that takes an agent config AND an env
-// config, which is the Quick Start flow rather than a button on a list.
+// `#/session/<id>` is a PAGE rather than a dialog over the list, which is
+// where this section parts company with the two config ones. A config is a
+// form you open, change and close; a session is a place you stay, watching
+// a log grow, so it takes the pane (see SessionDetail).
 //
 // "Status" here is the LIFECYCLE — active or archived — not liveness. There
 // is no running/idle column because the api has no such field: funky
 // derives whether a session is working from its work items and its log
 // rather than storing it on the row (see lib/api.ts Session).
+import { useRef, useState } from "react";
 import { type Session, listSessions } from "../lib/api";
 import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
 import { type FetchPage, SKELETON, useList } from "../lib/useList";
 import { useNow } from "../lib/useNow";
-import { RefreshIcon, SessionIcon } from "../components/Icons";
-import { Status, type StatusMeaning } from "../components/Status";
+import { PlusIcon, RefreshIcon, SessionIcon } from "../components/Icons";
+import { Status } from "../components/Status";
+import { SESSION_STATUS } from "../lib/status";
+import type { PageProps } from "../nav";
+import { CreateSession } from "./CreateSession";
+import { SessionDetail } from "./SessionDetail";
 import "./list.css";
 import "./Sessions.css";
+
+/** This section's own route. Rows link into it by id. */
+const SECTION = "#/session";
 
 /**
  * The api hides archived sessions unless asked; this list asks. Archive is
@@ -33,19 +40,35 @@ import "./Sessions.css";
  */
 const listAll: FetchPage<Session> = (opts) => listSessions({ ...opts, includeArchived: true });
 
-/** What the pill means on a session, which is not what it means on a config
- *  (components/Status.tsx): archiving one closes client writes rather than
- *  edits, and the log it leaves behind stays readable. */
-const MEANING: StatusMeaning = {
-  active: "Accepts messages, and a worker can pick its work up",
-  archived: "read-only: it takes no new message, and its log stays readable",
-};
+/**
+ * `route` is the session id below this section. Keyed on it, so moving
+ * between two conversations starts the second one clean rather than
+ * showing it the first one's draft.
+ */
+export function Sessions({ route }: PageProps) {
+  return route === "" ? <SessionList /> : <SessionDetail id={route} key={route} />;
+}
 
-export function Sessions() {
+function SessionList() {
   const { state, more, reload, loadMore } = useList<Session>(listAll);
   // Relative timestamps are only true at the moment they render, so the
   // clock they read has to keep moving.
   const now = useNow(RELATIVE_TICK_MS);
+  const [creating, setCreating] = useState(false);
+  // The header's Start button, which every state of this page renders — and
+  // where focus goes back to if what opened the dialog was the empty
+  // state's button, since the row it creates replaces that button.
+  const startButton = useRef<HTMLButtonElement>(null);
+
+  /** A session just made, with its first message already sent. Creating one
+   *  is how you get to the conversation, so this goes there rather than
+   *  putting a row on a list the reader is about to leave. */
+  function opened(session: Session) {
+    setCreating(false);
+    // An assignment, so Back returns to this list — the same history the
+    // rows' own links write.
+    window.location.hash = `${SECTION}/${session.id}`;
+  }
 
   return (
     <section className="list sessions">
@@ -60,6 +83,15 @@ export function Sessions() {
           >
             <RefreshIcon />
             Refresh
+          </button>
+          <button
+            className="btn btn-primary"
+            type="button"
+            ref={startButton}
+            onClick={() => setCreating(true)}
+          >
+            <PlusIcon />
+            Start
           </button>
         </div>
       </header>
@@ -81,8 +113,12 @@ export function Sessions() {
           <p className="notice-title">No sessions yet</p>
           <p className="notice-body">
             A session pairs an agent config with an env config and runs them against an append-only
-            log. Start one by posting both ids to <code>/v1/sessions</code>.
+            log. Start one here, or post both ids to <code>/v1/sessions</code>.
           </p>
+          <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}>
+            <PlusIcon />
+            Start session
+          </button>
         </div>
       ) : (
         <div className="table-wrap">
@@ -111,14 +147,17 @@ export function Sessions() {
                   ))
                 : state.items.map((session) => (
                     <tr key={session.id}>
-                      {/* Plain text, not a link: there is nowhere to go yet,
-                          and list.css only highlights a row that opens
-                          something. */}
                       <td>
-                        <span className="id">{session.id}</span>
+                        {/* One real anchor, stretched over the row by CSS:
+                            the whole row opens the conversation, and it is
+                            still a link — focusable, middle-clickable,
+                            copyable. */}
+                        <a className="id row-link" href={`${SECTION}/${session.id}`}>
+                          {session.id}
+                        </a>
                       </td>
                       <td>
-                        <Status archivedAt={session.archivedAt} meaning={MEANING} />
+                        <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
                       </td>
                       <td>
                         <time dateTime={session.createdAt} title={absoluteTime(session.createdAt)}>
@@ -131,6 +170,14 @@ export function Sessions() {
           </table>
         </div>
       )}
+
+      {creating ? (
+        <CreateSession
+          onCreated={opened}
+          onClose={() => setCreating(false)}
+          returnFocus={startButton}
+        />
+      ) : null}
 
       {state.status === "ready" && state.hasMore ? (
         <div className="list-more">

@@ -93,6 +93,25 @@ export function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Back to the list a detail page was opened from. */
+export function ArrowLeftIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke width={15} height={15} {...props}>
+      <path d="M19 12H5" />
+      <path d="M11 6 5 12l6 6" />
+    </Stroke>
+  );
+}
+
+/** Send the composed message. */
+export function SendIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke width={15} height={15} {...props}>
+      <path d="M4.5 12 20 4.5 15.5 20l-3.4-6.1L4.5 12Z" />
+    </Stroke>
+  );
+}
+
 /** Topbar docs link. */
 export function ExternalLinkIcon(props: SVGProps<SVGSVGElement>) {
   return (

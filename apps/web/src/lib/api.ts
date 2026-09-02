@@ -446,3 +446,194 @@ export function listSessions(
     opts.signal,
   );
 }
+
+/** One session by id. What the detail page resolves a link against — the
+ *  list is a page of rows, and a session can be addressed without it. */
+export function getSession(id: string, opts: { signal?: AbortSignal } = {}): Promise<Session> {
+  return get<Session>(
+    `/v1/sessions/${encodeURIComponent(id)}`,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+/** The create body, minus the namespace this console pins for every call.
+ *  Omitting `agentConfigVersion` pins the config's latest version at create,
+ *  which is what a console starting a session from a picker means. */
+export type CreateSessionInput = {
+  agentConfigId: string;
+  agentConfigVersion?: number;
+  envConfigId: string;
+  metadata?: unknown;
+};
+
+/**
+ * Creates a session and returns it materialized: the agent version pinned
+ * and the env recipe copied, so the answer is the world the run will have
+ * rather than the request that asked for it. The namespace rides in the
+ * body here, as it does for both config creates.
+ *
+ * An archived config answers 409 and an unknown one 400 — the api's words
+ * either way, which is why the dialog shows only active configs.
+ */
+export function createSession(
+  input: CreateSessionInput,
+  opts: { signal?: AbortSignal } = {},
+): Promise<Session> {
+  return post<Session>("/v1/sessions", { namespace: DEFAULT_NAMESPACE, ...input }, {}, opts.signal);
+}
+
+// --- the session log ---
+//
+// Messages are what the model sees; entries are what the store owns. The
+// console only reads them, so what follows mirrors the payloads without the
+// vocabulary core needs to write them.
+
+/** A vendor's own continuity data, keyed by vendor namespace. Opaque here
+ *  exactly as it is in core: the console renders parts, never replays them. */
+type ProviderMetadata = unknown;
+
+export type TextContent = { type: "text"; text: string; providerMetadata?: ProviderMetadata };
+export type ImageContent = { type: "image"; data: string; mimeType: string };
+export type ThinkingContent = {
+  type: "thinking";
+  /** Empty for a redacted block — the vendor keeps the text. */
+  thinking: string;
+  providerMetadata?: ProviderMetadata;
+  /** Legacy, Anthropic-only, no longer written; rows older than
+   *  providerMetadata carry the signature here. */
+  thinkingSignature?: string;
+  redacted?: boolean;
+};
+export type ToolCall = {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  providerMetadata?: ProviderMetadata;
+};
+
+/** Token counts only — cost is computed at display time from pricing, never
+ *  stored, so a price change can't reinterpret an old session. */
+export type Usage = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** A subset of `output`, when the provider reports the breakdown. */
+  reasoning?: number;
+};
+
+/** Why a turn ended. The last two are the harness's own outcomes, not the
+ *  provider's, and such messages are kept in the log but left out of the
+ *  context a later turn is built from. */
+export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "aborted" | "error";
+
+export type UserMessage = { role: "user"; content: Array<TextContent | ImageContent> };
+
+export type AssistantMessage = {
+  role: "assistant";
+  content: Array<TextContent | ThinkingContent | ToolCall>;
+  model: string;
+  stopReason: StopReason;
+  /** Absent when the stream died before the provider reported usage. */
+  usage?: Usage;
+  /** Set when stopReason is "error". */
+  errorMessage?: string;
+};
+
+export type ToolResultMessage = {
+  role: "toolResult";
+  toolCallId: string;
+  toolName: string;
+  content: Array<TextContent | ImageContent>;
+  /** Tool-specific payload for a UI to render; never sent to the model. */
+  details?: unknown;
+  isError: boolean;
+};
+
+export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
+
+/** The envelope the store mints around every payload: an id, the session's
+ *  own gapless ordering, and when it landed. */
+type EntryBase = { id: string; seq: number; timestamp: string };
+
+/**
+ * One row of the session log. `message` is the transcript; the other three
+ * are the log's other tenants — an app's own payload, a reserved compaction
+ * marker, and the harness control plane — and a reader that doesn't know a
+ * type must skip it rather than guess.
+ */
+export type SessionEntry =
+  | (EntryBase & { type: "message"; message: AgentMessage })
+  | (EntryBase & { type: "custom"; namespace: string; data: unknown })
+  | (EntryBase & { type: "compaction"; summary: string; upToSeq: number })
+  | (EntryBase & { type: "control"; control: "cancel" });
+
+/**
+ * What a message did, decided inside intake's transaction: it either
+ * started a run or queued behind the one already going.
+ *
+ * The difference is visible, and a chat has to say so — a queued message is
+ * NOT in the log yet. It waits in its own table and is appended when the
+ * run it arrived behind ends, so until then the only place it exists for a
+ * reader is the client that sent it.
+ */
+export type IntakeResult =
+  { kind: "started"; itemId: string } | { kind: "queued"; inputId: string };
+
+/** The log from `after` on, in seq order — the whole log when `after` is
+ *  absent. A bare array rather than a page: a session's log is read in
+ *  full, and the stream below is how a caller follows it. */
+export function readEntries(
+  id: string,
+  opts: { after?: number; signal?: AbortSignal } = {},
+): Promise<SessionEntry[]> {
+  return get<SessionEntry[]>(
+    `/v1/sessions/${encodeURIComponent(id)}/entries`,
+    {
+      namespace: DEFAULT_NAMESPACE,
+      after: opts.after === undefined ? undefined : String(opts.after),
+    },
+    opts.signal,
+  );
+}
+
+/**
+ * The URL an EventSource tails the log from — a path, not a fetch, because
+ * following the log is the browser's job here: EventSource reconnects on
+ * its own and resumes with Last-Event-ID, which this route honors over
+ * `after`. Same-origin, so it carries the proxy's auth like every other
+ * call; EventSource could not have set a header anyway.
+ */
+export function entryStreamUrl(id: string, after?: number): string {
+  return (
+    `/v1/sessions/${encodeURIComponent(id)}/stream` +
+    search({
+      namespace: DEFAULT_NAMESPACE,
+      after: after === undefined ? undefined : String(after),
+    })
+  );
+}
+
+/**
+ * Sends a user message. 202 either way — the answer says what intake did
+ * with it, never what the agent will do about it, which happens in a worker
+ * afterwards. Plain text is the wire's other accepted spelling for content;
+ * the api normalizes it and stamps the role.
+ *
+ * An archived session answers 409: it keeps its log readable and takes no
+ * further client write.
+ */
+export function sendMessage(
+  id: string,
+  text: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<IntakeResult> {
+  return post<IntakeResult>(
+    `/v1/sessions/${encodeURIComponent(id)}/messages`,
+    { content: text },
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
