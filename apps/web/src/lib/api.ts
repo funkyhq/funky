@@ -373,3 +373,76 @@ export function archiveEnvConfig(
     opts.signal,
   );
 }
+
+/**
+ * The env recipe as it read when a session was created. A session COPIES
+ * the recipe rather than pointing at it — env configs update in place, so
+ * there is no version to pin — which is what keeps a run's world fixed
+ * once it has started.
+ */
+export type EnvConfigSnapshot = {
+  network: NetworkPolicy;
+  packages: Packages;
+};
+
+/**
+ * One session: an agent config at one pinned version, a copy of an env
+ * recipe, and the durable append-only entry log the two run against.
+ *
+ * There is no state field here, and its absence is the point: funky
+ * derives whether a session is running from its work items and its log
+ * rather than storing it on the row, so the only status a session carries
+ * on the wire is the lifecycle one below.
+ */
+export type Session = {
+  id: string;
+  namespace: string;
+  agentConfigId: string;
+  /** Pinned at creation, so a later update to the config cannot reshape a
+   *  run already under way. */
+  agentConfigVersion: number;
+  /** Provenance for the snapshot beside it; nothing resolves through it. */
+  envConfigId: string;
+  envConfigSnapshot: EnvConfigSnapshot;
+  /** The session's one workspace, registered when a worker first runs tools
+   *  for it. Absent until then. */
+  sandboxId?: string;
+  createdAt: string;
+  /** Set once retired. Archive is terminal, so absence is the active state. */
+  archivedAt?: string;
+  metadata?: unknown;
+};
+
+/**
+ * One page of the namespace's sessions, newest first.
+ *
+ * `includeArchived` mirrors the api's own switch, default and all: the api
+ * lists ACTIVE rows only unless asked, because archived history grows
+ * without bound and a caller asking for its sessions usually means the live
+ * ones. A caller that draws a status column wants both — that is the
+ * console's editorial call, so the page makes it (see pages/Sessions.tsx).
+ */
+export function listSessions(
+  opts: {
+    after?: string;
+    limit?: number;
+    includeArchived?: boolean;
+    signal?: AbortSignal;
+  } = {},
+): Promise<Page<Session>> {
+  return get<Page<Session>>(
+    "/v1/sessions",
+    {
+      namespace: DEFAULT_NAMESPACE,
+      limit: opts.limit === undefined ? undefined : String(opts.limit),
+      after: opts.after,
+      // snake_case because the wire is, and spelled as a word rather than a
+      // flag: the route parses "true"/"false" by name — JavaScript
+      // truthiness would read "false" as true — so an absent switch has to
+      // be absent from the query, not sent as an empty string.
+      include_archived:
+        opts.includeArchived === undefined ? undefined : String(opts.includeArchived),
+    },
+    opts.signal,
+  );
+}

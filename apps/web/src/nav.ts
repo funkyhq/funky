@@ -6,6 +6,7 @@ import type { ReactElement, SVGProps } from "react";
 import { AgentIcon, BoltIcon, EnvironmentIcon, SessionIcon } from "./components/Icons";
 import { AgentConfigs } from "./pages/AgentConfigs";
 import { EnvConfigs } from "./pages/EnvConfigs";
+import { Sessions } from "./pages/Sessions";
 
 /** What a page is handed: the part of the route below its own section, so
  *  a section can address something inside itself (`#/agent/<id>`) without
@@ -64,6 +65,7 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     blurb:
       "A session is one agent config plus one env config plus a durable, append-only entry log — the log a fresh worker resumes from with nothing lost.",
     chip: "/v1/sessions",
+    Page: Sessions,
   },
 ];
 
