@@ -144,7 +144,7 @@ export function useList<T extends { id: string }>(fetchPage: FetchPage<T>) {
 
   /**
    * A row that changed, put back where it was — unless the copy already held
-   * is the fresher one.
+   * is the fresher one, or the list has no rows yet (below).
    *
    * Writes to a single row can overlap: an editor is not the only thing that
    * can have one in flight, and a save outliving the dialog that sent it can
@@ -160,6 +160,17 @@ export function useList<T extends { id: string }>(fetchPage: FetchPage<T>) {
    * whose rows are replaced only by writes that cannot overlap.
    */
   function replace(item: T, supersedes?: (incoming: T, held: T) => boolean) {
+    // Off the ready path there is nothing to put it back into, and the page
+    // already in flight cannot carry it either: that read was issued BEFORE
+    // this write, so its answer is stale by construction. Dropping the write
+    // here is what leaves a row the api has retired still showing as active
+    // — on a deep link or a reload, where the dialog is usable before the
+    // list has arrived. Re-reading is what makes the page current, and it
+    // cancels the one that was on its way (see the effect's cleanup).
+    if (state.status !== "ready") {
+      reload();
+      return;
+    }
     setState((prev) =>
       prev.status === "ready"
         ? {

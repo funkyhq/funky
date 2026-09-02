@@ -345,3 +345,31 @@ export function updateEnvConfig(
     opts.signal,
   );
 }
+
+/**
+ * Archives a recipe and returns it carrying the mark. Terminal, and the api
+ * has no route back: the row stays readable and the sessions that already
+ * COPIED it keep running — a session provisions from its own copy rather
+ * than through the id — but it takes no further update and no new session
+ * can name it. Idempotent by consequence: a second call answers with the
+ * first one's archivedAt rather than failing.
+ *
+ * It retires the recipe without EDITING it, so updatedAt does not move. That
+ * is why this answer carries the same freshness token as the update before
+ * it, and why the list breaks that tie toward archive (keepsArchive in
+ * lib/useList.ts).
+ */
+export function archiveEnvConfig(
+  id: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<EnvConfig> {
+  return post<EnvConfig>(
+    `/v1/env-configs/${encodeURIComponent(id)}/archive`,
+    // No body, because the route takes none — there is nothing to say
+    // beyond "retire this". JSON.stringify(undefined) is undefined, which
+    // fetch sends as no body at all.
+    undefined,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
