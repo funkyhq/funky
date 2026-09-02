@@ -306,3 +306,42 @@ export function listEnvConfigs(
     opts.signal,
   );
 }
+
+/** One recipe by id. What a deep link resolves against when the row isn't
+ *  on a page the list has walked to yet. */
+export function getEnvConfig(id: string, opts: { signal?: AbortSignal } = {}): Promise<EnvConfig> {
+  return get<EnvConfig>(
+    `/v1/env-configs/${encodeURIComponent(id)}`,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+/**
+ * A partial update, applied IN PLACE. Absent fields are left as they were,
+ * so what a caller doesn't send — packages, metadata — survives the edit.
+ *
+ * There is no `version` here, and its absence is the point: an env config
+ * has no immutable version to pin, so this carries no optimistic-concurrency
+ * precondition the way an agent config's update does. Two edits racing means
+ * the later write wins outright. An archived recipe takes no update at all —
+ * the api answers 409 rather than reviving it.
+ */
+export type UpdateEnvConfigInput = {
+  network?: NetworkPolicy;
+  packages?: Packages;
+  metadata?: unknown;
+};
+
+export function updateEnvConfig(
+  id: string,
+  input: UpdateEnvConfigInput,
+  opts: { signal?: AbortSignal } = {},
+): Promise<EnvConfig> {
+  return post<EnvConfig>(
+    `/v1/env-configs/${encodeURIComponent(id)}`,
+    input,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}

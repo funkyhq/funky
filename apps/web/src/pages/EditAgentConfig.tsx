@@ -19,7 +19,7 @@
 // api would refuse. Archiving is what puts a config there, and it archives
 // on the click: no confirmation step, so the red label on its button is the
 // whole of the warning.
-import { type FormEvent, type RefObject, useEffect, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 import {
   type AgentConfig,
   archiveAgentConfig,
@@ -118,9 +118,13 @@ export function EditAgentConfig({
       onChanged={onChanged}
       onClose={onClose}
       returnFocus={returnFocus}
-      // A save replaces the config the form was built from, so the form
-      // starts again from what came back rather than from what was typed.
-      key={`${loaded.id}@${loaded.version}`}
+      // Keyed on the config, and deliberately NOT on its version: a dialog
+      // that saves or archives closes itself, so the only thing a fresher
+      // `loaded` can mean here is that someone ELSE moved the row — a write
+      // from a previous instance of this editor landing late, say.
+      // Remounting on that would throw away whatever is typed in this one to
+      // show a version nobody in this dialog asked for.
+      key={loaded.id}
     />
   );
 }
@@ -143,6 +147,24 @@ function EditForm({
   // either, so one value says it — and each button can still name its own.
   const [pending, setPending] = useState<"saving" | "archiving">();
   const busy = pending !== undefined;
+
+  // Whether this editor is still the one on screen. Nothing aborts a write
+  // when its dialog goes away — pressing Back, leaving the section, or
+  // reopening the same config all unmount THIS instance while the request
+  // is still out — and a completion arriving afterwards must not navigate:
+  // the dialog it would close belongs to a later instance, quite possibly
+  // with edits in it. The row it carries is still worth handing up, and
+  // fresher for it; only the closing is conditional.
+  const live = useRef(true);
+  useEffect(() => {
+    // Set on the way in as well as cleared on the way out: StrictMode mounts
+    // twice, and an effect that only cleared would leave this false for the
+    // whole life of the second mount — closing nothing, ever.
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
 
   const archived = config.archivedAt !== undefined;
   const saved = fieldsOf(config);
@@ -196,6 +218,7 @@ function EditForm({
     setPending("saving");
     try {
       onChanged(await updateAgentConfig(config.id, input));
+      if (live.current) onClose();
     } catch (err) {
       setFailure(messageOf(err));
       setPending(undefined);
@@ -211,6 +234,7 @@ function EditForm({
     setPending("archiving");
     try {
       onChanged(await archiveAgentConfig(config.id));
+      if (live.current) onClose();
     } catch (err) {
       setFailure(messageOf(err));
       setPending(undefined);
@@ -235,12 +259,15 @@ function EditForm({
       <form className="modal-form" onSubmit={submit} noValidate>
         <div className="modal-body form-fields">
           {archived ? (
-            <p className="prose archived-note">
+            <p className="prose note">
               This config is archived: it stays readable, and the sessions that pinned it keep
               running, but it takes no further updates and no new session can use it.
             </p>
           ) : null}
 
+          {/* Disabled while a write is in flight as well as when archived:
+              the body went to the api when the click did, so anything typed
+              after it would be silently dropped by the close that follows. */}
           <div className="field-row">
             <Field
               label="Provider"
@@ -251,7 +278,7 @@ function EditForm({
                 PROVIDERS.map((entry) => ({ id: entry.id, label: entry.label })),
                 fields.provider,
               )}
-              disabled={archived}
+              disabled={archived || busy}
               autoFocus
               required
             />
@@ -261,7 +288,7 @@ function EditForm({
               value={fields.model}
               onChange={(model) => setFields((prev) => ({ ...prev, model }))}
               options={models}
-              disabled={archived}
+              disabled={archived || busy}
               required
             />
           </div>
@@ -273,7 +300,7 @@ function EditForm({
             onChange={(systemPrompt) => setFields((prev) => ({ ...prev, systemPrompt }))}
             placeholder="You are a data analyst."
             rows={6}
-            disabled={archived}
+            disabled={archived || busy}
             multiline
           />
         </div>
