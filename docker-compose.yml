@@ -1,5 +1,6 @@
 # docker-compose.yml (repo root) — the funky stack: postgres + migrate +
-# api + worker, all four from the topology the harness was designed around.
+# api + worker, all four from the topology the harness was designed around,
+# with the browser console in front of the api.
 #
 # Bring up:   FUNKY_AUTH_TOKEN=... E2B_API_KEY=... ANTHROPIC_API_KEY=... \
 #             docker compose up --build   (or put them in .env; any model-provider
@@ -80,6 +81,47 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  # The browser console (apps/web), on http://localhost:5173. It is a client
+  # of the api like curl is — no database, no share of the work — so it can
+  # be stopped without touching a run: `docker compose up -d --scale web=0`.
+  #
+  # `vite preview` serves it, which is a dev server serving a production
+  # bundle, and that is the point: it carries the /v1 proxy that attaches
+  # FUNKY_AUTH_TOKEN to every request. The api has no CORS and is
+  # bearer-authed, so the console never calls it directly and the token
+  # never enters the browser (apps/web/vite.config.ts).
+  web:
+    build:
+      context: .
+      # NOT the default stage — the console needs vite, which the pruned
+      # runtime image the other three share does not carry.
+      target: web
+    ports:
+      # Loopback only, where the api publishes wide — and the asymmetry is
+      # the point. The api on 0.0.0.0 is still bearer-authed; this proxy on
+      # 0.0.0.0 HANDS OUT the bearer token, so anyone who could reach the
+      # port would have the api without one. Vite's allowedHosts doesn't
+      # cover it either: IP-literal Host headers pass by default, so it
+      # stops DNS rebinding, not a request to 192.168.x.x. Reach a remote
+      # stack's console through an SSH tunnel rather than widening this.
+      - "127.0.0.1:5173:5173"
+    environment:
+      FUNKY_API_URL: http://api:3000 # ← service name, not localhost
+      FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any random string, ≥16 chars}
+      # The same keys the worker takes, and for the same reason — but only
+      # their PRESENCE is read here. The console offers a provider when the
+      # stack has a key for it, and compiles the ids into the bundle at
+      # container start; no key VALUE reaches the browser, same rule as
+      # FUNKY_AUTH_TOKEN above.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

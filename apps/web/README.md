@@ -33,8 +33,11 @@ file `docker compose up` reads, so there is no second copy to keep in sync, and 
 never enters the client bundle. Point it elsewhere with `FUNKY_API_URL` (default
 `http://localhost:3000`).
 
-So: start the stack (`docker compose up`), then `pnpm -F web dev`. With the api down, the
-proxy answers 502 and the console says it can't reach it.
+`docker compose up` serves exactly this on `:5173`, with `vite preview` over a built bundle
+in place of the dev server — `preview.proxy` falls back to `server.proxy`, so it is the same
+proxy, reading the same variables out of the container's environment. Run `pnpm -F web dev`
+against the stack when you want hot reload. With the api down, the proxy answers 502 and the
+console says it can't reach it.
 
 ## Brand
 

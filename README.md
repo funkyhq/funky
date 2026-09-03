@@ -13,8 +13,7 @@ lost and no side effect run twice.
 
 Requires Docker, an [E2B](https://e2b.dev) API key, and a key for at least one model
 provider: [Anthropic](https://console.anthropic.com), [OpenAI](https://platform.openai.com),
-[Google](https://aistudio.google.com/apikey), or [Together AI](https://api.together.ai). A
-config's `inference.provider` names which one runs it; see [Model providers](#model-providers).
+[Google](https://aistudio.google.com/apikey), or [Together AI](https://api.together.ai).
 
 ```bash
 git clone https://github.com/funkyhq/funky && cd funky
@@ -22,8 +21,16 @@ cp .env.example .env        # the auth token, a model-provider key, and the E2B 
 docker compose up --build
 ```
 
-The stack is postgres → a one-shot migration → the api (`:3000`) + a worker; it's up when
-the `api` service reports healthy. Then:
+You can interact with the Funky service through Web UI or CURL.
+
+**The console**, at <http://localhost:5173>. Define an agent, give it an environment, start a
+session, and watch the log stream live — all in the browser. It proxies the api and attaches
+the token itself, so no credential ever reaches the page.
+
+<!-- TODO: replace this comment with the console screenshot, e.g.
+     <img alt="The Funky Console" src="PASTE_GITHUB_ATTACHMENT_URL_HERE"> -->
+
+**The api**, at `localhost:3000` — bearer-authed, and the same five steps with curl:
 
 ```bash
 export TOKEN=<your FUNKY_AUTH_TOKEN>
@@ -130,6 +137,7 @@ in-flight work dies with it. Funky decouples them:
 | `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes              |
 | `apps/api`          | The HTTP surface (Hono): configs, sessions, intake, cancel, inspection, the SSE stream           |
 | `apps/worker`       | The runDriver host — the process a container runs                                                |
+| `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                    |
 
 ## Development
 
