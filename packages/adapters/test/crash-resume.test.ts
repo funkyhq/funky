@@ -108,6 +108,23 @@ async function intakeSecondPrompt(dir: string): Promise<void> {
 }
 
 /**
+ * Has the current run ended? The store's invariant is at most one open
+ * item per session and a run's end is the atomic non-creation of a next
+ * one, so "no open item" IS "the run ended" — read from the log, which
+ * is the only state that survives a SIGKILL. Parent side, so only ever
+ * called while no child is alive.
+ */
+async function runEnded(dir: string): Promise<boolean> {
+  const { store, close } = await openDir(dir);
+  try {
+    const items = await store.listItems(sessionRef);
+    return items.every((item) => item.status === "done");
+  } finally {
+    await close();
+  }
+}
+
+/**
  * The reference transcript with the given toolResult batches replaced by
  * what a re-claimed execute_tools item commits: interrupted results,
  * never re-executed side effects (the attempt > 1 carve-out).
@@ -439,19 +456,31 @@ describe.concurrent("crash-resume: randomized sweep", () => {
       const rng = mulberry32(SWEEP_SEED + i);
       const label = `sweep #${i} (seed ${SWEEP_SEED + i})`;
       const dir = await copyOf(templateFresh);
-      let endRuns = 0;
       let intaken = false;
       let attempts = 0;
       const children: DriverHandle[] = [];
 
       try {
-        while (endRuns < 2) {
-          if (endRuns >= 1 && !intaken) {
+        // Turn boundaries come from the log, never from the children's
+        // signals: this loop kills on a timer, so a SIGKILL can land
+        // between commitStep's durable write and the IPC announcing it
+        // — real progress, no signal. Counting those signals stranded
+        // the sweep on a lost end_run: turn two never intaken, then
+        // children forked at an idle session until the budget ran out.
+        // The signal stays as a fast path below (stop waiting out the
+        // delay once a run ends); only the log decides what happened.
+        for (;;) {
+          if (await runEnded(dir)) {
+            if (intaken) break;
             await intakeSecondPrompt(dir);
             intaken = true;
           }
           attempts++;
-          if (attempts > 20) throw new Error(`${label}: no progress after 20 children`);
+          if (attempts > 20) {
+            throw new Error(
+              `${label}: unfinished after 20 children (turn two ${intaken ? "started" : "not reached"})`,
+            );
+          }
           const child = forkDriver(dir);
           children.push(child);
           // Arm the kill timer only at the child's ready signal — timed
@@ -464,7 +493,6 @@ describe.concurrent("crash-resume: randomized sweep", () => {
           const delay = 100 + attempts * 200 + Math.floor(rng() * 800);
           await Promise.race([child.waitFor(endRun, `${label}: end_run`, 60_000), sleep(delay)]);
           await child.kill();
-          endRuns += countEndRuns(child.received);
         }
 
         // Random kills may land on open execute_tools claims, so any
