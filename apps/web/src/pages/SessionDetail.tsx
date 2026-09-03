@@ -9,8 +9,10 @@
 //
 // The transcript is pages/Transcript.tsx; the loading and following of the
 // log is lib/useEntries.ts. What is left here is the session row itself,
-// the composer, and the one thing neither of those can know: which of the
-// messages this client has sent are still missing from the log (Sent).
+// the composer, Archive — the one control on this page that changes the
+// session rather than adding to it — and the one thing none of those can
+// know: which of the messages this client has sent are still missing from
+// the log (Sent).
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -24,6 +26,7 @@ import {
   type Session,
   type SessionEntry,
   type UserMessage,
+  archiveSession,
   getSession,
   sendMessage,
 } from "../lib/api";
@@ -166,12 +169,18 @@ export function SessionDetail({ id }: { id: string }) {
   // Bumped to re-read the session row. Its own counter, because the log has
   // one of its own (useEntries) and either read can fail without the other.
   const [reads, setReads] = useState(0);
+  const [archiving, setArchiving] = useState(false);
+  // The api's refusal of an archive, and whether it was the ONE refusal
+  // this page can explain: 409, the session is still working. Its own
+  // state, not `failure` above — that one means the session row would not
+  // load, and this page has plenty to show while this is set.
+  const [refused, setRefused] = useState<{ message: string; running: boolean }>();
   const now = useNow(RELATIVE_TICK_MS);
 
   const archived = session?.archivedAt !== undefined;
   // Follow the log only while there is something that could still write to
   // it, and only once the row that says so has arrived.
-  const { state, live, reload } = useEntries(id, session !== undefined && !archived);
+  const { state, live, reload, refresh } = useEntries(id, session !== undefined && !archived);
 
   const log = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -197,6 +206,43 @@ export function SessionDetail({ id }: { id: string }) {
     setFailure(undefined);
     setReads((n) => n + 1);
     reload();
+  }
+
+  /**
+   * Retire the session. Terminal, taken on the click — the red label is the
+   * whole of the warning, as it is in the config dialogs — but unlike a
+   * config's archive this one can be REFUSED: the api takes the transition
+   * only while the session is idle, and answers 409 while a worker still
+   * has an item open.
+   *
+   * Which is why there is no disabled state for it. Nothing this console
+   * can read says whether a session is running — funky derives that from
+   * its work items rather than storing it on the row — so a button greyed
+   * out on a guess would be wrong in both directions. The api's answer is
+   * the only one there is, so it is asked, and its refusal is reported.
+   */
+  async function archive() {
+    if (archiving || archived) return;
+    setRefused(undefined);
+    setArchiving(true);
+    try {
+      setSession(await archiveSession(id));
+      // The same transaction drains a message parked behind a cancelled run
+      // into the log, and the row above has just closed the tail that would
+      // have carried it — an archived session is one this page stops
+      // following. One more read, so what is on screen is the whole of a log
+      // that can no longer change.
+      refresh();
+    } catch (err) {
+      setRefused({
+        message: messageOf(err),
+        running: err instanceof ApiError && err.status === 409,
+      });
+    } finally {
+      // Unconditional: a refusal has to leave the button pressable again,
+      // and a success has already taken it off the page.
+      setArchiving(false);
+    }
   }
 
   const entries = state.status === "ready" ? state.entries : EMPTY;
@@ -270,7 +316,13 @@ export function SessionDetail({ id }: { id: string }) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (text === "" || archived) return;
+    // `archiving` gates this as firmly as `archived` does. A message sent
+    // while the transition is in flight races it, and BOTH outcomes are
+    // wrong: intake opens a work item, so a message that wins refuses the
+    // archive the reader just asked for (409, idle only) — and one that
+    // loses is refused BY the archive and then hidden with the composer
+    // its bubble was drawn in, taking the text with it.
+    if (text === "" || archived || archiving) return;
 
     // Sent at the tail as this client last saw it. Anything at or behind
     // this seq was already in the log, so it cannot be this message.
@@ -298,8 +350,11 @@ export function SessionDetail({ id }: { id: string }) {
 
   /** Send a refused message again. Offered only where the api refused it —
    *  an unconfirmed one has no retry, because nothing this console can read
-   *  would say whether it needs one (see deliver). */
+   *  would say whether it needs one (see deliver). Held back while an
+   *  archive is in flight for the same reason a first send is (see
+   *  submit) — this is a send like any other, just of an older message. */
   function retry(message: Sent) {
+    if (archiving || archived) return;
     setSent((prev) =>
       prev.map((row) =>
         row.id === message.id
@@ -336,14 +391,44 @@ export function SessionDetail({ id }: { id: string }) {
           <>
             <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
             {archived ? null : (
-              <span className={live ? "live live-on" : "live"}>
-                <span className="live-dot" aria-hidden="true" />
-                {live ? "Live" : "Reconnecting…"}
-              </span>
+              <>
+                <span className={live ? "live live-on" : "live"}>
+                  <span className="live-dot" aria-hidden="true" />
+                  {live ? "Live" : "Reconnecting…"}
+                </span>
+                {/* At the far end, away from the back link and the two
+                    marks beside it that only report: this is the one
+                    control in the head that changes the session, and the
+                    one with nothing on the other side of it. */}
+                <button
+                  className="btn btn-archive chat-archive"
+                  type="button"
+                  onClick={archive}
+                  disabled={archiving}
+                >
+                  {archiving ? "Archiving…" : "Archive"}
+                </button>
+              </>
             )}
           </>
         )}
       </header>
+
+      {refused === undefined ? null : (
+        <p className="chat-refused" role="alert">
+          {/* The api's own words first, as everywhere else in this console,
+              and this page's reading of them on a line of its own — the
+              messages end without punctuation, so a clause appended to one
+              would run into it as a single sentence. */}
+          {refused.message}
+          {refused.running ? (
+            <span className="chat-refused-why">
+              Archive takes an idle session, and this one still has a run open — it can be taken
+              once that turn ends.
+            </span>
+          ) : null}
+        </p>
+      )}
 
       <p className="chat-id">{id}</p>
 
@@ -453,7 +538,11 @@ export function SessionDetail({ id }: { id: string }) {
                         <span className="chat-queued-actions">
                           {/* Only a refusal may be sent again: see deliver. */}
                           {message.state === "failed" ? (
-                            <button type="button" onClick={() => retry(message)}>
+                            <button
+                              type="button"
+                              onClick={() => retry(message)}
+                              disabled={archiving}
+                            >
                               Retry
                             </button>
                           ) : null}
@@ -484,14 +573,14 @@ export function SessionDetail({ id }: { id: string }) {
                 rows={1}
                 value={draft}
                 placeholder="Send a message…"
-                disabled={session === undefined}
+                disabled={session === undefined || archiving}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={keyDown}
               />
               <button
                 className="btn btn-primary compose-send"
                 type="submit"
-                disabled={draft.trim() === "" || session === undefined}
+                disabled={draft.trim() === "" || session === undefined || archiving}
               >
                 <SendIcon />
                 Send

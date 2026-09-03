@@ -55,11 +55,31 @@ export function useEntries(id: string, tail: boolean) {
    */
   const live = tail && start !== undefined && !dropped;
 
-  function reload() {
-    setState({ status: "loading" });
+  /**
+   * Read the log again, keeping the rows already on screen until the answer
+   * lands: they are still true, and this is only asking what has joined
+   * them.
+   *
+   * What ARCHIVING needs. The transition can append — a message parked
+   * behind a cancelled run is drained into the log by the same transaction
+   * — and it closes the tail in the same move, since an archived session
+   * has nothing left to follow. The stream polls, so those last entries
+   * would be written just after the only thing watching for them went away,
+   * and the page would sit on a log one short of final with no way to ask
+   * again.
+   */
+  function refresh() {
     setStart(undefined);
     setDropped(false);
     setReloads((n) => n + 1);
+  }
+
+  /** The same read, from empty. What a failed load's retry does: what is on
+   *  screen there is an error rather than a log, so there is nothing to
+   *  hold on to while the read is in flight. */
+  function reload() {
+    setState({ status: "loading" });
+    refresh();
   }
 
   useEffect(() => {
@@ -110,5 +130,5 @@ export function useEntries(id: string, tail: boolean) {
     return () => source.close();
   }, [id, tail, start]);
 
-  return { state, live, reload };
+  return { state, live, reload, refresh };
 }

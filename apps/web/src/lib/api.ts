@@ -483,6 +483,34 @@ export function createSession(
   return post<Session>("/v1/sessions", { namespace: DEFAULT_NAMESPACE, ...input }, {}, opts.signal);
 }
 
+/**
+ * Archives a session and returns it carrying the mark. Terminal, and the
+ * api has no route back: the log stays readable and every client write
+ * closes with it — no further message, no cancel, no sandbox rebinding.
+ *
+ * Unlike a config's archive this one can be REFUSED. The api takes the
+ * transition only while the session is IDLE and answers 409 while a work
+ * item is still open, and nothing on the wire says which a session is —
+ * running is derived from its items rather than stored on the row (see
+ * Session) — so the refusal is the only way to find out.
+ *
+ * A message parked behind a cancelled run is drained into the log by the
+ * same transaction, so the log can grow at the very moment it closes.
+ * Idempotent otherwise: a second call answers with the first one's
+ * archivedAt rather than failing.
+ */
+export function archiveSession(id: string, opts: { signal?: AbortSignal } = {}): Promise<Session> {
+  return post<Session>(
+    `/v1/sessions/${encodeURIComponent(id)}/archive`,
+    // No body, because the route takes none — there is nothing to say
+    // beyond "retire this". JSON.stringify(undefined) is undefined, which
+    // fetch sends as no body at all.
+    undefined,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
 // --- the session log ---
 //
 // Messages are what the model sees; entries are what the store owns. The
