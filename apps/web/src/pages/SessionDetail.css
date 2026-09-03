@@ -47,9 +47,14 @@
 
 /* Head ------------------------------------------------------------------- */
 
+/* Wraps, because it is no longer three short marks: with Archive on the end
+   the row is four items wide, and the pane it sits in narrows to whatever
+   the window leaves it. A second line is better than an overflow, which has
+   no scrollbar here to find it with. */
 .chat-head {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
@@ -83,6 +88,31 @@
   background: var(--ok);
   box-shadow: 0 0 0 3px var(--ok-glow);
   opacity: 1;
+}
+
+/* Pushed to the far end, so the head reads left to right as identity then
+   action: back, state, tail, and the one thing that ends it. On a wrapped
+   row it takes a line of its own, still right-aligned. */
+.chat-archive {
+  margin-left: auto;
+}
+
+/* The api's refusal of an archive. Under the head rather than in it: this
+   is a sentence, and the head is a row of things two words long — putting
+   it there would either clip it or push the button that caused it off the
+   end. */
+.chat-refused {
+  flex: none;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--bad);
+}
+
+/* What the refusal above MEANS, on its own line: the api's message is the
+   claim and this is the reading of it, and the two are not one sentence. */
+.chat-refused-why {
+  display: block;
 }
 
 .chat-id {
@@ -257,8 +287,16 @@
   cursor: pointer;
 }
 
-.chat-queued-actions button:hover {
+.chat-queued-actions button:hover:not(:disabled) {
   color: var(--text);
+}
+
+/* Retry is a send, so an archive in flight takes it away like it takes the
+   composer's (see SessionDetail.tsx submit). Discard stays: it writes
+   nothing, and it is the way out of a message that has none. */
+.chat-queued-actions button:disabled {
+  color: var(--text-3);
+  cursor: default;
 }
 
 .chat-queued-error {

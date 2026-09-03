@@ -198,6 +198,25 @@ a {
   box-shadow: 0 6px 16px -6px var(--brand-shadow);
 }
 
+/* The destructive weight: red in the label, never in a fill. The filled red
+   was tried beside the filled cobalt Save and cut, because it out-shouted
+   it and the destructive one is the wrong one to win. The hue is the whole
+   of the warning — every surface that draws this button archives on the
+   click. Where it SITS is that surface's business (.modal-foot puts it at
+   the footer's left, .chat-head at the head's right); what it says about
+   itself is here, so the two cannot drift apart. */
+.btn-archive {
+  color: var(--bad);
+}
+
+/* .btn's hover resolves the label to var(--text), which would drop the one
+   thing this button says about itself. The surface is left alone, so the
+   label holds 5.25:1 (light) / 8.02:1 (dark) in every state. */
+.btn-archive:hover:not(:disabled) {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
