@@ -50,6 +50,10 @@
 .chat-head {
   display: flex;
   flex: none;
+  /* Four items now, and the pane can be 320px wide: the row is short
+     enough to fit at every width the console draws a table at, and wraps
+     rather than overflowing below that. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
@@ -59,6 +63,18 @@
    anchor: the browser's history, middle-click and focus ring come free. */
 .chat-back {
   text-decoration: none;
+}
+
+/* The head's one action, held at the far end: the three things to its left
+   say what this session IS, and this is the only one that changes it.
+
+   Modal.css gives .btn-archive a margin-right: auto for the footer it was
+   written for, where it holds the left while Cancel and Save keep the
+   right. This row wants the other end, and leaving both autos in would
+   split the free space between them and strand the button in the middle. */
+.chat-archive {
+  margin-right: 0;
+  margin-left: auto;
 }
 
 /* Whether the tail is connected. Dimmed until it is — a reconnect is
@@ -319,6 +335,25 @@
 .compose-send {
   padding-top: 9px;
   padding-bottom: 9px;
+}
+
+/* Archive dialog ---------------------------------------------------------
+   The one place this page asks something rather than showing it. It borrows
+   Modal's classes whole; these two rules are the only places the question
+   it asks differs from the forms those classes were written for. */
+
+/* .prose carries no margin — the dialogs that use it say one thing. This
+   one says what archiving costs and then when it is refused, which are two
+   things and read as such. */
+.chat-archive-body p + p {
+  margin-top: 10px;
+}
+
+/* Modal.css holds .btn-archive out to the left, away from the pair of
+   buttons that answer a form. Here it IS the answer — the dialog exists to
+   ask this one question — so it stays in the row beside Cancel. */
+.chat-archive-foot .btn-archive {
+  margin-right: 0;
 }
 
 /* An archived session takes no message, so it gets no box — saying why is

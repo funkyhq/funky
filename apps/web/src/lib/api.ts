@@ -483,6 +483,30 @@ export function createSession(
   return post<Session>("/v1/sessions", { namespace: DEFAULT_NAMESPACE, ...input }, {}, opts.signal);
 }
 
+/**
+ * Archives a session and returns it carrying the mark. Terminal, and the
+ * api has no route back: the log stays readable and the row keeps every id
+ * it was made from, but every client write closes — a message sent
+ * afterwards answers 409. Idempotent by consequence, like the two config
+ * archives above.
+ *
+ * Unlike those two it can be REFUSED. The store serializes this transition
+ * with intake and answers 409 while the session still has an open work
+ * item, so a session with a turn in flight is archived once that turn ends
+ * rather than during it. A message parked behind a run that was cancelled
+ * is flushed into the log by the same transaction, so it shows up in
+ * /entries afterwards rather than being dropped.
+ */
+export function archiveSession(id: string, opts: { signal?: AbortSignal } = {}): Promise<Session> {
+  return post<Session>(
+    `/v1/sessions/${encodeURIComponent(id)}/archive`,
+    // No body, because the route takes none — see archiveAgentConfig.
+    undefined,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
 // --- the session log ---
 //
 // Messages are what the model sees; entries are what the store owns. The
