@@ -6,6 +6,7 @@ import type { ReactElement, SVGProps } from "react";
 import { AgentIcon, BoltIcon, EnvironmentIcon, SessionIcon } from "./components/Icons";
 import { AgentConfigs } from "./pages/AgentConfigs";
 import { EnvConfigs } from "./pages/EnvConfigs";
+import { QuickStart } from "./pages/QuickStart";
 import { Sessions } from "./pages/Sessions";
 
 /** What a page is handed: the part of the route below its own section, so
@@ -38,6 +39,10 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     blurb:
       "Walk the whole quickstart in one flow: define an agent, give it an environment, open a session, and send it the first message.",
     chip: "agent → environment → session → message",
+    // Takes no route below itself: the walk holds nothing durable until its
+    // last step, so `#/quick-start/2` would be a link to a form that landed
+    // empty. The step is state, not a place.
+    Page: QuickStart,
   },
   {
     id: "agent",
