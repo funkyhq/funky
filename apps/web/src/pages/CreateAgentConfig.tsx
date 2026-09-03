@@ -8,11 +8,11 @@
 // config being tuned, not to one being made; POST the body directly, or
 // update the config afterwards, when that is what you want.
 //
-// Provider and model are both closed choices, and the model list is the
-// SELECTED provider's (see lib/providers.ts): a config's provider names what
-// will actually serve it, so the two cannot be set to disagree here. With no
-// provider key configured there is nothing truthful to offer, and the dialog
-// says that instead of taking a request the stack can't honour.
+// The fields themselves are components/AgentFields.tsx and the state they
+// hold is lib/agent.ts, shared with the quickstart — this file is the
+// dialog around them: what the request is, and what to do when it fails.
+// With no provider key configured there is nothing truthful to offer, and
+// the dialog says that instead of taking a request the stack can't honour.
 //
 // Namespace is omitted for a different reason: the console addresses exactly
 // one (see DEFAULT_NAMESPACE in lib/api.ts) and has no switcher, so offering
@@ -24,16 +24,11 @@ import {
   type CreateAgentConfigInput,
   DEFAULT_NAMESPACE,
 } from "../lib/api";
-import { KNOWN_PROVIDERS, type Provider, PROVIDERS } from "../lib/providers";
-import { Field } from "../components/Field";
+import { type AgentFields, initialFields, toInference } from "../lib/agent";
+import { PROVIDERS } from "../lib/providers";
+import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { Modal } from "../components/Modal";
-import "./CreateAgentConfig.css";
-
-type Fields = {
-  provider: string;
-  model: string;
-  systemPrompt: string;
-};
+import { ProviderKeys } from "../components/ProviderKeys";
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -79,14 +74,7 @@ function NoProvider({
           Add a key to the monorepo root <code>.env</code> — the same file{" "}
           <code>docker compose up</code> reads — then restart the dev server:
         </p>
-        <ul className="key-list">
-          {KNOWN_PROVIDERS.map((provider) => (
-            <li key={provider.id}>
-              <code>{provider.envKey}</code>
-              <span>{provider.label}</span>
-            </li>
-          ))}
-        </ul>
+        <ProviderKeys />
       </div>
       <footer className="modal-foot">
         <button className="btn" type="button" onClick={onClose} data-autofocus="">
@@ -106,23 +94,22 @@ function Form({
   onClose: () => void;
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
-  // Non-empty by construction: CreateAgentConfig renders this branch only
-  // when there is a provider to start on.
-  const [fields, setFields] = useState<Fields>(() => onProvider(PROVIDERS[0], ""));
+  // The first provider with a key, which CreateAgentConfig has already
+  // established there is one of: this branch renders only when PROVIDERS
+  // is non-empty.
+  const [fields, setFields] = useState<AgentFields>(initialFields);
   const [busy, setBusy] = useState(false);
   // The api's refusal — a 400, or an api that isn't there. There is nothing
   // for the fields themselves to refuse: every one of them is either a
   // closed choice or free text the api takes as-is.
   const [failure, setFailure] = useState<string>();
 
-  const provider = PROVIDERS.find((entry) => entry.id === fields.provider) ?? PROVIDERS[0];
-
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
 
     const input: CreateAgentConfigInput = {
-      inference: { provider: fields.provider, model: fields.model },
+      inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
     };
 
@@ -155,38 +142,11 @@ function Form({
     >
       <form className="modal-form" onSubmit={submit} noValidate>
         <div className="modal-body form-fields">
-          <div className="field-row">
-            <Field
-              label="Provider"
-              name="provider"
-              value={fields.provider}
-              // Changing the provider changes the model with it: a Claude id
-              // under some other provider is the mismatch these two closed
-              // lists exist to make unrepresentable.
-              onChange={(id) => setFields(onProvider(byId(id), fields.systemPrompt))}
-              options={PROVIDERS.map((entry) => ({ id: entry.id, label: entry.label }))}
-              autoFocus
-              required
-            />
-            <Field
-              label="Model"
-              name="model"
-              value={fields.model}
-              onChange={(model) => setFields((prev) => ({ ...prev, model }))}
-              options={provider.models}
-              required
-            />
-          </div>
-
-          <Field
-            label="System prompt"
-            name="systemPrompt"
-            value={fields.systemPrompt}
-            onChange={(systemPrompt) => setFields((prev) => ({ ...prev, systemPrompt }))}
-            placeholder="You are a data analyst."
-            rows={6}
-            multiline
-          />
+          {/* Left enabled while the create is in flight, unlike the edit
+              dialog's: this form closes on success and keeps its fields on
+              a refusal, so there is nothing a late edit could be silently
+              dropped from. */}
+          <AgentFieldset fields={fields} onChange={setFields} />
         </div>
 
         <footer className="modal-foot">
@@ -206,15 +166,3 @@ function Form({
     </Modal>
   );
 }
-
-/** A provider by id, falling back to the first — an id the select didn't
- *  render can't be chosen, so the fallback is for types, not for users. */
-const byId = (id: string): Provider => PROVIDERS.find((entry) => entry.id === id) ?? PROVIDERS[0];
-
-/** The fields as they are on a provider: its first model, since the one that
- *  was selected belonged to whichever provider is being left. */
-const onProvider = (provider: Provider, systemPrompt: string): Fields => ({
-  provider: provider.id,
-  model: provider.models[0].id,
-  systemPrompt,
-});

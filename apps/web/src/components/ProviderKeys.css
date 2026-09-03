@@ -1,0 +1,25 @@
+/* apps/web/src/components/ProviderKeys.css
+   The env var beside the provider it serves (components/ProviderKeys.tsx).
+   The <code> is left to whichever surface is drawing the list — a dialog
+   body and a page card style a literal differently. Every colour resolves
+   to a token in index.css. */
+
+.key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.key-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.key-list span {
+  font-size: 12.5px;
+  color: var(--text-3);
+}

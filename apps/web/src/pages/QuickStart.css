@@ -1,0 +1,288 @@
+/* apps/web/src/pages/QuickStart.css
+   The walk: the three dots and the line between them, and the card holding
+   whichever step is open. The fields inside the card are
+   components/Field.css — this page writes the same two configs the dialogs
+   do, so it draws them the same way. Every colour resolves to a token in
+   index.css. */
+
+.qs {
+  align-self: start;
+  width: 100%;
+  max-width: 620px;
+  min-width: 0;
+  animation: qs-in 420ms var(--ease);
+}
+
+/* Head ------------------------------------------------------------------- */
+
+.qs-title {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.35px;
+  color: var(--text);
+}
+
+.qs-lede {
+  margin-top: 7px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.qs-lede code {
+  font: 500 12px var(--mono);
+  color: var(--text);
+}
+
+/* Steps ------------------------------------------------------------------
+   Three equal columns, each with its dot centred, so the line between two
+   dots is the same length wherever the labels differ in width. */
+
+.qs-steps {
+  display: flex;
+  margin: 26px 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.qs-step {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+/* The connector belongs to the step on its RIGHT and runs back to the
+   previous dot's centre — every column is the same width, so -50% is
+   exactly half a step. Drawn this way rather than as its own element so
+   the row stays three items, one per step.
+
+   It fills as the walk passes it: the line into a step you have reached
+   carries the accent, the rest stay a plain rule. */
+.qs-step + .qs-step::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  right: 50%;
+  left: -50%;
+  height: 2px;
+  /* Clear of both dots, which are 30px wide. */
+  margin: 0 23px;
+  background: var(--border-strong);
+}
+
+.qs-step-now::before,
+.qs-step-done::before {
+  background: var(--accent-line);
+}
+
+/* Over the connector, which runs under both of its ends. */
+.qs-dot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-elev);
+  font: 600 13px var(--sans);
+  color: var(--text-3);
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+/* A step already passed is a target — the walk writes nothing until the
+   end, so going back to it is free. */
+button.qs-dot {
+  cursor: pointer;
+}
+
+.qs-step-done .qs-dot {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.qs-step-done .qs-dot:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.qs-step-now .qs-dot {
+  border-color: transparent;
+  background: var(--accent-fill);
+  color: #ffffff;
+  box-shadow: 0 1px 2px var(--brand-shadow);
+}
+
+.qs-step-label {
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.qs-step-now .qs-step-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Card ------------------------------------------------------------------- */
+
+.qs-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+
+.qs-body {
+  padding: 20px;
+}
+
+.qs-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.qs-card-title svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.qs-blurb {
+  margin: 5px 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-3);
+}
+
+/* Any literal in the card — an env var, an id — reads as one, the way
+   .modal-body code does inside a dialog. */
+.qs-body code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  font: 500 12px var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The plan ---------------------------------------------------------------
+   The two configs as the last step sees them: not rows that exist, but the
+   requests about to be sent. */
+
+.qs-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qs-plan li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+
+.qs-plan-key {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Right of the key, on its row: what the config will be once it exists —
+   or, after a submit that stopped part way, the id it already has. */
+.qs-plan-state {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-align: right;
+}
+
+.qs-plan-value {
+  grid-column: 1 / -1;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+/* One line of it: a system prompt can be a page long, and this is a
+   summary of what will be sent, not the field it was typed into. */
+.qs-plan-note {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Foot ------------------------------------------------------------------- */
+
+.qs-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+
+/* The two ways out of a stranded submit are links, not buttons: they go
+   somewhere, and .btn is already what a link that acts like one wears
+   (see .chat-back). */
+.qs-foot a.btn {
+  text-decoration: none;
+}
+
+/* The same threshold and the same reason as Modal.css's footer: a row of
+   pills has no give, and justified to flex-end its overflow leaves by the
+   left edge. Source order leads with Back, which is the last place a
+   thumb-ordered column wants it. */
+@container pane (max-width: 440px) {
+  .qs-foot {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .qs-foot .btn {
+    justify-content: center;
+  }
+
+  .qs-foot .form-failure {
+    order: 1;
+    margin-right: 0;
+  }
+}
+
+@keyframes qs-in {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+}

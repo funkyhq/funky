@@ -1,6 +1,8 @@
 /* apps/web/src/components/Field.css
-   The field and its control, shared by every dialog that writes a config
-   (components/Field.tsx). Every colour resolves to a token in index.css. */
+   The field and its control, shared by every surface that writes a config
+   (components/Field.tsx) — plus the two things that sit beside fields
+   wherever they are: the aside above them and the api's refusal below.
+   Every colour resolves to a token in index.css. */
 
 /* The body as a column of fields. gap rather than margins, so spacing never
    depends on which field happens to follow which. */
@@ -120,4 +122,31 @@ select.control {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* Beside the fields ------------------------------------------------------
+   Here rather than in Modal.css because a form is not only ever a dialog:
+   the quickstart writes the same two configs down a page and has the same
+   two things to say about them. What stays in Modal.css is what a FOOTER
+   does with these — where the refusal sits when an Archive button is
+   already taking the row's spare width, and how the row stacks when it
+   runs out of it. */
+
+/* A boxed aside above the fields — what a surface has to say about the
+   thing before offering it, like a config that takes no more updates. */
+.note {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+}
+
+/* The api's own refusal, beside the actions that caused it. margin-right
+   takes the footer's spare width so the buttons stay right-aligned. */
+.form-failure {
+  margin-right: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--bad);
 }

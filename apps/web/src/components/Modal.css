@@ -103,16 +103,6 @@ body:has(dialog.modal[open]) {
   color: var(--text-2);
 }
 
-/* A boxed aside above the fields — what a dialog has to say about the
-   thing before offering it, like a config that takes no more updates. */
-.note {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-sunken);
-  font-size: 12.5px;
-}
-
 /* The id under the title, and whatever fact sits under that — what an edit
    is being made against. Both belong to Modal's `description` slot, so they
    live with it rather than in whichever dialog used them first. */
@@ -151,15 +141,6 @@ body:has(dialog.modal[open]) {
   border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
 }
 
-/* The api's own refusal, beside the actions that caused it. margin-right
-   takes the footer's spare width so the buttons stay right-aligned. */
-.form-failure {
-  margin-right: auto;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--bad);
-}
-
 /* Archive is the footer's left-hand action, so the two buttons that answer
    the form — Cancel and Save — stay together on the right, and the one that
    ends the config isn't sitting among them.
@@ -180,7 +161,7 @@ body:has(dialog.modal[open]) {
   border-color: var(--bad);
 }
 
-/* Modal.css gives .form-failure the auto margin that pushes it left. With
+/* Field.css gives .form-failure the auto margin that pushes it left. With
    an Archive button already taking the footer's spare width there is none
    left to share, and the refusal belongs beside the action that caused it
    rather than spread away from it. */
