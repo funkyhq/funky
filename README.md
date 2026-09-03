@@ -27,8 +27,7 @@ You can interact with the Funky service through Web UI or CURL.
 session, and watch the log stream live — all in the browser. It proxies the api and attaches
 the token itself, so no credential ever reaches the page.
 
-<!-- TODO: replace this comment with the console screenshot, e.g.
-     <img alt="The Funky Console" src="PASTE_GITHUB_ATTACHMENT_URL_HERE"> -->
+<img width="2270" height="1506" alt="funky_web_console" src="https://github.com/user-attachments/assets/3ab4b897-6d6d-434b-a651-1646a2febd2d" />
 
 **The api**, at `localhost:3000` — bearer-authed, and the same five steps with curl:
 
