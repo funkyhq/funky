@@ -485,22 +485,26 @@ export function createSession(
 
 /**
  * Archives a session and returns it carrying the mark. Terminal, and the
- * api has no route back: the log stays readable and the row keeps every id
- * it was made from, but every client write closes — a message sent
- * afterwards answers 409. Idempotent by consequence, like the two config
- * archives above.
+ * api has no route back: the log stays readable and every client write
+ * closes with it — no further message, no cancel, no sandbox rebinding.
  *
- * Unlike those two it can be REFUSED. The store serializes this transition
- * with intake and answers 409 while the session still has an open work
- * item, so a session with a turn in flight is archived once that turn ends
- * rather than during it. A message parked behind a run that was cancelled
- * is flushed into the log by the same transaction, so it shows up in
- * /entries afterwards rather than being dropped.
+ * Unlike a config's archive this one can be REFUSED. The api takes the
+ * transition only while the session is IDLE and answers 409 while a work
+ * item is still open, and nothing on the wire says which a session is —
+ * running is derived from its items rather than stored on the row (see
+ * Session) — so the refusal is the only way to find out.
+ *
+ * A message parked behind a cancelled run is drained into the log by the
+ * same transaction, so the log can grow at the very moment it closes.
+ * Idempotent otherwise: a second call answers with the first one's
+ * archivedAt rather than failing.
  */
 export function archiveSession(id: string, opts: { signal?: AbortSignal } = {}): Promise<Session> {
   return post<Session>(
     `/v1/sessions/${encodeURIComponent(id)}/archive`,
-    // No body, because the route takes none — see archiveAgentConfig.
+    // No body, because the route takes none — there is nothing to say
+    // beyond "retire this". JSON.stringify(undefined) is undefined, which
+    // fetch sends as no body at all.
     undefined,
     { namespace: DEFAULT_NAMESPACE },
     opts.signal,

@@ -9,15 +9,10 @@
 //
 // The transcript is pages/Transcript.tsx; the loading and following of the
 // log is lib/useEntries.ts. What is left here is the session row itself,
-// the composer, and the one thing neither of those can know: which of the
-// messages this client has sent are still missing from the log (Sent).
-//
-// Archive is the page's one action on the session rather than in it, and
-// the only one that ends it: the log stays readable, every client write
-// closes, and there is no route back. It is asked for behind a dialog
-// because of that — the config editors archive on the click, but they do it
-// from inside a dialog you opened to edit, where this would be a single
-// press on a page you land on by clicking a row.
+// the composer, Archive — the one control on this page that changes the
+// session rather than adding to it — and the one thing none of those can
+// know: which of the messages this client has sent are still missing from
+// the log (Sent).
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -39,7 +34,6 @@ import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
 import { useEntries } from "../lib/useEntries";
 import { useNow } from "../lib/useNow";
 import { ArrowLeftIcon, RefreshIcon, SendIcon } from "../components/Icons";
-import { Modal } from "../components/Modal";
 import { Status } from "../components/Status";
 import { SESSION_STATUS } from "../lib/status";
 import { Transcript } from "./Transcript";
@@ -175,26 +169,21 @@ export function SessionDetail({ id }: { id: string }) {
   // Bumped to re-read the session row. Its own counter, because the log has
   // one of its own (useEntries) and either read can fail without the other.
   const [reads, setReads] = useState(0);
-  // The archive: whether it is being asked for, whether it is in flight,
-  // and how it was refused. Its own failure rather than the page's —
-  // `failure` above is the session READ, and a refusal has to be readable
-  // beside the button that caused it, which is inside the dialog.
-  const [confirming, setConfirming] = useState(false);
   const [archiving, setArchiving] = useState(false);
-  const [archiveError, setArchiveError] = useState<string>();
+  // The api's refusal of an archive, and whether it was the ONE refusal
+  // this page can explain: 409, the session is still working. Its own
+  // state, not `failure` above — that one means the session row would not
+  // load, and this page has plenty to show while this is set.
+  const [refused, setRefused] = useState<{ message: string; running: boolean }>();
   const now = useNow(RELATIVE_TICK_MS);
 
   const archived = session?.archivedAt !== undefined;
   // Follow the log only while there is something that could still write to
   // it, and only once the row that says so has arrived.
-  const { state, live, reload } = useEntries(id, session !== undefined && !archived);
+  const { state, live, reload, refresh } = useEntries(id, session !== undefined && !archived);
 
   const log = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
-  // Where focus lands when the dialog closes on a successful archive: the
-  // button that opened it is gone by then — an archived session has no
-  // archive to offer — and the back link is what stays put.
-  const back = useRef<HTMLAnchorElement>(null);
   // Whether the reader is at the tail. A ref, not state: it is read when an
   // entry lands, and nothing renders differently for it.
   const pinned = useRef(true);
@@ -220,49 +209,38 @@ export function SessionDetail({ id }: { id: string }) {
   }
 
   /**
-   * Archive, on the dialog's confirming click. Terminal and idempotent, and
-   * the one write on this page the api can refuse for a reason worth
-   * explaining: the store serializes this transition with intake and
-   * answers 409 while the session still has an open work item, so a refusal
-   * here is a request made too early rather than a broken one.
+   * Retire the session. Terminal, taken on the click — the red label is the
+   * whole of the warning, as it is in the config dialogs — but unlike a
+   * config's archive this one can be REFUSED: the api takes the transition
+   * only while the session is idle, and answers 409 while a worker still
+   * has an item open.
    *
-   * Nothing else is reset on success. The row it returns carries the mark,
-   * and everything that follows from it — the pill, the closed composer,
-   * the stream shutting itself off — is read from that one value.
+   * Which is why there is no disabled state for it. Nothing this console
+   * can read says whether a session is running — funky derives that from
+   * its work items rather than storing it on the row — so a button greyed
+   * out on a guess would be wrong in both directions. The api's answer is
+   * the only one there is, so it is asked, and its refusal is reported.
    */
   async function archive() {
-    if (archiving) return;
-    setArchiveError(undefined);
+    if (archiving || archived) return;
+    setRefused(undefined);
     setArchiving(true);
     try {
-      // No abort signal, for the reason the create dialogs use none: a
-      // write in flight may well have landed, so the dialog stops being
-      // dismissible rather than walking away from an answer it would then
-      // have to guess at.
-      const retired = await archiveSession(id);
-      // Re-read the log, because archiving can APPEND to it: the store
-      // flushes an input parked behind a cancelled run in the same
-      // transaction, so a message queued before the archive lands in
-      // /entries as part of it. The stream is a poll loop, and the row
-      // below stops the tail at once — anything the archive wrote would
-      // otherwise be missed until a full page reload, since an archived
-      // session has nothing left to refresh with.
-      reload();
-      setSession(retired);
-      setConfirming(false);
+      setSession(await archiveSession(id));
+      // The same transaction drains a message parked behind a cancelled run
+      // into the log, and the row above has just closed the tail that would
+      // have carried it — an archived session is one this page stops
+      // following. One more read, so what is on screen is the whole of a log
+      // that can no longer change.
+      refresh();
     } catch (err) {
-      // The one refusal this route makes, said in the console's words
-      // rather than the api's. Everywhere else the api's message is the
-      // more informative of the two; this one is "session <ns>/<id> is not
-      // idle", which spends four lines of a footer restating the id at the
-      // top of this dialog and never says what to do about it.
-      const running = err instanceof ApiError && err.status === 409;
-      setArchiveError(
-        running
-          ? "It still has a turn in flight — archiving works once the agent has finished."
-          : messageOf(err),
-      );
+      setRefused({
+        message: messageOf(err),
+        running: err instanceof ApiError && err.status === 409,
+      });
     } finally {
+      // Unconditional: a refusal has to leave the button pressable again,
+      // and a success has already taken it off the page.
       setArchiving(false);
     }
   }
@@ -338,7 +316,13 @@ export function SessionDetail({ id }: { id: string }) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (text === "" || archived) return;
+    // `archiving` gates this as firmly as `archived` does. A message sent
+    // while the transition is in flight races it, and BOTH outcomes are
+    // wrong: intake opens a work item, so a message that wins refuses the
+    // archive the reader just asked for (409, idle only) — and one that
+    // loses is refused BY the archive and then hidden with the composer
+    // its bubble was drawn in, taking the text with it.
+    if (text === "" || archived || archiving) return;
 
     // Sent at the tail as this client last saw it. Anything at or behind
     // this seq was already in the log, so it cannot be this message.
@@ -366,8 +350,11 @@ export function SessionDetail({ id }: { id: string }) {
 
   /** Send a refused message again. Offered only where the api refused it —
    *  an unconfirmed one has no retry, because nothing this console can read
-   *  would say whether it needs one (see deliver). */
+   *  would say whether it needs one (see deliver). Held back while an
+   *  archive is in flight for the same reason a first send is (see
+   *  submit) — this is a send like any other, just of an older message. */
   function retry(message: Sent) {
+    if (archiving || archived) return;
     setSent((prev) =>
       prev.map((row) =>
         row.id === message.id
@@ -396,38 +383,63 @@ export function SessionDetail({ id }: { id: string }) {
   return (
     <section className="chat">
       <header className="chat-head">
-        <a className="btn chat-back" href={SECTION} ref={back}>
+        <a className="btn chat-back" href={SECTION}>
           <ArrowLeftIcon />
           Sessions
         </a>
-        {session === undefined ? null : (
+        {session === undefined ? null : archived ? (
+          // Only the ARCHIVED half of the lifecycle is marked here. The
+          // list needs both, because a row there has nothing else to say
+          // which it is — but this page IS the active state: it has a
+          // composer taking messages and an Archive button to end it with.
+          // A pill repeating that said nothing, and said it in the same
+          // green dot as the mark below, which is about something else
+          // entirely.
+          <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
+        ) : (
           <>
-            <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
-            {archived ? null : (
-              <>
-                <span className={live ? "live live-on" : "live"}>
-                  <span className="live-dot" aria-hidden="true" />
-                  {live ? "Live" : "Reconnecting…"}
-                </span>
-                {/* Offered only while there is something to offer: archive
-                    is terminal, so once taken the pill beside this is the
-                    whole story and there is no route back to put behind a
-                    button. */}
-                <button
-                  className="btn btn-archive chat-archive"
-                  type="button"
-                  onClick={() => {
-                    setArchiveError(undefined);
-                    setConfirming(true);
-                  }}
-                >
-                  Archive
-                </button>
-              </>
-            )}
+            {/* Not the session's state — THIS CLIENT'S. The log follows a
+                stream, and this is shown only where that has come off:
+                while it is attached the transcript keeps itself current,
+                and a mark saying so is a green light that is always on.
+                Held back until the log has loaded, too, since a tail not
+                opened yet is not a tail that dropped. */}
+            {state.status === "ready" && !live ? (
+              <span className="live">
+                <span className="live-dot" aria-hidden="true" />
+                Reconnecting…
+              </span>
+            ) : null}
+            {/* At the far end, away from the back link: this is the one
+                control in the head that changes the session, and the one
+                with nothing on the other side of it. */}
+            <button
+              className="btn btn-archive chat-archive"
+              type="button"
+              onClick={archive}
+              disabled={archiving}
+            >
+              {archiving ? "Archiving…" : "Archive"}
+            </button>
           </>
         )}
       </header>
+
+      {refused === undefined ? null : (
+        <p className="chat-refused" role="alert">
+          {/* The api's own words first, as everywhere else in this console,
+              and this page's reading of them on a line of its own — the
+              messages end without punctuation, so a clause appended to one
+              would run into it as a single sentence. */}
+          {refused.message}
+          {refused.running ? (
+            <span className="chat-refused-why">
+              Archive takes an idle session, and this one still has a run open — it can be taken
+              once that turn ends.
+            </span>
+          ) : null}
+        </p>
+      )}
 
       <p className="chat-id">{id}</p>
 
@@ -537,7 +549,11 @@ export function SessionDetail({ id }: { id: string }) {
                         <span className="chat-queued-actions">
                           {/* Only a refusal may be sent again: see deliver. */}
                           {message.state === "failed" ? (
-                            <button type="button" onClick={() => retry(message)}>
+                            <button
+                              type="button"
+                              onClick={() => retry(message)}
+                              disabled={archiving}
+                            >
                               Retry
                             </button>
                           ) : null}
@@ -568,14 +584,14 @@ export function SessionDetail({ id }: { id: string }) {
                 rows={1}
                 value={draft}
                 placeholder="Send a message…"
-                disabled={session === undefined}
+                disabled={session === undefined || archiving}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={keyDown}
               />
               <button
                 className="btn btn-primary compose-send"
                 type="submit"
-                disabled={draft.trim() === "" || session === undefined}
+                disabled={draft.trim() === "" || session === undefined || archiving}
               >
                 <SendIcon />
                 Send
@@ -584,54 +600,6 @@ export function SessionDetail({ id }: { id: string }) {
           </form>
         )}
       </div>
-
-      {confirming ? (
-        <Modal
-          title="Archive this session?"
-          description={<code className="mono-id">{id}</code>}
-          dismissible={!archiving}
-          returnFocus={back}
-          onClose={() => setConfirming(false)}
-        >
-          <div className="modal-body chat-archive-body">
-            <p className="prose">
-              The log stays readable and the session keeps every id it was made from, but the
-              conversation closes: it takes no further message, and the api has no route back.
-            </p>
-            <p className="prose">
-              A session with a turn in flight is refused — the archive lands after the agent has
-              finished what it is working on, not during it.
-            </p>
-          </div>
-          <footer className="modal-foot chat-archive-foot">
-            {archiveError ? (
-              <p className="form-failure" role="alert">
-                {archiveError}
-              </p>
-            ) : null}
-            {/* Focus opens on the way out, not on the way through: this
-                dialog asks for something that cannot be undone, so Enter on
-                an untouched keyboard must not be the thing that takes it. */}
-            <button
-              className="btn"
-              type="button"
-              onClick={() => setConfirming(false)}
-              disabled={archiving}
-              data-autofocus=""
-            >
-              Cancel
-            </button>
-            <button
-              className="btn btn-archive"
-              type="button"
-              onClick={archive}
-              disabled={archiving}
-            >
-              {archiving ? "Archiving…" : "Archive session"}
-            </button>
-          </footer>
-        </Modal>
-      ) : null}
     </section>
   );
 }

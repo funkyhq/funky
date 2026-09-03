@@ -47,12 +47,13 @@
 
 /* Head ------------------------------------------------------------------- */
 
+/* Wraps, because it is no longer three short marks: with Archive on the end
+   the row is four items wide, and the pane it sits in narrows to whatever
+   the window leaves it. A second line is better than an overflow, which has
+   no scrollbar here to find it with. */
 .chat-head {
   display: flex;
   flex: none;
-  /* Four items now, and the pane can be 320px wide: the row is short
-     enough to fit at every width the console draws a table at, and wraps
-     rather than overflowing below that. */
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
@@ -65,20 +66,11 @@
   text-decoration: none;
 }
 
-/* The head's one action, held at the far end: the three things to its left
-   say what this session IS, and this is the only one that changes it.
-
-   Modal.css gives .btn-archive a margin-right: auto for the footer it was
-   written for, where it holds the left while Cancel and Save keep the
-   right. This row wants the other end, and leaving both autos in would
-   split the free space between them and strand the button in the middle. */
-.chat-archive {
-  margin-right: 0;
-  margin-left: auto;
-}
-
-/* Whether the tail is connected. Dimmed until it is — a reconnect is
-   ordinary, so this reports rather than warns. */
+/* The tail, off. There is no mark for the other side of it — a stream
+   that is keeping up has nothing to report — so this appears only when
+   the log has stopped following, and its absence is the good news.
+   Dimmed even so: EventSource retries by itself, so a reconnect is
+   ordinary and this reports rather than warns. */
 .live {
   display: inline-flex;
   align-items: center;
@@ -95,10 +87,31 @@
   opacity: 0.55;
 }
 
-.live-on .live-dot {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-glow);
-  opacity: 1;
+/* Pushed to the far end, so the head reads left to right as identity then
+   action: back, whatever the marks above have to report, and the one thing
+   that ends the session. Margin rather than a spacer, because on a head
+   with nothing to report it is the only thing after the back link. On a
+   wrapped row it takes a line of its own, still right-aligned. */
+.chat-archive {
+  margin-left: auto;
+}
+
+/* The api's refusal of an archive. Under the head rather than in it: this
+   is a sentence, and the head is a row of things two words long — putting
+   it there would either clip it or push the button that caused it off the
+   end. */
+.chat-refused {
+  flex: none;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--bad);
+}
+
+/* What the refusal above MEANS, on its own line: the api's message is the
+   claim and this is the reading of it, and the two are not one sentence. */
+.chat-refused-why {
+  display: block;
 }
 
 .chat-id {
@@ -273,8 +286,16 @@
   cursor: pointer;
 }
 
-.chat-queued-actions button:hover {
+.chat-queued-actions button:hover:not(:disabled) {
   color: var(--text);
+}
+
+/* Retry is a send, so an archive in flight takes it away like it takes the
+   composer's (see SessionDetail.tsx submit). Discard stays: it writes
+   nothing, and it is the way out of a message that has none. */
+.chat-queued-actions button:disabled {
+  color: var(--text-3);
+  cursor: default;
 }
 
 .chat-queued-error {
@@ -335,25 +356,6 @@
 .compose-send {
   padding-top: 9px;
   padding-bottom: 9px;
-}
-
-/* Archive dialog ---------------------------------------------------------
-   The one place this page asks something rather than showing it. It borrows
-   Modal's classes whole; these two rules are the only places the question
-   it asks differs from the forms those classes were written for. */
-
-/* .prose carries no margin — the dialogs that use it say one thing. This
-   one says what archiving costs and then when it is refused, which are two
-   things and read as such. */
-.chat-archive-body p + p {
-  margin-top: 10px;
-}
-
-/* Modal.css holds .btn-archive out to the left, away from the pair of
-   buttons that answer a form. Here it IS the answer — the dialog exists to
-   ask this one question — so it stays in the row beside Cancel. */
-.chat-archive-foot .btn-archive {
-  margin-right: 0;
 }
 
 /* An archived session takes no message, so it gets no box — saying why is
