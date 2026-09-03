@@ -66,8 +66,11 @@
   text-decoration: none;
 }
 
-/* Whether the tail is connected. Dimmed until it is — a reconnect is
-   ordinary, so this reports rather than warns. */
+/* The tail, off. There is no mark for the other side of it — a stream
+   that is keeping up has nothing to report — so this appears only when
+   the log has stopped following, and its absence is the good news.
+   Dimmed even so: EventSource retries by itself, so a reconnect is
+   ordinary and this reports rather than warns. */
 .live {
   display: inline-flex;
   align-items: center;
@@ -84,15 +87,11 @@
   opacity: 0.55;
 }
 
-.live-on .live-dot {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-glow);
-  opacity: 1;
-}
-
 /* Pushed to the far end, so the head reads left to right as identity then
-   action: back, state, tail, and the one thing that ends it. On a wrapped
-   row it takes a line of its own, still right-aligned. */
+   action: back, whatever the marks above have to report, and the one thing
+   that ends the session. Margin rather than a spacer, because on a head
+   with nothing to report it is the only thing after the back link. On a
+   wrapped row it takes a line of its own, still right-aligned. */
 .chat-archive {
   margin-left: auto;
 }

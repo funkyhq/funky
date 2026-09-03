@@ -387,29 +387,40 @@ export function SessionDetail({ id }: { id: string }) {
           <ArrowLeftIcon />
           Sessions
         </a>
-        {session === undefined ? null : (
+        {session === undefined ? null : archived ? (
+          // Only the ARCHIVED half of the lifecycle is marked here. The
+          // list needs both, because a row there has nothing else to say
+          // which it is — but this page IS the active state: it has a
+          // composer taking messages and an Archive button to end it with.
+          // A pill repeating that said nothing, and said it in the same
+          // green dot as the mark below, which is about something else
+          // entirely.
+          <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
+        ) : (
           <>
-            <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
-            {archived ? null : (
-              <>
-                <span className={live ? "live live-on" : "live"}>
-                  <span className="live-dot" aria-hidden="true" />
-                  {live ? "Live" : "Reconnecting…"}
-                </span>
-                {/* At the far end, away from the back link and the two
-                    marks beside it that only report: this is the one
-                    control in the head that changes the session, and the
-                    one with nothing on the other side of it. */}
-                <button
-                  className="btn btn-archive chat-archive"
-                  type="button"
-                  onClick={archive}
-                  disabled={archiving}
-                >
-                  {archiving ? "Archiving…" : "Archive"}
-                </button>
-              </>
-            )}
+            {/* Not the session's state — THIS CLIENT'S. The log follows a
+                stream, and this is shown only where that has come off:
+                while it is attached the transcript keeps itself current,
+                and a mark saying so is a green light that is always on.
+                Held back until the log has loaded, too, since a tail not
+                opened yet is not a tail that dropped. */}
+            {state.status === "ready" && !live ? (
+              <span className="live">
+                <span className="live-dot" aria-hidden="true" />
+                Reconnecting…
+              </span>
+            ) : null}
+            {/* At the far end, away from the back link: this is the one
+                control in the head that changes the session, and the one
+                with nothing on the other side of it. */}
+            <button
+              className="btn btn-archive chat-archive"
+              type="button"
+              onClick={archive}
+              disabled={archiving}
+            >
+              {archiving ? "Archiving…" : "Archive"}
+            </button>
           </>
         )}
       </header>
