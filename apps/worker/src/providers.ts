@@ -15,6 +15,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createTogetherAI } from "@ai-sdk/togetherai";
+import { createXai } from "@ai-sdk/xai";
 import type { LanguageModel } from "ai";
 import { createAiSdkProvider } from "@funky/adapters";
 import type { InferenceProvider } from "@funky/agent";
@@ -52,6 +53,11 @@ export const VENDORS: readonly Vendor[] = [
     id: "togetherai",
     envKey: "TOGETHER_API_KEY",
     languageModel: (apiKey) => createTogetherAI({ apiKey }),
+  },
+  {
+    id: "xai",
+    envKey: "XAI_API_KEY",
+    languageModel: (apiKey) => createXai({ apiKey }),
   },
 ];
 

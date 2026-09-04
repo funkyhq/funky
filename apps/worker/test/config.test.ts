@@ -58,6 +58,7 @@ describe("loadConfig — model provider keys", () => {
       OPENAI_API_KEY: "test-openai-key",
       GOOGLE_GENERATIVE_AI_API_KEY: "test-google-key",
       TOGETHER_API_KEY: "test-together-key",
+      XAI_API_KEY: "test-xai-key",
     });
     expect(cfg.providerKeys).toEqual(
       new Map([
@@ -65,6 +66,7 @@ describe("loadConfig — model provider keys", () => {
         ["openai", "test-openai-key"],
         ["google", "test-google-key"],
         ["togetherai", "test-together-key"],
+        ["xai", "test-xai-key"],
       ]),
     );
   });
@@ -88,7 +90,7 @@ describe("loadConfig — model provider keys", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining(
-        "ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, TOGETHER_API_KEY",
+        "ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, TOGETHER_API_KEY, XAI_API_KEY",
       ),
     );
   });

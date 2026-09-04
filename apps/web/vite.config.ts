@@ -21,6 +21,7 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   google: "GOOGLE_GENERATIVE_AI_API_KEY",
   togetherai: "TOGETHER_API_KEY",
+  xai: "XAI_API_KEY",
 };
 
 export default defineConfig(({ mode }) => {
