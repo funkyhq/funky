@@ -28,7 +28,9 @@ export type Provider = {
   label: string;
   /** The env var the stack reads its key from; mirrored in vite.config.ts. */
   envKey: string;
-  /** Newest of each tier. Ids are complete as written — no date suffix. */
+  /** Newest of each tier. Ids are complete as written — no date suffix.
+   *  The FIRST is where a new config starts (lib/agent.ts), so the order
+   *  is a claim about what to reach for by default, not just a list. */
   models: ProviderModel[];
 };
 
@@ -39,7 +41,13 @@ export const KNOWN_PROVIDERS: Provider[] = [
     label: "Anthropic",
     envKey: "ANTHROPIC_API_KEY",
     models: [
+      // Opus 5 leads because it is the default, not because the list is
+      // sorted: strongest general-purpose model of the four, and what a
+      // first agent should meet a sandbox with. The rest follow it
+      // strongest-first, Fable included — a tier above Opus and priced
+      // above it, so it is chosen by name rather than landed on.
       { id: "claude-opus-5", label: "Claude Opus 5" },
+      { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
     ],
