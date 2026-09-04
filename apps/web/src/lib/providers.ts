@@ -60,7 +60,7 @@ export const KNOWN_PROVIDERS: Provider[] = [
     envKey: "GOOGLE_GENERATIVE_AI_API_KEY",
     models: [
       { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview)" },
-      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
       { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
     ],
   },
