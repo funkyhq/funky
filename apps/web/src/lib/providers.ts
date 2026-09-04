@@ -76,6 +76,14 @@ export const KNOWN_PROVIDERS: Provider[] = [
       { id: "moonshotai/Kimi-K3", label: "Kimi K3" },
     ],
   },
+  {
+    // One release line rather than tiers, so only the newest is listed.
+    // Any xAI model id works through the api.
+    id: "xai",
+    label: "xAI",
+    envKey: "XAI_API_KEY",
+    models: [{ id: "grok-4.6", label: "Grok 4.6" }],
+  },
 ];
 
 // Replaced at build time by vite.config.ts (`define`), so this is a literal

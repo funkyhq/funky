@@ -13,7 +13,8 @@ lost and no side effect run twice.
 
 Requires Docker, an [E2B](https://e2b.dev) API key, and a key for at least one model
 provider: [Anthropic](https://console.anthropic.com), [OpenAI](https://platform.openai.com),
-[Google](https://aistudio.google.com/apikey), or [Together AI](https://api.together.ai).
+[Google](https://aistudio.google.com/apikey), [Together AI](https://api.together.ai), or
+[xAI](https://console.x.ai).
 
 ```bash
 git clone https://github.com/funkyhq/funky && cd funky
@@ -101,6 +102,7 @@ the session's config names, so one stack runs sessions on different vendors side
 | `openai`             | `OPENAI_API_KEY`               |
 | `google`             | `GOOGLE_GENERATIVE_AI_API_KEY` |
 | `togetherai`         | `TOGETHER_API_KEY`             |
+| `xai`                | `XAI_API_KEY`                  |
 
 Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
 port.
