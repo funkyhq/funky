@@ -2,12 +2,14 @@
 
 # Funky
 
-The durable runtime for agents.
+The batch engine for AI agents.
 
-Define an agent, give it a sandboxed environment, send it work. Funky records every session
-as an append-only log in Postgres and runs the agent loop on stateless workers — a worker
-can die mid-run (SIGKILL, OOM, a deploy) and a fresh one resumes from the log with nothing
-lost and no side effect run twice.
+Funky is your always-on task force for running parallel, long-lived agent workloads at scale.
+
+Define your agents, give them sandboxed environments, and send them work. Funky runs
+sessions in parallel across stateless workers and records every session as an append-only
+log in Postgres. A worker can die mid-run (SIGKILL, OOM, a deploy) and a fresh one resumes
+from the log, keeping long-lived workloads moving without repeating side effects.
 
 ## Quickstart
 
