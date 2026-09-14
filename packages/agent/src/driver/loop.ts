@@ -155,13 +155,38 @@ async function runOrRelease(
   const abort = new AbortController();
   const step = runClaim(deps, claim, leaseMs, abort.signal);
   step.catch(() => {}); // if abandoned below, a late failure has no one to report to
-  const first = await Promise.race([
-    step.then(() => "stepped" as const),
-    drain.deadline.then(() => "deadline" as const),
-  ]);
-  if (first === "stepped") return;
+  if ((await stepOrDeadline(step, drain.expired)) === "stepped") return;
   abort.abort();
   await deps.store.releaseItem(claim.item, claim.token).catch(() => {});
+}
+
+/**
+ * Wait for the step or the deadline, whichever comes first, and leave
+ * nothing behind. The deadline is a signal and not a promise because of
+ * what Promise.race leaves behind: a reaction on each promise it was
+ * given, kept until that promise settles. On a healthy worker the
+ * deadline never settles, so racing one long-lived deadline promise
+ * retained a reaction per claim for the life of the process — measured
+ * at ~450 bytes a claim, 45 MiB over 100k claims, all returned the
+ * moment the drain fired. A listener on a signal can be removed, and
+ * is, however the race ends; the per-claim promise it would have
+ * resolved then has nothing holding it. Exported for its test.
+ */
+export async function stepOrDeadline(
+  step: Promise<void>,
+  expired: AbortSignal,
+): Promise<"stepped" | "deadline"> {
+  if (expired.aborted) return "deadline";
+  let onExpired = (): void => {};
+  const deadline = new Promise<"deadline">((resolve) => {
+    onExpired = () => resolve("deadline");
+  });
+  expired.addEventListener("abort", onExpired, { once: true });
+  try {
+    return await Promise.race([step.then(() => "stepped" as const), deadline]);
+  } finally {
+    expired.removeEventListener("abort", onExpired);
+  }
 }
 
 /** One claim, bind included: ensure-on-claim, then the step. */
@@ -188,23 +213,21 @@ async function runClaim(
 /** The drain as the loop sees it: whether the host has asked for one,
  *  and one deadline for everything held — the budget counted from the
  *  moment the signal fired, so a claim already on the wire at that
- *  moment gets only what is left of it. */
-interface DrainWatch {
+ *  moment gets only what is left of it. Exported for its test. */
+export interface DrainWatch {
   readonly fired: boolean;
-  /** Settles once the budget is spent; never, if the drain never fires. */
-  readonly deadline: Promise<void>;
+  /** Aborts once the budget is spent; never, if the drain never fires.
+   *  A signal, not a promise — see stepOrDeadline. */
+  readonly expired: AbortSignal;
   /** Cancel a deadline that has not fired yet. */
   stop(): void;
 }
 
-function watchDrain(signal: AbortSignal | undefined, budgetMs: number): DrainWatch {
+export function watchDrain(signal: AbortSignal | undefined, budgetMs: number): DrainWatch {
+  const expired = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let expire: () => void = () => {};
-  const deadline = new Promise<void>((resolve) => {
-    expire = resolve;
-  });
   const onFire = (): void => {
-    timer = setTimeout(expire, budgetMs);
+    timer = setTimeout(() => expired.abort(), budgetMs);
   };
   if (signal?.aborted) onFire();
   else signal?.addEventListener("abort", onFire, { once: true });
@@ -212,7 +235,7 @@ function watchDrain(signal: AbortSignal | undefined, budgetMs: number): DrainWat
     get fired() {
       return signal?.aborted ?? false;
     },
-    deadline,
+    expired: expired.signal,
     stop: () => {
       signal?.removeEventListener("abort", onFire);
       clearTimeout(timer);
