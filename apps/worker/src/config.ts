@@ -15,6 +15,11 @@ const EnvSchema = z.object({
   FUNKY_LEASE_MS: z.coerce.number().int().min(100).default(60_000),
   // Delay between empty claim attempts — poll-only until a Notifier port exists.
   FUNKY_IDLE_POLL_MS: z.coerce.number().int().min(10).default(1_000),
+  // Drain budget: how long a held step may keep running after SIGTERM
+  // before it is aborted and its lease released. Cloud Run (and compose)
+  // send SIGKILL 10s after SIGTERM; the default leaves 3s for the
+  // release's round trip and the exit.
+  FUNKY_DRAIN_MS: z.coerce.number().int().min(0).default(7_000),
   // Idle TTL before a session's sandbox auto-pauses (revived on the next connect).
   FUNKY_SANDBOX_TIMEOUT_MS: z.coerce
     .number()
@@ -32,6 +37,7 @@ export type Config = {
   e2bApiKey: string;
   leaseMs: number;
   idlePollMs: number;
+  drainMs: number;
   sandboxTimeoutMs: number;
   dbPoolMax: number;
 };
@@ -66,6 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     e2bApiKey: e.E2B_API_KEY,
     leaseMs: e.FUNKY_LEASE_MS,
     idlePollMs: e.FUNKY_IDLE_POLL_MS,
+    drainMs: e.FUNKY_DRAIN_MS,
     sandboxTimeoutMs: e.FUNKY_SANDBOX_TIMEOUT_MS,
     dbPoolMax: e.DB_POOL_MAX,
   };

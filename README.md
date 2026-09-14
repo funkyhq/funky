@@ -90,7 +90,8 @@ misses nothing. Ctrl-C the stream when done; `docker compose down` stops the sta
 also wipes the database).
 
 Scale workers with `docker compose up -d --scale worker=3` — claiming is the only
-scheduler; nothing else changes.
+scheduler; nothing else changes. Scale down the same way: a removed worker stops claiming,
+finishes a short step or hands a long one back, and exits.
 
 ### Model providers
 
@@ -117,11 +118,13 @@ in-flight work dies with it. Funky decouples them:
 - **The log is the agent.** Every session is an append-only entry log in Postgres. Workers
   are stateless: each step is claim → step → commit in one transaction, and an interrupted
   step is never committed.
-- **Crash-safe by construction, not by drain.** Workers have no shutdown path — SIGKILL is
-  the shutdown story, so crash-safety is exercised on every shutdown. A dying worker's
-  lease expires and any worker resumes from the unchanged log. Tool executions are
-  at-most-once across crashes: a killed batch settles as interrupted results the model can
-  see and retry — never a silently duplicated side effect.
+- **Crash-safe by construction, not by drain.** SIGKILL is the shutdown story: a dying
+  worker's lease expires and any worker resumes from the unchanged log, so crash-safety is
+  exercised on every unplanned death. Tool executions are at-most-once across crashes: a
+  killed batch settles as interrupted results the model can see and retry — never a
+  silently duplicated side effect. Draining on SIGTERM only makes a planned removal cheap:
+  the worker stops claiming, and a step that cannot finish in time is handed back at once
+  (its lease released) instead of after the lease runs out.
 - **One rendezvous.** The api and the workers never talk to each other; Postgres is the
   only coordination point. The SSE stream is the same log, delivered incrementally.
 - **Sandboxes outlive workers.** Commands run in a per-session [E2B](https://e2b.dev)

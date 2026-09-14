@@ -2,9 +2,13 @@
 // service split, and the only file that touches process.env or the
 // network. Pure composition: pg store, one AI SDK inference adapter per
 // model-provider key (providers.ts), E2B sandboxes, the four workspace
-// tools — handed to runDriver, which exits only with the process. No
-// drain path and no signal handlers, by design: the crash rule makes
-// SIGKILL the shutdown story, so restart policy belongs to the
+// tools — handed to runDriver, which returns only on drain. One signal
+// handler, SIGTERM → drain: stop claiming, give a held step
+// FUNKY_DRAIN_MS to commit, else abort it and release its lease, then
+// exit. SIGKILL remains the crash story it always was — the drain only
+// makes a planned removal (a scale-down, a deploy) cost one poll instead
+// of a lease — and the handler is installed once, so a second SIGTERM,
+// like anything else, is a crash. Restart policy still belongs to the
 // container. The e2e suite forks this exact file — what it proves is
 // what a container runs.
 
@@ -50,8 +54,23 @@ const deps: DriverDeps = {
   },
 };
 
+const drain = new AbortController();
+process.once("SIGTERM", () => {
+  console.log(`worker: SIGTERM — draining (a held step has ${cfg.drainMs}ms to commit)`);
+  drain.abort();
+});
+
 console.log(
   `worker: claiming (providers=${[...providers.keys()].join(",")} ` +
-    `lease=${cfg.leaseMs}ms idlePoll=${cfg.idlePollMs}ms)`,
+    `lease=${cfg.leaseMs}ms idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms)`,
 );
-await runDriver(deps, { leaseMs: cfg.leaseMs, idlePollMs: cfg.idlePollMs });
+await runDriver(deps, {
+  leaseMs: cfg.leaseMs,
+  idlePollMs: cfg.idlePollMs,
+  drain: drain.signal,
+  drainMs: cfg.drainMs,
+});
+console.log("worker: drained — exiting");
+// Explicit: an abandoned step (a tool deaf to its abort signal) or the
+// pool's open sockets would otherwise keep the event loop alive.
+process.exit(0);
