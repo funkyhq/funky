@@ -2,10 +2,8 @@
 // second caller (intake is the api's write path; commitStep is ours).
 // Two exports, mechanism and policy: runStep is one claim → at most one
 // commit, the unit the driver tests exercise directly; runDriver is the
-// production shell a worker process hosts — claim, step, repeat — and
-// it ends only with the process. Funky is cloud-only: scale-down is
-// removing the container, and the crash rule makes that safe, so there
-// is deliberately no stop signal and no graceful-drain path.
+// production shell a worker process hosts — claim, step, repeat — until
+// the process dies or the host's drain signal fires (below).
 //
 // The rule the durability story rests on: an interrupted step is never
 // committed. A dying worker — SIGKILL, OOM, node loss — commits nothing
@@ -13,13 +11,28 @@
 // unchanged log — re-running an inference item, but never an
 // execute_tools item: attempt > 1 marks the dead claimer, and the
 // re-claim commits interrupted results instead of re-executing side
-// effects (tools are at-most-once across claims). Shutdown IS a crash,
-// so crash-safety is exercised on every shutdown. FencedError on
-// commit is the same rule from the other
-// side: the item's fate belongs to another claim now — drop the work,
-// claim again. The only mid-step abort is internal: the heartbeat
+// effects (tools are at-most-once across claims). FencedError on
+// commit is the same rule from the other side: the item's fate belongs
+// to another claim now — drop the work, claim again. The heartbeat
 // losing (or failing to reach) the lease aborts the in-flight provider
 // stream and tool calls, bounding a zombie's side effects and spend.
+//
+// Drain is the crash path made cheap, not a second story. A scale-down
+// or a deploy delivers SIGTERM a fixed few seconds before SIGKILL
+// (Cloud Run: 10s), and the platform picks the instance, busy or not.
+// Once the drain signal fires the loop claims nothing more, and a held
+// claim — from claimItem through the sandbox bind to commit — gets what
+// is left of drainMs, counted from the signal, to finish on its own;
+// past that the step is aborted and the lease released
+// (Store.releaseItem: expiry moved to now, token revoked), so the next
+// poll of any live worker resumes the session at once instead of after
+// the lease. The re-claim sees a released item exactly as a dead
+// claimer's, so everything above still holds; and a drain that never
+// completes — SIGKILL first, a store the release cannot reach — IS the
+// crash path, which is therefore exercised on every unplanned death and
+// on every drain that runs out of time. The aborted work is abandoned,
+// not awaited: a tool that ignores its signal keeps its promise open,
+// and the host exits over it.
 //
 // Cancellation is checked at step boundaries, never mid-step:
 // requestCancel appends a control entry and the log's order scopes
@@ -92,34 +105,119 @@ export interface DriverOptions {
   idlePollMs?: number;
   /** Narrow claims to one session (the driver-per-sandbox topology). */
   session?: SessionRef;
+  /** The host's drain signal (SIGTERM). Once it fires the loop claims
+   *  nothing more, a held claim gets `drainMs` to commit before it is
+   *  aborted and released, and runDriver returns. Without one the loop
+   *  ends only with the process. */
+  drain?: AbortSignal;
+  /** How long a held claim may keep running after the drain fires.
+   *  Default 7s: inside Cloud Run's fixed 10s SIGTERM→SIGKILL window,
+   *  with room for the release's round trip and the exit. */
+  drainMs?: number;
 }
 
 /**
- * Claim and run work items until the process dies — there is no other
- * exit, by design. Store failures outside the fence propagate; restart
- * policy belongs to the host (in the cloud: the container restarting).
+ * Claim and run work items until the process dies or the drain signal
+ * fires — there is no other exit, by design. Store failures outside the
+ * fence propagate; restart policy belongs to the host (in the cloud:
+ * the container restarting). Returns only by draining, holding nothing.
  */
-export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Promise<never> {
+export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Promise<void> {
   const leaseMs = opts.leaseMs ?? 60_000;
   const idlePollMs = opts.idlePollMs ?? 1_000;
-  while (true) {
-    const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
-    if (!claim) {
-      await sleep(idlePollMs);
-      continue;
+  const drain = watchDrain(opts.drain, opts.drainMs ?? 7_000);
+  try {
+    while (!drain.fired) {
+      const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
+      if (claim) await runOrRelease(deps, claim, leaseMs, drain);
+      else await sleep(idlePollMs, opts.drain);
     }
-    // Ensure-on-claim: only an execute_tools item that will actually
-    // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
-    // interrupted results and needs none. The bind runs on the claim's
-    // initial lease — heartbeats start inside runStep — so if a slow
-    // sandbox create outlives the lease, the step's commit is fenced:
-    // wasted work, never wrong work.
-    const tools =
-      claim.item.type === "execute_tools" && claim.item.attempt === 1
-        ? await deps.bindTools(claim.item)
-        : undefined;
-    await runStep(deps, claim, leaseMs, tools);
+  } finally {
+    drain.stop();
   }
+}
+
+/**
+ * Run one claim to its own end — or, if the drain's deadline comes
+ * first, abort it and hand the item back. The release is awaited, so
+ * the loop never returns with one still in flight; the aborted step is
+ * not: a sandbox command ignores its signal and may never settle, and
+ * the host exits over it. A release the store cannot serve is
+ * swallowed — the lease then expires on its own, which is the crash
+ * path.
+ */
+async function runOrRelease(
+  deps: DriverDeps,
+  claim: Claim,
+  leaseMs: number,
+  drain: DrainWatch,
+): Promise<void> {
+  const abort = new AbortController();
+  const step = runClaim(deps, claim, leaseMs, abort.signal);
+  step.catch(() => {}); // if abandoned below, a late failure has no one to report to
+  const first = await Promise.race([
+    step.then(() => "stepped" as const),
+    drain.deadline.then(() => "deadline" as const),
+  ]);
+  if (first === "stepped") return;
+  abort.abort();
+  await deps.store.releaseItem(claim.item, claim.token).catch(() => {});
+}
+
+/** One claim, bind included: ensure-on-claim, then the step. */
+async function runClaim(
+  deps: DriverDeps,
+  claim: Claim,
+  leaseMs: number,
+  abort: AbortSignal,
+): Promise<void> {
+  // Ensure-on-claim: only an execute_tools item that will actually
+  // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
+  // interrupted results and needs none. The bind runs on the claim's
+  // initial lease — heartbeats start inside runStep — so if a slow
+  // sandbox create outlives the lease, the step's commit is fenced:
+  // wasted work, never wrong work.
+  const tools =
+    claim.item.type === "execute_tools" && claim.item.attempt === 1
+      ? await deps.bindTools(claim.item)
+      : undefined;
+  if (abort.aborted) return; // drained during the bind: the claim is being released
+  await runStep(deps, claim, leaseMs, tools, abort);
+}
+
+/** The drain as the loop sees it: whether the host has asked for one,
+ *  and one deadline for everything held — the budget counted from the
+ *  moment the signal fired, so a claim already on the wire at that
+ *  moment gets only what is left of it. */
+interface DrainWatch {
+  readonly fired: boolean;
+  /** Settles once the budget is spent; never, if the drain never fires. */
+  readonly deadline: Promise<void>;
+  /** Cancel a deadline that has not fired yet. */
+  stop(): void;
+}
+
+function watchDrain(signal: AbortSignal | undefined, budgetMs: number): DrainWatch {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expire: () => void = () => {};
+  const deadline = new Promise<void>((resolve) => {
+    expire = resolve;
+  });
+  const onFire = (): void => {
+    timer = setTimeout(expire, budgetMs);
+  };
+  if (signal?.aborted) onFire();
+  else signal?.addEventListener("abort", onFire, { once: true });
+  return {
+    get fired() {
+      return signal?.aborted ?? false;
+    },
+    deadline,
+    stop: () => {
+      signal?.removeEventListener("abort", onFire);
+      clearTimeout(timer);
+    },
+  };
 }
 
 const EMPTY_TOOLS = new Map<string, Tool>();
@@ -130,13 +228,15 @@ const EMPTY_TOOLS = new Map<string, Tool>();
  * the step's duration; a lost lease aborts the step, and an interrupted
  * step is dropped, never committed. `tools` carries the executables the
  * loop bound for an execute_tools claim; an inference step never reads
- * it.
+ * it. `abort` is the caller's stop (the drain deadline): the step aborts
+ * exactly as on lease loss — dropped, never committed.
  */
 export async function runStep(
   deps: StepDeps,
   claim: Claim,
   leaseMs: number,
   tools: Map<string, Tool> = EMPTY_TOOLS,
+  abort?: AbortSignal,
 ): Promise<void> {
   const { store } = deps;
   // The claimed row is its own ref: a WorkItemRef for the item-addressed
@@ -144,8 +244,12 @@ export async function runStep(
   // the claim handed us every scope this step needs.
   const { item, token } = claim;
 
-  // Fires only on lease loss — "stop working; this step will not commit".
+  // Fires on lease loss, and on the caller's abort — either way "stop
+  // working; this step will not commit".
   const step = new AbortController();
+  const onAbort = (): void => step.abort();
+  if (abort?.aborted) step.abort();
+  else abort?.addEventListener("abort", onAbort, { once: true });
   const heartbeat = startHeartbeat(store, item, token, leaseMs, () => step.abort());
 
   try {
@@ -258,6 +362,7 @@ export async function runStep(
     throw err;
   } finally {
     heartbeat.stop();
+    abort?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -389,6 +494,17 @@ function bySeq(entries: SessionEntry[]): SessionEntry[] {
   return [...entries].sort((a, b) => a.seq - b.seq);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Sleep, cut short by the signal: an idle worker leaves on the drain
+ *  rather than one poll later. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }

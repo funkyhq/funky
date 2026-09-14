@@ -1,10 +1,12 @@
 // The driver against the real pg store over PGlite — the two halves of
 // the Store port's "two callers" story exercised together: intake on
 // one side, claim → runStep on the other. runStep is the tested unit;
-// runDriver is a trivial policy shell around it, covered for real by
-// the crash-resume suite at the process level. Scripted inference, a
-// real echo tool, and the store's injected clock stand in for the
-// world; tests drive steps one at a time, so almost nothing here waits.
+// runDriver is a thin policy shell around it, covered for real by the
+// crash-resume suite at the process level — except its drain, the one
+// way it returns, which is exercised here in-process. Scripted
+// inference, a real echo tool, and the store's injected clock stand in
+// for the world; tests drive steps one at a time, so almost nothing
+// here waits.
 
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -20,8 +22,10 @@ import {
 } from "@funky/core";
 import {
   type Claim,
+  type DriverDeps,
   FencedError,
   type InferenceProvider,
+  runDriver,
   runStep,
   type StepDeps,
   type Store,
@@ -464,5 +468,242 @@ describe("driver steps over the pg store", () => {
     expect(log.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(log[1]).toMatchObject({ content: [{ type: "text", text: "b" }] });
     expect(provider.requests).toHaveLength(2);
+  });
+});
+
+// --- the drain: the one way runDriver returns ---
+
+describe("runDriver drains", () => {
+  /** The loop as the worker hosts it: the scripted provider under the
+   *  config's id, echo declared, and whatever `tools` the bind hands back. */
+  function hosted(
+    provider: InferenceProvider,
+    tools: Map<string, Tool> = echoOnly,
+  ): { drain: AbortController; deps: DriverDeps } {
+    const deps: DriverDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+      bindTools: async () => tools,
+    };
+    return { drain: new AbortController(), deps };
+  }
+
+  it("claims nothing once the drain has fired, and leaves an idle sleep at once", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const { drain, deps } = hosted(scriptedProvider([]));
+
+    // Fired before the loop starts: not even the ready item is claimed.
+    drain.abort();
+    await runDriver(deps, { drain: drain.signal, drainMs: 50 });
+    expect((await store.listItems(sessionRef))[0]?.status).toBe("ready");
+
+    // Fired mid-sleep (an empty session to poll): the sleep wakes, well
+    // inside the poll interval.
+    const idle = new AbortController();
+    const running = runDriver(deps, {
+      idlePollMs: 60_000,
+      session: await newSession(),
+      drain: idle.signal,
+      drainMs: 50,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const t0 = Date.now();
+    idle.abort();
+    await running;
+    expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+
+  it("lets a held step commit inside the budget, then returns with the next item unclaimed", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const gate = deferred();
+    const provider = scriptedProvider([[{ wait: gate.promise }, ...callEcho("hi")]]);
+    const { drain, deps } = hosted(provider);
+
+    const running = runDriver(deps, { idlePollMs: 10, drain: drain.signal, drainMs: 5_000 });
+    await until(() => provider.requests.length === 1); // the step is in flight…
+    drain.abort();
+    gate.resolve(); // …and finishes inside the budget
+    await running;
+
+    // Committed, and the item the commit chained is left for another worker.
+    expect(messages(await store.readEntries(sessionRef)).map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect((await store.listItems(sessionRef)).map((i) => [i.type, i.status])).toEqual([
+      ["inference", "done"],
+      ["execute_tools", "ready"],
+    ]);
+  });
+
+  it("aborts an inference step past the budget and releases it: the re-claim is immediate", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([["untilAborted"], sayText("recovered")]);
+    const { drain, deps } = hosted(provider);
+
+    const running = runDriver(deps, { idlePollMs: 10, drain: drain.signal, drainMs: 100 });
+    await until(() => provider.requests.length === 1);
+    drain.abort();
+    await running;
+
+    // Nothing landed, and — on a 60s lease with no clock advance — the
+    // item is claimable only because it was released.
+    expect(messages(await store.readEntries(sessionRef))).toHaveLength(1);
+    const reclaimed = await claim(sessionRef);
+    expect(reclaimed.item.attempt).toBe(2);
+    await runStep(deps, reclaimed, 60_000);
+    expect(messages(await store.readEntries(sessionRef)).map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(provider.requests).toHaveLength(2);
+  });
+
+  it("aborts a tool batch past the budget — deaf to its signal or not — and the re-claim interrupts it", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("slow")]);
+    const started = deferred();
+    const signals: AbortSignal[] = [];
+    // The sandbox tools' shape: the command runs on, deaf to the signal,
+    // and the promise never settles.
+    const deaf: Tool = {
+      ...echo,
+      execute: (_args, ctx) =>
+        new Promise(() => {
+          signals.push(ctx.signal);
+          started.resolve();
+        }),
+    };
+    const deafOnly = new Map([[deaf.name, deaf]]);
+    const { drain, deps } = hosted(provider, deafOnly);
+
+    const running = runDriver(deps, { idlePollMs: 10, drain: drain.signal, drainMs: 100 });
+    await started.promise; // execute_tools claimed at attempt 1, the tool running
+    drain.abort();
+    expect(signals[0]?.aborted).toBe(false); // the budget is a grace, not an abort
+    await running; // returned over the open promise
+    expect(signals[0]?.aborted).toBe(true);
+
+    const reclaimed = await claim(sessionRef);
+    expect(reclaimed.item).toMatchObject({ type: "execute_tools", attempt: 2 });
+    await runStep(deps, reclaimed, 60_000, deafOnly);
+    const log = messages(await store.readEntries(sessionRef));
+    expect(log.map((m) => m.role)).toEqual(["user", "assistant", "toolResult"]);
+    expect(log[2]).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: "Tool execution was interrupted." }],
+    });
+    expect(signals).toHaveLength(1); // never re-executed
+  });
+
+  it("covers the sandbox bind: a drain during a hung bind releases the claim", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    const binding = deferred();
+    const deps: DriverDeps = {
+      ...stepDeps,
+      // A sandbox create that never returns.
+      bindTools: () =>
+        new Promise(() => {
+          binding.resolve();
+        }),
+    };
+    const drain = new AbortController();
+    const running = runDriver(deps, { idlePollMs: 10, drain: drain.signal, drainMs: 50 });
+    await binding.promise;
+    drain.abort();
+    await running;
+
+    const reclaimed = await claim(sessionRef);
+    expect(reclaimed.item).toMatchObject({ type: "execute_tools", attempt: 2 });
+  });
+
+  it("waits for the release even when the aborted step settles first", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    // A provider that honors the abort at once: the step returns before
+    // the release's round trip, which must still land before the loop
+    // does — the host exits the moment the loop returns.
+    const provider = scriptedProvider([["untilAborted"]]);
+    const gate = deferred();
+    let releasing = false;
+    let releasedFor: boolean | undefined;
+    const gatedStore: Store = {
+      ...store,
+      releaseItem: async (ref, token) => {
+        releasing = true;
+        await gate.promise;
+        releasedFor = await store.releaseItem(ref, token);
+        return releasedFor;
+      },
+    };
+    const { drain, deps } = hosted(provider);
+
+    const running = runDriver(
+      { ...deps, store: gatedStore },
+      { idlePollMs: 10, drain: drain.signal, drainMs: 20 },
+    );
+    await until(() => provider.requests.length === 1);
+    drain.abort();
+    await until(() => releasing);
+    // The step has long returned; the loop has not.
+    let returned = false;
+    void running.then(() => {
+      returned = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(returned).toBe(false);
+    gate.resolve();
+    await running;
+    expect(releasedFor).toBe(true);
+    expect((await claim(sessionRef)).item.attempt).toBe(2);
+  });
+
+  it("counts the budget from the signal, not from a claim that lands after it", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([["untilAborted"]]);
+    // A claim on the wire when the drain fires: it lands 600ms later,
+    // and its step gets only what is left of a 1.5s budget — the loop is
+    // out about 1.5s after the signal, not 2.1s.
+    const claimed = deferred();
+    const slowStore: Store = {
+      ...store,
+      claimItem: async (req) => {
+        const result = await store.claimItem(req);
+        if (result) {
+          claimed.resolve();
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+        return result;
+      },
+    };
+    const { drain, deps } = hosted(provider);
+
+    const running = runDriver(
+      { ...deps, store: slowStore },
+      { idlePollMs: 10, drain: drain.signal, drainMs: 1_500 },
+    );
+    await claimed.promise;
+    const t0 = Date.now();
+    drain.abort();
+    await running;
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeGreaterThanOrEqual(1_400);
+    expect(elapsed).toBeLessThan(1_900);
+    expect((await claim(sessionRef)).item.attempt).toBe(2);
   });
 });

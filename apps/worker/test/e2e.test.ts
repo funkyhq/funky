@@ -75,7 +75,8 @@ if (!url || !anthropicKey || !e2bKey) {
     await pool.end();
   });
 
-  /** SIGKILL — the only shutdown the worker has, by design. */
+  /** SIGKILL — the crash path. The drain path (SIGTERM) is covered by
+   *  the crash-resume suite in packages/adapters. */
   async function killWorker(worker: ChildProcess): Promise<void> {
     worker.kill("SIGKILL");
     await waitFor(

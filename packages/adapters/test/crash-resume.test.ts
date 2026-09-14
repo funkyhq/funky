@@ -5,8 +5,9 @@
 // was killed mid-flight commits interrupted results instead (the
 // attempt > 1 carve-out: tool side effects are at-most-once, so a
 // re-claim never re-executes them). This is also runDriver's real
-// coverage — a child process hosting the actual loop, killed the only
-// way it ever stops.
+// coverage — a child process hosting the actual loop, killed the way it
+// stops in the cloud — plus one drain scenario: SIGTERM through the
+// worker's own wiring, the item handed back before the exit.
 //
 // Topology: PGlite is single-client, so data-dir ownership alternates —
 // the parent seeds and inspects only while no child is alive, and
@@ -187,9 +188,17 @@ interface DriverHandle {
     timeoutMs?: number,
   ): Promise<ChildMsg | undefined>;
   kill(): Promise<void>;
+  /** The drain path: SIGTERM, then the child's own exit — resolves with
+   *  its exit code. Never a kill; rejects if the child does not leave. */
+  drain(): Promise<number | null>;
 }
 
-function forkDriver(dir: string, spec?: KillSpec): DriverHandle {
+interface ForkOptions {
+  leaseMs?: number;
+  drainMs?: number;
+}
+
+function forkDriver(dir: string, spec?: KillSpec, opts: ForkOptions = {}): DriverHandle {
   const child: ChildProcess = fork(driverPath, [], {
     cwd: packageRoot,
     execArgv: ["--import", "tsx"],
@@ -197,7 +206,8 @@ function forkDriver(dir: string, spec?: KillSpec): DriverHandle {
     env: {
       ...process.env,
       CRASH_DATA_DIR: dir,
-      CRASH_LEASE_MS: String(LEASE_MS),
+      CRASH_LEASE_MS: String(opts.leaseMs ?? LEASE_MS),
+      ...(opts.drainMs !== undefined ? { CRASH_DRAIN_MS: String(opts.drainMs) } : {}),
       ...(spec ? { CRASH_KILL_SPEC: JSON.stringify(spec) } : {}),
     },
   });
@@ -281,6 +291,28 @@ function forkDriver(dir: string, spec?: KillSpec): DriverHandle {
         child.kill("SIGKILL");
         await once(child, "exit");
       }
+    },
+    async drain() {
+      killed = true; // the exit is expected: not a death, and not a kill
+      const pending = waiters;
+      waiters = [];
+      for (const w of pending) {
+        clearTimeout(w.timer);
+        w.resolve(undefined);
+      }
+      if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
+      const exited = once(child, "exit") as Promise<[number | null, NodeJS.Signals | null]>;
+      child.kill("SIGTERM");
+      const [code] = await Promise.race([
+        exited,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(fail("drain: the child did not exit within 30s")),
+            30_000,
+          ).unref();
+        }),
+      ]);
+      return code;
     },
   };
 }
@@ -403,23 +435,32 @@ async function runScenario(sc: Scenario): Promise<void> {
     children.push(crash);
     await crash.waitFor((m) => m.t === "stalled", "crash phase: stall point");
     await crash.kill();
-    let endRuns = countEndRuns(crash.received);
-
-    while (endRuns < targetEndRuns) {
-      if (endRuns >= 1 && !intaken) {
-        await intakeSecondPrompt(dir);
-        intaken = true;
-      }
-      const resume = forkDriver(dir);
-      children.push(resume);
-      await resume.waitFor(endRun, "resume phase: end_run commit");
-      await resume.kill();
-      endRuns += countEndRuns(resume.received);
-    }
-
+    await resumeUntil(dir, children, countEndRuns(crash.received), targetEndRuns, intaken);
     await assertMatchesReference(dir, [sc.interrupted ?? []]);
   } finally {
     for (const child of children) await child.kill();
+  }
+}
+
+/** Fresh drivers, one after another, until the run count is reached —
+ *  turn two intaken once turn one has ended. Every child is reaped. */
+async function resumeUntil(
+  dir: string,
+  children: DriverHandle[],
+  endRuns: number,
+  targetEndRuns: number,
+  intaken: boolean,
+): Promise<void> {
+  while (endRuns < targetEndRuns) {
+    if (endRuns >= 1 && !intaken) {
+      await intakeSecondPrompt(dir);
+      intaken = true;
+    }
+    const resume = forkDriver(dir);
+    children.push(resume);
+    await resume.waitFor(endRun, "resume phase: end_run commit");
+    await resume.kill();
+    endRuns += countEndRuns(resume.received);
   }
 }
 
@@ -431,6 +472,42 @@ describe.concurrent("crash-resume: deterministic kill points", () => {
     },
     180_000,
   );
+});
+
+// --- the drain: SIGTERM mid-step, the item handed back before the exit ---
+
+describe("crash-resume: drain", () => {
+  it("SIGTERM on a stalled tool batch: released within the budget, resumed as interrupted", async () => {
+    const dir = await copyOf(templateFresh);
+    const children: DriverHandle[] = [];
+    try {
+      // A 60s lease: within this test only a release can make the item
+      // claimable, so the immediate claim below proves the drain landed.
+      const child = forkDriver(
+        dir,
+        { class: "mid-tools", n: 0 },
+        { leaseMs: 60_000, drainMs: 200 },
+      );
+      children.push(child);
+      await child.waitFor((m) => m.t === "stalled", "drain: stall point");
+      expect(await child.drain()).toBe(0); // its own exit, past the budget
+
+      const { store, close } = await openDir(dir);
+      try {
+        const claim = await store.claimItem({ leaseMs: 60_000 });
+        expect(claim?.item).toMatchObject({ type: "execute_tools", attempt: 2 });
+        // Hand it back the same way, for the resuming child.
+        expect(await store.releaseItem(claim!.item, claim!.token)).toBe(true);
+      } finally {
+        await close();
+      }
+
+      await resumeUntil(dir, children, countEndRuns(child.received), 2, false);
+      await assertMatchesReference(dir, [[0]]);
+    } finally {
+      for (const child of children) await child.kill();
+    }
+  }, 180_000);
 });
 
 // --- the randomized sweep ---

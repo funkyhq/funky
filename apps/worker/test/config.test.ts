@@ -31,6 +31,7 @@ describe("loadConfig — valid input", () => {
       e2bApiKey: BASE.E2B_API_KEY,
       leaseMs: 60_000,
       idlePollMs: 1_000,
+      drainMs: 7_000,
       sandboxTimeoutMs: 30 * 60_000,
       dbPoolMax: 10,
     });
@@ -41,11 +42,13 @@ describe("loadConfig — valid input", () => {
       ...BASE,
       FUNKY_LEASE_MS: "3000",
       FUNKY_IDLE_POLL_MS: "100",
+      FUNKY_DRAIN_MS: "500",
       FUNKY_SANDBOX_TIMEOUT_MS: "300000",
       DB_POOL_MAX: "2",
     });
     expect(cfg.leaseMs).toBe(3_000);
     expect(cfg.idlePollMs).toBe(100);
+    expect(cfg.drainMs).toBe(500);
     expect(cfg.sandboxTimeoutMs).toBe(300_000);
     expect(cfg.dbPoolMax).toBe(2);
   });
