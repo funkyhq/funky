@@ -20,10 +20,11 @@
 // Drain is the crash path made cheap, not a second story. A scale-down
 // or a deploy delivers SIGTERM a fixed few seconds before SIGKILL
 // (Cloud Run: 10s), and the platform picks the instance, busy or not.
-// When the drain signal fires the loop stops claiming; a held claim —
-// from claimItem through the sandbox bind to commit — gets drainMs to
-// finish on its own, and if it does not, the step is aborted and the
-// lease released (Store.releaseItem: expiry moved to now), so the next
+// Once the drain signal fires the loop claims nothing more, and a held
+// claim — from claimItem through the sandbox bind to commit — gets what
+// is left of drainMs, counted from the signal, to finish on its own;
+// past that the step is aborted and the lease released
+// (Store.releaseItem: expiry moved to now, token revoked), so the next
 // poll of any live worker resumes the session at once instead of after
 // the lease. The re-claim sees a released item exactly as a dead
 // claimer's, so everything above still holds; and a drain that never
@@ -124,43 +125,43 @@ export interface DriverOptions {
 export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Promise<void> {
   const leaseMs = opts.leaseMs ?? 60_000;
   const idlePollMs = opts.idlePollMs ?? 1_000;
-  const drainMs = opts.drainMs ?? 7_000;
-  const drain = opts.drain;
-  // The budget runs from the signal, not from whenever the next claim
-  // returns: a claimItem on the wire when SIGTERM lands still resolves,
-  // and still holds, so its step gets only what is left of the budget.
-  let drainedAt: number | undefined;
-  const onDrain = (): void => {
-    drainedAt = performance.now();
-  };
-  drain?.addEventListener("abort", onDrain, { once: true });
+  const drain = watchDrain(opts.drain, opts.drainMs ?? 7_000);
   try {
-    while (!drain?.aborted) {
+    while (!drain.fired) {
       const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
-      if (!claim) {
-        await sleep(idlePollMs, drain);
-        continue;
-      }
-      // The hold is armed for the claim's whole life, bind included, and
-      // the claim runs to whichever comes first: its own end, or the
-      // drain deadline aborting it and releasing the lease. On the second
-      // path the claim's promise is abandoned (see header) — a late
-      // failure in it has no one left to report to — but the release is
-      // not: once the deadline has fired the loop leaves only after the
-      // release attempt has settled, however fast the aborted step
-      // returned, or the host would exit over a release still in flight.
-      const hold = holdClaim(deps.store, claim, { drain, drainMs, drainedAt });
-      try {
-        const running = runClaim(deps, claim, leaseMs, hold.signal);
-        running.catch(() => {});
-        await Promise.race([running, hold.released]);
-      } finally {
-        await hold.disarm();
-      }
+      if (claim) await runOrRelease(deps, claim, leaseMs, drain);
+      else await sleep(idlePollMs, opts.drain);
     }
   } finally {
-    drain?.removeEventListener("abort", onDrain);
+    drain.stop();
   }
+}
+
+/**
+ * Run one claim to its own end — or, if the drain's deadline comes
+ * first, abort it and hand the item back. The release is awaited, so
+ * the loop never returns with one still in flight; the aborted step is
+ * not: a sandbox command ignores its signal and may never settle, and
+ * the host exits over it. A release the store cannot serve is
+ * swallowed — the lease then expires on its own, which is the crash
+ * path.
+ */
+async function runOrRelease(
+  deps: DriverDeps,
+  claim: Claim,
+  leaseMs: number,
+  drain: DrainWatch,
+): Promise<void> {
+  const abort = new AbortController();
+  const step = runClaim(deps, claim, leaseMs, abort.signal);
+  step.catch(() => {}); // if abandoned below, a late failure has no one to report to
+  const first = await Promise.race([
+    step.then(() => "stepped" as const),
+    drain.deadline.then(() => "deadline" as const),
+  ]);
+  if (first === "stepped") return;
+  abort.abort();
+  await deps.store.releaseItem(claim.item, claim.token).catch(() => {});
 }
 
 /** One claim, bind included: ensure-on-claim, then the step. */
@@ -180,66 +181,41 @@ async function runClaim(
     claim.item.type === "execute_tools" && claim.item.attempt === 1
       ? await deps.bindTools(claim.item)
       : undefined;
-  if (abort.aborted) return; // drained during the bind: the hold has released the claim
+  if (abort.aborted) return; // drained during the bind: the claim is being released
   await runStep(deps, claim, leaseMs, tools, abort);
 }
 
-interface HoldOptions {
-  drain: AbortSignal | undefined;
-  drainMs: number;
-  /** When the drain fired, if it already has: the budget counts from
-   *  there, not from the claim. */
-  drainedAt: number | undefined;
+/** The drain as the loop sees it: whether the host has asked for one,
+ *  and one deadline for everything held — the budget counted from the
+ *  moment the signal fired, so a claim already on the wire at that
+ *  moment gets only what is left of it. */
+interface DrainWatch {
+  readonly fired: boolean;
+  /** Settles once the budget is spent; never, if the drain never fires. */
+  readonly deadline: Promise<void>;
+  /** Cancel a deadline that has not fired yet. */
+  stop(): void;
 }
 
-/**
- * Arm a claim for the drain. Nothing happens until the drain fires;
- * then the claim has what is left of drainMs — measured from the signal
- * — to reach its own end, after which the step is aborted (through
- * `signal`) and the lease released, so another worker can claim the
- * item at once. `released` settles only on that path — a claim that
- * ends in time is never released: its commit decided the item's fate,
- * and a release after a commit matches nothing anyway. A release the
- * store cannot serve is swallowed: the lease then expires on its own,
- * which is the crash path. `disarm` cancels a deadline that has not
- * fired, and waits out the release of one that has.
- */
-function holdClaim(
-  store: Store,
-  claim: Claim,
-  { drain, drainMs, drainedAt }: HoldOptions,
-): { signal: AbortSignal; released: Promise<void>; disarm: () => Promise<void> } {
-  const abort = new AbortController();
+function watchDrain(signal: AbortSignal | undefined, budgetMs: number): DrainWatch {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let fired = false;
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
+  let expire: () => void = () => {};
+  const deadline = new Promise<void>((resolve) => {
+    expire = resolve;
   });
-  const onDeadline = async (): Promise<void> => {
-    fired = true;
-    abort.abort();
-    try {
-      await store.releaseItem(claim.item, claim.token);
-    } catch {
-      // Unreachable store: the lease expires on its own — the crash path.
-    }
-    release();
+  const onFire = (): void => {
+    timer = setTimeout(expire, budgetMs);
   };
-  const arm = (firedAt: number): void => {
-    const remaining = Math.max(0, firedAt + drainMs - performance.now());
-    timer = setTimeout(() => void onDeadline(), remaining);
-  };
-  const onDrain = (): void => arm(performance.now());
-  if (drain?.aborted) arm(drainedAt ?? performance.now());
-  else drain?.addEventListener("abort", onDrain, { once: true });
+  if (signal?.aborted) onFire();
+  else signal?.addEventListener("abort", onFire, { once: true });
   return {
-    signal: abort.signal,
-    released,
-    disarm: () => {
-      drain?.removeEventListener("abort", onDrain);
+    get fired() {
+      return signal?.aborted ?? false;
+    },
+    deadline,
+    stop: () => {
+      signal?.removeEventListener("abort", onFire);
       clearTimeout(timer);
-      return fired ? released : Promise.resolve();
     },
   };
 }
