@@ -126,25 +126,40 @@ export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Pro
   const idlePollMs = opts.idlePollMs ?? 1_000;
   const drainMs = opts.drainMs ?? 7_000;
   const drain = opts.drain;
-  while (!drain?.aborted) {
-    const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
-    if (!claim) {
-      await sleep(idlePollMs, drain);
-      continue;
+  // The budget runs from the signal, not from whenever the next claim
+  // returns: a claimItem on the wire when SIGTERM lands still resolves,
+  // and still holds, so its step gets only what is left of the budget.
+  let drainedAt: number | undefined;
+  const onDrain = (): void => {
+    drainedAt = performance.now();
+  };
+  drain?.addEventListener("abort", onDrain, { once: true });
+  try {
+    while (!drain?.aborted) {
+      const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
+      if (!claim) {
+        await sleep(idlePollMs, drain);
+        continue;
+      }
+      // The hold is armed for the claim's whole life, bind included, and
+      // the claim runs to whichever comes first: its own end, or the
+      // drain deadline aborting it and releasing the lease. On the second
+      // path the claim's promise is abandoned (see header) — a late
+      // failure in it has no one left to report to — but the release is
+      // not: once the deadline has fired the loop leaves only after the
+      // release attempt has settled, however fast the aborted step
+      // returned, or the host would exit over a release still in flight.
+      const hold = holdClaim(deps.store, claim, { drain, drainMs, drainedAt });
+      try {
+        const running = runClaim(deps, claim, leaseMs, hold.signal);
+        running.catch(() => {});
+        await Promise.race([running, hold.released]);
+      } finally {
+        await hold.disarm();
+      }
     }
-    // The hold is armed for the claim's whole life, bind included, and
-    // the claim runs to whichever comes first: its own end, or the drain
-    // deadline aborting it and releasing the lease. On the second path
-    // the claim's promise is abandoned (see header) — a late failure in
-    // it has no one left to report to.
-    const hold = holdClaim(deps.store, claim, drain, drainMs);
-    try {
-      const running = runClaim(deps, claim, leaseMs, hold.signal);
-      running.catch(() => {});
-      await Promise.race([running, hold.released]);
-    } finally {
-      hold.disarm();
-    }
+  } finally {
+    drain?.removeEventListener("abort", onDrain);
   }
 }
 
@@ -169,29 +184,40 @@ async function runClaim(
   await runStep(deps, claim, leaseMs, tools, abort);
 }
 
+interface HoldOptions {
+  drain: AbortSignal | undefined;
+  drainMs: number;
+  /** When the drain fired, if it already has: the budget counts from
+   *  there, not from the claim. */
+  drainedAt: number | undefined;
+}
+
 /**
  * Arm a claim for the drain. Nothing happens until the drain fires;
- * then the claim has drainMs to reach its own end, after which the step
- * is aborted (through `signal`) and the lease released, so another
- * worker can claim the item at once. `released` settles only on that
- * path — a claim that ends in time is never released: its commit
- * decided the item's fate, and a release after a commit matches nothing
- * anyway. A release the store cannot serve is swallowed: the lease then
- * expires on its own, which is the crash path.
+ * then the claim has what is left of drainMs — measured from the signal
+ * — to reach its own end, after which the step is aborted (through
+ * `signal`) and the lease released, so another worker can claim the
+ * item at once. `released` settles only on that path — a claim that
+ * ends in time is never released: its commit decided the item's fate,
+ * and a release after a commit matches nothing anyway. A release the
+ * store cannot serve is swallowed: the lease then expires on its own,
+ * which is the crash path. `disarm` cancels a deadline that has not
+ * fired, and waits out the release of one that has.
  */
 function holdClaim(
   store: Store,
   claim: Claim,
-  drain: AbortSignal | undefined,
-  drainMs: number,
-): { signal: AbortSignal; released: Promise<void>; disarm: () => void } {
+  { drain, drainMs, drainedAt }: HoldOptions,
+): { signal: AbortSignal; released: Promise<void>; disarm: () => Promise<void> } {
   const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let fired = false;
   let release!: () => void;
   const released = new Promise<void>((resolve) => {
     release = resolve;
   });
   const onDeadline = async (): Promise<void> => {
+    fired = true;
     abort.abort();
     try {
       await store.releaseItem(claim.item, claim.token);
@@ -200,10 +226,12 @@ function holdClaim(
     }
     release();
   };
-  const onDrain = (): void => {
-    timer = setTimeout(() => void onDeadline(), drainMs);
+  const arm = (firedAt: number): void => {
+    const remaining = Math.max(0, firedAt + drainMs - performance.now());
+    timer = setTimeout(() => void onDeadline(), remaining);
   };
-  if (drain?.aborted) onDrain();
+  const onDrain = (): void => arm(performance.now());
+  if (drain?.aborted) arm(drainedAt ?? performance.now());
   else drain?.addEventListener("abort", onDrain, { once: true });
   return {
     signal: abort.signal,
@@ -211,6 +239,7 @@ function holdClaim(
     disarm: () => {
       drain?.removeEventListener("abort", onDrain);
       clearTimeout(timer);
+      return fired ? released : Promise.resolve();
     },
   };
 }

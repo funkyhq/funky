@@ -630,4 +630,80 @@ describe("runDriver drains", () => {
     const reclaimed = await claim(sessionRef);
     expect(reclaimed.item).toMatchObject({ type: "execute_tools", attempt: 2 });
   });
+
+  it("waits for the release even when the aborted step settles first", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    // A provider that honors the abort at once: the step returns before
+    // the release's round trip, which must still land before the loop
+    // does — the host exits the moment the loop returns.
+    const provider = scriptedProvider([["untilAborted"]]);
+    const gate = deferred();
+    let releasing = false;
+    let releasedFor: boolean | undefined;
+    const gatedStore: Store = {
+      ...store,
+      releaseItem: async (ref, token) => {
+        releasing = true;
+        await gate.promise;
+        releasedFor = await store.releaseItem(ref, token);
+        return releasedFor;
+      },
+    };
+    const { drain, deps } = hosted(provider);
+
+    const running = runDriver(
+      { ...deps, store: gatedStore },
+      { idlePollMs: 10, drain: drain.signal, drainMs: 20 },
+    );
+    await until(() => provider.requests.length === 1);
+    drain.abort();
+    await until(() => releasing);
+    // The step has long returned; the loop has not.
+    let returned = false;
+    void running.then(() => {
+      returned = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(returned).toBe(false);
+    gate.resolve();
+    await running;
+    expect(releasedFor).toBe(true);
+    expect((await claim(sessionRef)).item.attempt).toBe(2);
+  });
+
+  it("counts the budget from the signal, not from a claim that lands after it", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([["untilAborted"]]);
+    // A claim on the wire when the drain fires: it lands 600ms later,
+    // and its step gets only what is left of a 1.5s budget — the loop is
+    // out about 1.5s after the signal, not 2.1s.
+    const claimed = deferred();
+    const slowStore: Store = {
+      ...store,
+      claimItem: async (req) => {
+        const result = await store.claimItem(req);
+        if (result) {
+          claimed.resolve();
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+        return result;
+      },
+    };
+    const { drain, deps } = hosted(provider);
+
+    const running = runDriver(
+      { ...deps, store: slowStore },
+      { idlePollMs: 10, drain: drain.signal, drainMs: 1_500 },
+    );
+    await claimed.promise;
+    const t0 = Date.now();
+    drain.abort();
+    await running;
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeGreaterThanOrEqual(1_400);
+    expect(elapsed).toBeLessThan(1_900);
+    expect((await claim(sessionRef)).item.attempt).toBe(2);
+  });
 });
