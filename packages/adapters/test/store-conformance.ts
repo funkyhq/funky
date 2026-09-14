@@ -1598,6 +1598,23 @@ export function describeStoreConformance(
         expect(await store.readEntries(sessionRef)).toHaveLength(1); // nothing landed
       });
 
+      it("survives a heartbeat already in flight: the release revokes the token", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        // A heartbeat takes its timestamp before its write reaches the
+        // store, so one racing the release carries a time EARLIER than
+        // the expiry the release writes — and "not yet expired" would
+        // still hold for it. Modelled with the clock: release at T+1s,
+        // then a heartbeat stamped T.
+        clock.advance(1_000);
+        expect(await store.releaseItem(itemRef, token)).toBe(true);
+        clock.advance(-1_000);
+        expect(await store.heartbeat(itemRef, token)).toBe(false);
+        clock.advance(1_000);
+        const reclaimed = await store.claimItem({ leaseMs: 60_000 });
+        expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
+      });
+
       it("releases only the live lease's token, addressed by the full path", async () => {
         const s1 = await newSession();
         const s2 = await newSession();

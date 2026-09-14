@@ -31,8 +31,9 @@
 //   After expiry an item's fate always belongs to its next claimer —
 //   late work is discarded, never merged, and the P4 reaper can
 //   synthesize over an expired item without racing a slow worker.
-//   releaseItem is the holder moving its own expiry to now — the one
-//   voluntary hand-back, spelled in the predicate everyone already reads.
+//   releaseItem is the holder moving its own expiry to now and revoking
+//   its own token — the one voluntary hand-back, spelled in the predicate
+//   everyone already reads, and closed to a renewal already on the wire.
 //
 // The clock is injected (`now`) so lease expiry is testable; all time
 // comparisons use it — never SQL now().
@@ -860,12 +861,16 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const { namespace, sessionId, itemId } = WorkItemRef.parse(ref);
       const t = now();
       // The heartbeat's fenced write with the opposite SET: the expiry
-      // moves to now instead of forward. "Expired" has one spelling
-      // (leaseExpiresAt <= now), so the claim scan, the heartbeat and
-      // the commit fence all read the release without a new state.
+      // moves to now instead of forward, and the credential is revoked.
+      // "Expired" has one spelling (leaseExpiresAt <= now), so the claim
+      // scan and the commit fence read the release without a new state.
+      // The revocation is for a heartbeat already in flight: it took its
+      // timestamp before this write, so the new expiry still reads as
+      // live to it, and only the token can keep it from extending what
+      // was just released.
       const rows = await db
         .update(workItems)
-        .set({ leaseExpiresAt: t })
+        .set({ leaseExpiresAt: t, leaseToken: null })
         .where(
           and(
             eq(workItems.id, itemId),

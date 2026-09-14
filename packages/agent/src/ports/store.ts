@@ -209,12 +209,15 @@ export interface Store {
    * driver/loop.ts). Fenced exactly like heartbeat: only a live lease
    * under this token is expired, and the result says whether one was —
    * false means the lease was already gone or the item is done, and
-   * nothing was touched. Nothing else changes shape: the item becomes
-   * claimable at once through the ordinary expired-lease path, the
-   * re-claim counts as a further attempt (so a tool batch is never
-   * re-executed), and a late commit under this token is fenced by
-   * strict expiry. Correctness never depends on it — a holder that dies
-   * before releasing is the crash path, one lease later.
+   * nothing was touched. The token is revoked in the same write, so a
+   * heartbeat already in flight — its timestamp taken before the
+   * release — cannot extend what was just released. Nothing else
+   * changes shape: the item becomes claimable at once through the
+   * ordinary expired-lease path, the re-claim counts as a further
+   * attempt (so a tool batch is never re-executed), and a late commit
+   * under this token is fenced. Correctness never depends on it — a
+   * holder that dies before releasing is the crash path, one lease
+   * later.
    */
   releaseItem(ref: WorkItemRef, token: LeaseToken): Promise<boolean>;
 
