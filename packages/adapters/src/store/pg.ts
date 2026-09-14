@@ -21,15 +21,19 @@
 //   never a stale gap between checking and stamping the terminal state.
 // - claimItem uses FOR UPDATE SKIP LOCKED: contended claimers never
 //   queue behind each other, exactly one wins a given item.
-// - Fencing is token + live lease, symmetric across heartbeat and
-//   commitStep: a stale token or an expired lease rejects the write,
-//   even if nobody reclaimed the item (strict expiry, 2026-08-12).
+// - Fencing is token + live lease, symmetric across heartbeat,
+//   releaseItem and commitStep: a stale token or an expired lease
+//   rejects the write, even if nobody reclaimed the item (strict expiry,
+//   2026-08-12).
 //   The token is minted here, fresh per claim, so credential
 //   uniqueness is structural — a re-claim always re-issues, and a
 //   previous holder's zombie can never present valid credentials.
 //   After expiry an item's fate always belongs to its next claimer —
 //   late work is discarded, never merged, and the P4 reaper can
 //   synthesize over an expired item without racing a slow worker.
+//   releaseItem is the holder moving its own expiry to now and revoking
+//   its own token — the one voluntary hand-back, spelled in the predicate
+//   everyone already reads, and closed to a renewal already on the wire.
 //
 // The clock is injected (`now`) so lease expiry is testable; all time
 // comparisons use it — never SQL now().
@@ -847,6 +851,34 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             eq(workItems.leaseToken, token),
             eq(workItems.status, "leased"),
             gt(workItems.leaseExpiresAt, t), // expired = lost, even if unclaimed
+          ),
+        )
+        .returning({ id: workItems.id });
+      return rows.length > 0;
+    },
+
+    async releaseItem(ref, token) {
+      const { namespace, sessionId, itemId } = WorkItemRef.parse(ref);
+      const t = now();
+      // The heartbeat's fenced write with the opposite SET: the expiry
+      // moves to now instead of forward, and the credential is revoked.
+      // "Expired" has one spelling (leaseExpiresAt <= now), so the claim
+      // scan and the commit fence read the release without a new state.
+      // The revocation is for a heartbeat already in flight: it took its
+      // timestamp before this write, so the new expiry still reads as
+      // live to it, and only the token can keep it from extending what
+      // was just released.
+      const rows = await db
+        .update(workItems)
+        .set({ leaseExpiresAt: t, leaseToken: null })
+        .where(
+          and(
+            eq(workItems.id, itemId),
+            eq(workItems.sessionId, sessionId),
+            eq(workItems.namespace, namespace),
+            eq(workItems.leaseToken, token),
+            eq(workItems.status, "leased"),
+            gt(workItems.leaseExpiresAt, t), // already expired = nothing to release
           ),
         )
         .returning({ id: workItems.id });

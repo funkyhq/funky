@@ -1,8 +1,9 @@
 // apps/api/src/main.ts — the api's composition root from the ratified P3
 // service split, and the only file that touches process.env or the
 // network. Stateless by construction: every row lives in the Store, so
-// SIGKILL is the shutdown story here as much as in the worker — no drain
-// path, no signal handlers; restart policy belongs to the container.
+// SIGKILL is the shutdown story — no drain path, no signal handlers;
+// restart policy belongs to the container. (The worker drains, but only
+// to hand a held claim back sooner; the api holds nothing.)
 import { serve } from "@hono/node-server";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";

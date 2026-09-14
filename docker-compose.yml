@@ -60,10 +60,13 @@ services:
       retries: 10
 
   # The runDriver host. No ports — nothing routes to a worker; claiming is
-  # the only scheduler, so `--scale worker=N` needs no other change. There
-  # is deliberately no drain path: SIGKILL is the shutdown story and an
-  # interrupted step is never committed, so `restart` IS the worker's
-  # lifecycle management.
+  # the only scheduler, so `--scale worker=N` needs no other change. On
+  # SIGTERM (`docker compose stop`, a scale-down) the worker drains: it
+  # stops claiming, gives a held step FUNKY_DRAIN_MS (default 7s) to
+  # commit, otherwise releases the item for another worker, and exits.
+  # SIGKILL at compose's stop_grace_period (10s) is the crash path, and an
+  # interrupted step is never committed either way, so `restart` remains
+  # the worker's lifecycle management.
   worker:
     build: .
     command: ["node", "apps/worker/dist/main.mjs"]

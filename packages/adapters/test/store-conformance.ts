@@ -1574,6 +1574,81 @@ export function describeStoreConformance(
         const reclaimed = await store.claimItem({ leaseMs: 60_000 });
         expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
       });
+
+      it("releases a lease: claimable at once, and a further attempt to the re-claim", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef); // leaseMs 60_000
+        expect(await store.releaseItem(itemRef, token)).toBe(true);
+        // No clock advance: the release IS the expiry, and expired has
+        // one spelling — the holder is out on every path at once…
+        expect(await store.heartbeat(itemRef, token)).toBe(false);
+        await expect(
+          store.commitStep({
+            itemRef,
+            token,
+            append: [assistant("late")],
+            next: { kind: "end_run", status: "completed" },
+          }),
+        ).rejects.toThrow(FencedError);
+        // …and a claimer is in, seeing the released holder as a dead one.
+        const reclaimed = await store.claimItem({ leaseMs: 60_000 });
+        expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
+        expect(reclaimed?.item.attempt).toBe(2);
+        expect(reclaimed?.token).not.toBe(token);
+        expect(await store.readEntries(sessionRef)).toHaveLength(1); // nothing landed
+      });
+
+      it("survives a heartbeat already in flight: the release revokes the token", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        // A heartbeat takes its timestamp before its write reaches the
+        // store, so one racing the release carries a time EARLIER than
+        // the expiry the release writes — and "not yet expired" would
+        // still hold for it. Modelled with the clock: release at T+1s,
+        // then a heartbeat stamped T.
+        clock.advance(1_000);
+        expect(await store.releaseItem(itemRef, token)).toBe(true);
+        clock.advance(-1_000);
+        expect(await store.heartbeat(itemRef, token)).toBe(false);
+        clock.advance(1_000);
+        const reclaimed = await store.claimItem({ leaseMs: 60_000 });
+        expect(reclaimed?.item.itemId).toBe(itemRef.itemId);
+      });
+
+      it("releases only the live lease's token, addressed by the full path", async () => {
+        const s1 = await newSession();
+        const s2 = await newSession();
+        const { itemRef, token } = await startAndClaim(s1);
+        expect(await store.releaseItem(itemRef, "forged-token")).toBe(false);
+        expect(await store.releaseItem({ ...itemRef, sessionId: s2.sessionId }, token)).toBe(false);
+        expect(await store.releaseItem({ ...itemRef, namespace: "tenant-b" }, token)).toBe(false);
+        // None of those touched the lease: the holder is still in, alone.
+        expect(await store.heartbeat(itemRef, token)).toBe(true);
+        expect(await store.claimItem({ leaseMs: 60_000 })).toBeUndefined();
+      });
+
+      it("releases nothing once the lease is gone — a done item, or another claimer's", async () => {
+        const done = await newSession();
+        const held = await startAndClaim(done);
+        await store.commitStep({
+          itemRef: held.itemRef,
+          token: held.token,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        // A release after the commit is a no-op, never a reopening.
+        expect(await store.releaseItem(held.itemRef, held.token)).toBe(false);
+        expect((await store.listItems(done))[0]?.status).toBe("done");
+
+        const expired = await newSession();
+        const zombie = await startAndClaim(expired);
+        clock.advance(120_000);
+        const reclaimed = await store.claimItem({ leaseMs: 60_000 });
+        expect(reclaimed?.item.itemId).toBe(zombie.itemRef.itemId);
+        // The old holder's late release must not touch the new claim.
+        expect(await store.releaseItem(zombie.itemRef, zombie.token)).toBe(false);
+        expect(await store.heartbeat(zombie.itemRef, reclaimed!.token)).toBe(true);
+      });
     });
 
     describe("cancel", () => {

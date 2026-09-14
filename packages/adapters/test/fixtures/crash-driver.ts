@@ -1,7 +1,8 @@
 // The crash-resume suite's child process: a real worker — file-backed
-// PGlite, the real pg store, real runDriver, real clock — that only
-// ever exits by SIGKILL, so even clean teardown goes through the crash
-// rule. The parent schedules the crash via CRASH_KILL_SPEC: the store
+// PGlite, the real pg store, real runDriver, real clock — that exits by
+// SIGKILL (so even clean teardown goes through the crash rule) or, in
+// the drain scenario, by SIGTERM through the same wiring the worker
+// installs. The parent schedules the crash via CRASH_KILL_SPEC: the store
 // wrapper (and the script's provider/tool overlays) signal `stalled` at
 // the matching point and park until killed. Every claim and commit is
 // reported over IPC so the parent can follow progress without opening
@@ -24,6 +25,7 @@ if (!dataDir) throw new Error("crash-driver: CRASH_DATA_DIR is required");
 const specEnv = process.env["CRASH_KILL_SPEC"];
 const spec: KillSpec | undefined = specEnv ? (JSON.parse(specEnv) as KillSpec) : undefined;
 const leaseMs = Number(process.env["CRASH_LEASE_MS"] ?? 300);
+const drainMs = Number(process.env["CRASH_DRAIN_MS"] ?? 7_000);
 
 const send = (message: unknown): void => {
   process.send?.(message);
@@ -67,5 +69,14 @@ const deps: DriverDeps = {
   bindTools: async () => tools,
 };
 
+// The worker's own shutdown wiring (apps/worker/src/main.ts): SIGTERM
+// drains, and the process exits over whatever the abandoned step left
+// open. No IPC announces the exit — a message sent right before
+// process.exit can be lost (see the crash sweep) — the parent waits for
+// the exit itself.
+const drain = new AbortController();
+process.once("SIGTERM", () => drain.abort());
+
 send({ t: "ready" });
-await runDriver(deps, { leaseMs, idlePollMs: 25 });
+await runDriver(deps, { leaseMs, idlePollMs: 25, drain: drain.signal, drainMs });
+process.exit(0);
