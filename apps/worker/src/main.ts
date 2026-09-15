@@ -2,15 +2,19 @@
 // service split, and the only file that touches process.env or the
 // network. Pure composition: pg store, one AI SDK inference adapter per
 // model-provider key (providers.ts), E2B sandboxes, the four workspace
-// tools — handed to runDriver, which returns only on drain. One signal
-// handler, SIGTERM → drain: stop claiming, give a held step
-// FUNKY_DRAIN_MS to commit, else abort it and release its lease, then
-// exit. SIGKILL remains the crash story it always was — the drain only
-// makes a planned removal (a scale-down, a deploy) cost one poll instead
-// of a lease — and the handler is installed once, so a second SIGTERM,
-// like anything else, is a crash. Restart policy still belongs to the
-// container. The e2e suite forks this exact file — what it proves is
-// what a container runs.
+// tools — handed to FUNKY_CONCURRENCY drivers run side by side, each
+// returning only on drain. The loop knows nothing of its siblings: what
+// makes N of them safe is the store (one open item per session, SKIP
+// LOCKED claims), so N drivers in one process are N workers sharing a
+// pool. One signal handler, SIGTERM → drain: every driver stops
+// claiming, a held step gets FUNKY_DRAIN_MS to commit, else it is
+// aborted and its lease released, and the process exits once the last
+// has returned. SIGKILL remains the crash story it always was — the
+// drain only makes a planned removal (a scale-down, a deploy) cost one
+// poll instead of a lease — and the handler is installed once, so a
+// second SIGTERM, like anything else, is a crash. Restart policy still
+// belongs to the container. The e2e suite forks this exact file — what
+// it proves is what a container runs.
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -62,14 +66,24 @@ process.once("SIGTERM", () => {
 
 console.log(
   `worker: claiming (providers=${[...providers.keys()].join(",")} ` +
-    `lease=${cfg.leaseMs}ms idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms)`,
+    `concurrency=${cfg.concurrency} lease=${cfg.leaseMs}ms ` +
+    `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms)`,
 );
-await runDriver(deps, {
-  leaseMs: cfg.leaseMs,
-  idlePollMs: cfg.idlePollMs,
-  drain: drain.signal,
-  drainMs: cfg.drainMs,
-});
+// N drivers over one store and one drain signal: each counts the drain
+// budget down on its own from the shared signal and awaits its own
+// release, so all of them are back before the exit below. A driver's
+// failure (a store error outside the fence) rejects the whole, and the
+// process exits over its siblings — the crash path, as it was with one.
+await Promise.all(
+  Array.from({ length: cfg.concurrency }, () =>
+    runDriver(deps, {
+      leaseMs: cfg.leaseMs,
+      idlePollMs: cfg.idlePollMs,
+      drain: drain.signal,
+      drainMs: cfg.drainMs,
+    }),
+  ),
+);
 console.log("worker: drained — exiting");
 // Explicit: an abandoned step (a tool deaf to its abort signal) or the
 // pool's open sockets would otherwise keep the event loop alive.

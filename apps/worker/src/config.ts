@@ -8,25 +8,38 @@
 import { z } from "zod";
 import { VENDORS } from "./providers";
 
+/** An integer knob with a floor and a default. Blank reads as unset —
+ *  the rule the provider keys already follow, since compose forwards an
+ *  unset variable as "" — where coercion alone would read it as 0: a
+ *  boot failure under a floor of 1, a silent zero budget under a floor
+ *  of 0. */
+const intKnob = (min: number, fallback: number) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.coerce.number().int().min(min).default(fallback),
+  );
+
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   E2B_API_KEY: z.string().min(1, "E2B_API_KEY is required"),
   // Lease duration per claim; each heartbeat extends by the same amount.
-  FUNKY_LEASE_MS: z.coerce.number().int().min(100).default(60_000),
+  FUNKY_LEASE_MS: intKnob(100, 60_000),
   // Delay between empty claim attempts — poll-only until a Notifier port exists.
-  FUNKY_IDLE_POLL_MS: z.coerce.number().int().min(10).default(1_000),
+  FUNKY_IDLE_POLL_MS: intKnob(10, 1_000),
   // Drain budget: how long a held step may keep running after SIGTERM
   // before it is aborted and its lease released. Cloud Run (and compose)
   // send SIGKILL 10s after SIGTERM; the default leaves 3s for the
   // release's round trip and the exit.
-  FUNKY_DRAIN_MS: z.coerce.number().int().min(0).default(7_000),
+  FUNKY_DRAIN_MS: intKnob(0, 7_000),
   // Idle TTL before a session's sandbox auto-pauses (revived on the next connect).
-  FUNKY_SANDBOX_TIMEOUT_MS: z.coerce
-    .number()
-    .int()
-    .min(10_000)
-    .default(30 * 60_000),
-  DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
+  FUNKY_SANDBOX_TIMEOUT_MS: intKnob(10_000, 30 * 60_000),
+  // Drivers this worker hosts — claim loops run side by side in one
+  // process over one pool and one drain, so the steps it runs at once;
+  // `--scale worker=N` multiplies it. A step is a stream in flight (a
+  // model, a sandbox), not CPU, so tens fit a small container; what they
+  // share and queue on is the pool below, and each polls when idle.
+  FUNKY_CONCURRENCY: intKnob(1, 1),
+  DB_POOL_MAX: intKnob(1, 10),
 });
 
 export type Config = {
@@ -39,6 +52,8 @@ export type Config = {
   idlePollMs: number;
   drainMs: number;
   sandboxTimeoutMs: number;
+  /** Drivers main.ts hosts, each one claim loop. At least 1. */
+  concurrency: number;
   dbPoolMax: number;
 };
 
@@ -74,6 +89,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idlePollMs: e.FUNKY_IDLE_POLL_MS,
     drainMs: e.FUNKY_DRAIN_MS,
     sandboxTimeoutMs: e.FUNKY_SANDBOX_TIMEOUT_MS,
+    concurrency: e.FUNKY_CONCURRENCY,
     dbPoolMax: e.DB_POOL_MAX,
   };
 }

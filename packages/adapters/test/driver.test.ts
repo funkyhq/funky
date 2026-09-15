@@ -706,4 +706,31 @@ describe("runDriver drains", () => {
     expect(elapsed).toBeLessThan(1_900);
     expect((await claim(sessionRef)).item.attempt).toBe(2);
   });
+
+  // --- composition: the worker hosts FUNKY_CONCURRENCY of these loops
+  // over one store and one drain signal (apps/worker/src/main.ts). The
+  // loop knows nothing of its siblings: that N of them never share an
+  // item is the store's guarantee — one open item per session, SKIP
+  // LOCKED claims — pinned by the conformance suite ("exactly one winner
+  // under contended claims"). What is new in the composition is the
+  // drain: one signal, and each loop counts the budget down on its own,
+  // so every held claim is released before its loop returns.
+
+  it("one drain signal drains every driver: each held claim is released before its loop returns", async () => {
+    const sessions = [await newSession(), await newSession()];
+    for (const ref of sessions) await store.intake(ref, user("go"));
+    const provider = scriptedProvider([["untilAborted"], ["untilAborted"]]);
+    const { drain, deps } = hosted(provider);
+    const opts = { idlePollMs: 10, drain: drain.signal, drainMs: 100 };
+
+    const running = Promise.all([runDriver(deps, opts), runDriver(deps, opts)]);
+    await until(() => provider.requests.length === 2);
+    drain.abort();
+    await running;
+
+    for (const ref of sessions) {
+      expect(messages(await store.readEntries(ref))).toHaveLength(1);
+      expect((await claim(ref)).item.attempt).toBe(2); // released, not merely expired
+    }
+  });
 });
