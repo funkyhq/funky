@@ -9,7 +9,9 @@ the Store port's second caller (`intake` is the api's write path;
   `packages/adapters`) drives it step by step against the real pg store.
 - **`runDriver(deps, opts)`** — the production shell `apps/worker`
   hosts: claim, step, repeat, sleep on miss, until the process dies or
-  the host's drain signal fires. Funky is cloud-only (2026-08-09):
+  the host's drain signal fires. One loop, one claim at a time; the
+  worker runs `FUNKY_CONCURRENCY` of them side by side, and nothing here
+  knows it. Funky is cloud-only (2026-08-09):
   scale-down is the platform removing the container, and the crash rule
   makes that safe; the drain (2026-09-14) makes it cheap. The shell is
   covered at the process level by the crash-resume suite, and its drain

@@ -33,6 +33,7 @@ describe("loadConfig — valid input", () => {
       idlePollMs: 1_000,
       drainMs: 7_000,
       sandboxTimeoutMs: 30 * 60_000,
+      concurrency: 1,
       dbPoolMax: 10,
     });
   });
@@ -44,13 +45,23 @@ describe("loadConfig — valid input", () => {
       FUNKY_IDLE_POLL_MS: "100",
       FUNKY_DRAIN_MS: "500",
       FUNKY_SANDBOX_TIMEOUT_MS: "300000",
+      FUNKY_CONCURRENCY: "4",
       DB_POOL_MAX: "2",
     });
     expect(cfg.leaseMs).toBe(3_000);
     expect(cfg.idlePollMs).toBe(100);
     expect(cfg.drainMs).toBe(500);
     expect(cfg.sandboxTimeoutMs).toBe(300_000);
+    expect(cfg.concurrency).toBe(4);
     expect(cfg.dbPoolMax).toBe(2);
+  });
+
+  it("reads a blank numeric knob as unset — compose forwards an unset one as empty", () => {
+    // Coercion alone would read "" as 0: a boot failure for a knob whose
+    // floor is 1, and a silent zero budget for the drain, whose floor is 0.
+    const cfg = loadConfig({ ...BASE, FUNKY_CONCURRENCY: "", FUNKY_DRAIN_MS: "  " });
+    expect(cfg.concurrency).toBe(1);
+    expect(cfg.drainMs).toBe(7_000);
   });
 });
 
@@ -105,5 +116,10 @@ describe("loadConfig — invalid input", () => {
     delete env[key];
     expect(() => loadConfig(env)).toThrow("process.exit(1)");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it.each(["0", "-1", "1.5", "two"])("exits on a concurrency of %s", (value) => {
+    expect(() => loadConfig({ ...BASE, FUNKY_CONCURRENCY: value })).toThrow("process.exit(1)");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("FUNKY_CONCURRENCY"));
   });
 });

@@ -90,8 +90,11 @@ misses nothing. Ctrl-C the stream when done; `docker compose down` stops the sta
 also wipes the database).
 
 Scale workers with `docker compose up -d --scale worker=3` — claiming is the only
-scheduler; nothing else changes. Scale down the same way: a removed worker stops claiming,
-finishes a short step or hands a long one back, and exits.
+scheduler; nothing else changes. A worker runs one step at a time by default;
+`FUNKY_CONCURRENCY=8` in `.env` has each hold eight claims at once (one process, one pool,
+one drain), so a small container serves many sessions while their steps wait on a model or
+a sandbox. Scale down the same way: a removed worker stops claiming, finishes a short step
+or hands a long one back, and exits.
 
 ### Model providers
 

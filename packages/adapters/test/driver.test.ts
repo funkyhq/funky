@@ -706,4 +706,55 @@ describe("runDriver drains", () => {
     expect(elapsed).toBeLessThan(1_900);
     expect((await claim(sessionRef)).item.attempt).toBe(2);
   });
+
+  // --- composition: the worker hosts FUNKY_CONCURRENCY of these loops
+  // over one store and one drain signal (apps/worker/src/main.ts). The
+  // loop knows nothing of its siblings; what makes N of them safe is the
+  // store — one open item per session, SKIP LOCKED claims — and a drain
+  // each counts down on its own from the shared signal.
+
+  it("two drivers over one store hold two claims at once, and no more", async () => {
+    const sessions = [await newSession(), await newSession(), await newSession()];
+    for (const ref of sessions) await store.intake(ref, user("go"));
+    // Three one-step runs, each parked on the same gate mid-stream.
+    const gate = deferred();
+    const parked = (): Step[] => [{ wait: gate.promise }, ...sayText("ok")];
+    const provider = scriptedProvider([parked(), parked(), parked()]);
+    const { drain, deps } = hosted(provider);
+    const opts = { idlePollMs: 10, drain: drain.signal, drainMs: 5_000 };
+    const statuses = () =>
+      Promise.all(sessions.map(async (ref) => (await store.listItems(ref))[0]?.status));
+
+    const running = Promise.all([runDriver(deps, opts), runDriver(deps, opts)]);
+    await until(() => provider.requests.length === 2);
+    // Both drivers are busy: the third item stays ready, however long
+    // they keep polling.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(provider.requests).toHaveLength(2);
+    expect((await statuses()).sort()).toEqual(["leased", "leased", "ready"]);
+
+    gate.resolve();
+    await until(async () => (await statuses()).every((status) => status === "done"));
+    expect(provider.requests).toHaveLength(3);
+    drain.abort();
+    await running;
+  });
+
+  it("one drain signal drains every driver: each held claim is released before its loop returns", async () => {
+    const sessions = [await newSession(), await newSession()];
+    for (const ref of sessions) await store.intake(ref, user("go"));
+    const provider = scriptedProvider([["untilAborted"], ["untilAborted"]]);
+    const { drain, deps } = hosted(provider);
+    const opts = { idlePollMs: 10, drain: drain.signal, drainMs: 100 };
+
+    const running = Promise.all([runDriver(deps, opts), runDriver(deps, opts)]);
+    await until(() => provider.requests.length === 2);
+    drain.abort();
+    await running;
+
+    for (const ref of sessions) {
+      expect(messages(await store.readEntries(ref))).toHaveLength(1);
+      expect((await claim(ref)).item.attempt).toBe(2); // released, not merely expired
+    }
+  });
 });

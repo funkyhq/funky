@@ -60,7 +60,8 @@ services:
       retries: 10
 
   # The runDriver host. No ports — nothing routes to a worker; claiming is
-  # the only scheduler, so `--scale worker=N` needs no other change. On
+  # the only scheduler, so `--scale worker=N` needs no other change, and
+  # FUNKY_CONCURRENCY sets how many steps each one runs at once. On
   # SIGTERM (`docker compose stop`, a scale-down) the worker drains: it
   # stops claiming, gives a held step FUNKY_DRAIN_MS (default 7s) to
   # commit, otherwise releases the item for another worker, and exits.
@@ -82,6 +83,9 @@ services:
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       XAI_API_KEY: ${XAI_API_KEY:-}
       E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY in .env}
+      # Claims held at once per worker (default 1). Forwarded as-is like
+      # the keys: unset arrives empty, which the worker reads as unset.
+      FUNKY_CONCURRENCY: ${FUNKY_CONCURRENCY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
