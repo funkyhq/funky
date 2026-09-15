@@ -709,36 +709,12 @@ describe("runDriver drains", () => {
 
   // --- composition: the worker hosts FUNKY_CONCURRENCY of these loops
   // over one store and one drain signal (apps/worker/src/main.ts). The
-  // loop knows nothing of its siblings; what makes N of them safe is the
-  // store — one open item per session, SKIP LOCKED claims — and a drain
-  // each counts down on its own from the shared signal.
-
-  it("two drivers over one store hold two claims at once, and no more", async () => {
-    const sessions = [await newSession(), await newSession(), await newSession()];
-    for (const ref of sessions) await store.intake(ref, user("go"));
-    // Three one-step runs, each parked on the same gate mid-stream.
-    const gate = deferred();
-    const parked = (): Step[] => [{ wait: gate.promise }, ...sayText("ok")];
-    const provider = scriptedProvider([parked(), parked(), parked()]);
-    const { drain, deps } = hosted(provider);
-    const opts = { idlePollMs: 10, drain: drain.signal, drainMs: 5_000 };
-    const statuses = () =>
-      Promise.all(sessions.map(async (ref) => (await store.listItems(ref))[0]?.status));
-
-    const running = Promise.all([runDriver(deps, opts), runDriver(deps, opts)]);
-    await until(() => provider.requests.length === 2);
-    // Both drivers are busy: the third item stays ready, however long
-    // they keep polling.
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(provider.requests).toHaveLength(2);
-    expect((await statuses()).sort()).toEqual(["leased", "leased", "ready"]);
-
-    gate.resolve();
-    await until(async () => (await statuses()).every((status) => status === "done"));
-    expect(provider.requests).toHaveLength(3);
-    drain.abort();
-    await running;
-  });
+  // loop knows nothing of its siblings: that N of them never share an
+  // item is the store's guarantee — one open item per session, SKIP
+  // LOCKED claims — pinned by the conformance suite ("exactly one winner
+  // under contended claims"). What is new in the composition is the
+  // drain: one signal, and each loop counts the budget down on its own,
+  // so every held claim is released before its loop returns.
 
   it("one drain signal drains every driver: each held claim is released before its loop returns", async () => {
     const sessions = [await newSession(), await newSession()];
