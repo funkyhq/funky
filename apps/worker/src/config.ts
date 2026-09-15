@@ -26,6 +26,11 @@ const EnvSchema = z.object({
     .int()
     .min(10_000)
     .default(30 * 60_000),
+  // Independent claim loops in this process. A step is mostly waiting on
+  // a vendor stream and a sandbox, so one per process leaves the container
+  // idle; claims never collide, because claimItem is FOR UPDATE SKIP
+  // LOCKED — the same guard that lets replicas share a queue.
+  FUNKY_CONCURRENCY: z.coerce.number().int().min(1).default(1),
   DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
 });
 
@@ -39,6 +44,8 @@ export type Config = {
   idlePollMs: number;
   drainMs: number;
   sandboxTimeoutMs: number;
+  /** Concurrent claim loops in this process; each holds at most one item. */
+  concurrency: number;
   dbPoolMax: number;
 };
 
@@ -74,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     idlePollMs: e.FUNKY_IDLE_POLL_MS,
     drainMs: e.FUNKY_DRAIN_MS,
     sandboxTimeoutMs: e.FUNKY_SANDBOX_TIMEOUT_MS,
+    concurrency: e.FUNKY_CONCURRENCY,
     dbPoolMax: e.DB_POOL_MAX,
   };
 }

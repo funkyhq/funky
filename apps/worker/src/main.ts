@@ -2,12 +2,12 @@
 // service split, and the only file that touches process.env or the
 // network. Pure composition: pg store, one AI SDK inference adapter per
 // model-provider key (providers.ts), E2B sandboxes, the four workspace
-// tools — handed to runDriver, which returns only on drain. One signal
-// handler, SIGTERM → drain: stop claiming, give a held step
-// FUNKY_DRAIN_MS to commit, else abort it and release its lease, then
-// exit. SIGKILL remains the crash story it always was — the drain only
-// makes a planned removal (a scale-down, a deploy) cost one poll instead
-// of a lease — and the handler is installed once, so a second SIGTERM,
+// tools — handed to FUNKY_CONCURRENCY claim loops, each returning only
+// on drain. One signal handler, SIGTERM → drain: stop claiming, give
+// every held step FUNKY_DRAIN_MS to commit, else abort it and release
+// its lease, then exit. SIGKILL remains the crash story it always was —
+// the drain only makes a planned removal (a scale-down, a deploy) cost
+// one poll instead of a lease — and the handler is installed once, so a second SIGTERM,
 // like anything else, is a crash. Restart policy still belongs to the
 // container. The e2e suite forks this exact file — what it proves is
 // what a container runs.
@@ -62,14 +62,24 @@ process.once("SIGTERM", () => {
 
 console.log(
   `worker: claiming (providers=${[...providers.keys()].join(",")} ` +
-    `lease=${cfg.leaseMs}ms idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms)`,
+    `concurrency=${cfg.concurrency} lease=${cfg.leaseMs}ms ` +
+    `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms)`,
 );
-await runDriver(deps, {
-  leaseMs: cfg.leaseMs,
-  idlePollMs: cfg.idlePollMs,
-  drain: drain.signal,
-  drainMs: cfg.drainMs,
-});
+// Independent loops over one store and one signal: each claims its own
+// item (SKIP LOCKED keeps them off each other's rows) and each returns
+// holding nothing, so the drain still ends with every lease resolved —
+// only now there are up to FUNKY_CONCURRENCY of them, resolved in
+// parallel rather than one after another.
+await Promise.all(
+  Array.from({ length: cfg.concurrency }, () =>
+    runDriver(deps, {
+      leaseMs: cfg.leaseMs,
+      idlePollMs: cfg.idlePollMs,
+      drain: drain.signal,
+      drainMs: cfg.drainMs,
+    }),
+  ),
+);
 console.log("worker: drained — exiting");
 // Explicit: an abandoned step (a tool deaf to its abort signal) or the
 // pool's open sockets would otherwise keep the event loop alive.
