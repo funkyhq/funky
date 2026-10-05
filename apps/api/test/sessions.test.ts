@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
 import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 import { buildApp } from "../src/app";
-import { get, post } from "./helpers";
+import { fakeTemplates, get, post } from "./helpers";
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
@@ -23,7 +23,12 @@ beforeAll(async () => {
   client = new PGlite();
   await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-  const base = { store, authToken: null, ping: async () => ({}) };
+  const base = {
+    store,
+    templates: fakeTemplates().templates,
+    authToken: null,
+    ping: async () => ({}),
+  };
   app = buildApp({ ...base, stream: PACING });
   heartbeatApp = buildApp({ ...base, stream: { pollMs: 10, heartbeatMs: 25 } });
 });

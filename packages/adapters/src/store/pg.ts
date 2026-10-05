@@ -61,6 +61,7 @@ import {
   Session,
   SessionEntry,
   SessionRef,
+  TemplateBuild,
   UpdateAgentConfigRequest,
   UpdateEnvConfigRequest,
   UserMessage,
@@ -144,6 +145,7 @@ const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
     envConfigId: row.id,
     network: row.network,
     packages: row.packages,
+    ...(row.template === null ? {} : { template: row.template }),
     namespace: row.namespace,
     ...unwrapped(row.metadata),
     createdAt: iso(row.createdAt),
@@ -423,7 +425,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       return rows.map(toAgentConfig);
     },
 
-    async createEnvConfig(req) {
+    async createEnvConfig(req, template) {
       const parsed = CreateEnvConfigRequest.parse(req);
       const id = randomUUID();
       const timestamp = now();
@@ -433,6 +435,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         namespace: parsed.namespace,
         network: parsed.network ?? { type: "unrestricted" },
         packages: parsed.packages ?? {},
+        template: template === undefined ? null : TemplateBuild.parse(template),
         metadata: wrap(parsed.metadata),
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -449,14 +452,23 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       return row === undefined ? undefined : toEnvConfig(row);
     },
 
-    async updateEnvConfig(ref, req) {
+    async updateEnvConfig(ref, req, template) {
       const { envConfigId, namespace } = EnvConfigRef.parse(ref);
       const parsed = UpdateEnvConfigRequest.parse(req);
+      if (template !== undefined && parsed.packages === undefined) {
+        throw new Error("updateEnvConfig: a template is written only with its packages");
+      }
       const scope = and(eq(envConfigs.id, envConfigId), eq(envConfigs.namespace, namespace));
       const mutable = and(scope, isNull(envConfigs.archivedAt));
       const updates = {
         ...(parsed.network === undefined ? {} : { network: parsed.network }),
-        ...(parsed.packages === undefined ? {} : { packages: parsed.packages }),
+        // The packages and their template are one write: absence clears it.
+        ...(parsed.packages === undefined
+          ? {}
+          : {
+              packages: parsed.packages,
+              template: template === undefined ? null : TemplateBuild.parse(template),
+            }),
         ...(parsed.metadata === undefined ? {} : { metadata: wrap(parsed.metadata) }),
       };
 
@@ -501,6 +513,27 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         const [row] = await tx.select().from(envConfigs).where(scope);
         return row === undefined ? undefined : toEnvConfig(row);
       });
+    },
+
+    async settleEnvConfigTemplate(ref, settled) {
+      const { envConfigId, namespace } = EnvConfigRef.parse(ref);
+      const build = TemplateBuild.parse(settled);
+      if (build.status === "building") {
+        throw new Error("settleEnvConfigTemplate: a settled build is ready or failed");
+      }
+      const scope = and(eq(envConfigs.id, envConfigId), eq(envConfigs.namespace, namespace));
+      // The predicate is the whole guard: the row must still name this build,
+      // still building. A packages write that replaced it, or a settle that
+      // got there first, leaves nothing to match — no lock, no read-then-write.
+      const pending = { templateId: build.templateId, buildId: build.buildId, status: "building" };
+      const [row] = await db
+        .update(envConfigs)
+        .set({ template: build })
+        .where(and(scope, sql`${envConfigs.template} @> ${JSON.stringify(pending)}::jsonb`))
+        .returning();
+      if (row !== undefined) return toEnvConfig(row);
+      const [current] = await db.select().from(envConfigs).where(scope);
+      return current === undefined ? undefined : toEnvConfig(current);
     },
 
     async listEnvConfigs(req) {

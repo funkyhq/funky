@@ -54,6 +54,10 @@ CREATE TABLE env_configs (
   id text NOT NULL,
   network jsonb NOT NULL,
   packages jsonb NOT NULL,
+  -- The build the packages are baked into (core TemplateBuild); NULL while
+  -- they install nothing. Replaced with every packages write, never edited
+  -- but to settle its status.
+  template jsonb,
   metadata jsonb,
   created_at timestamptz NOT NULL,
   -- Latest recipe edit; equal to created_at until the first update.

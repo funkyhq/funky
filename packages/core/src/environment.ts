@@ -21,8 +21,9 @@ export const NetworkPolicy = z.discriminatedUnion("type", [
 export type NetworkPolicy = z.infer<typeof NetworkPolicy>;
 
 // Keyed by package manager ("pip", "npm", "apt", "cargo", …) — open like
-// InferenceConfig.provider: core doesn't enumerate managers, and an
-// adapter that cannot guarantee one MUST reject create(). Spec strings
+// InferenceConfig.provider: core doesn't enumerate managers, and a
+// TemplateBuilder that cannot install one MUST reject the env config
+// write that names it (the api's 400), never build without it. Spec strings
 // keep each ecosystem's native syntax ("pandas==2.2.0", "express@4.18.0",
 // "rails:7.1.0") — the map names the interpreter; the string stays native
 // to it, so no invented cross-ecosystem version grammar to translate.

@@ -12,6 +12,8 @@ const EnvSchema = z
     DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
     FUNKY_AUTH: z.enum(["enabled", "disabled"]).default("enabled"),
     FUNKY_AUTH_TOKEN: z.string().min(16, "FUNKY_AUTH_TOKEN must be ≥16 chars").optional(),
+    /** The sandbox provider env configs' package templates are built on. */
+    E2B_API_KEY: z.string().min(1, "E2B_API_KEY is required"),
     /** SSE tail pacing: how often /stream re-polls the entries cursor,
      *  and how long a quiet stream goes before a keep-alive comment. */
     FUNKY_STREAM_POLL_MS: z.coerce.number().int().min(1).default(1000),
@@ -36,6 +38,7 @@ export type Config = {
   dbPoolMax: number;
   /** null = auth explicitly disabled (dev only) */
   authToken: string | null;
+  e2bApiKey: string;
   streamPollMs: number;
   streamHeartbeatMs: number;
 };
@@ -58,6 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     dbPoolMax: e.DB_POOL_MAX,
     authToken: e.FUNKY_AUTH === "disabled" ? null : e.FUNKY_AUTH_TOKEN!,
+    e2bApiKey: e.E2B_API_KEY,
     streamPollMs: e.FUNKY_STREAM_POLL_MS,
     streamHeartbeatMs: e.FUNKY_STREAM_HEARTBEAT_MS,
   };

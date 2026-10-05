@@ -26,6 +26,12 @@ export type {
   SandboxInfo,
   SandboxProvider,
 } from "./ports/sandbox-provider";
+export { UnsupportedPackagesError } from "./ports/template-builder";
+export type {
+  TemplateBuilder,
+  TemplateBuildRef,
+  TemplateBuildStatus,
+} from "./ports/template-builder";
 export {
   ArchivedError,
   FencedError,

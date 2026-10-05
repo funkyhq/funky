@@ -31,6 +31,7 @@ import type {
   NetworkPolicy,
   Packages,
   SessionEntry,
+  TemplateBuild,
   UserMessage,
 } from "@funky/core";
 
@@ -89,6 +90,9 @@ export const envConfigs = pgTable(
     // Materialized at create — never SQL NULL (resolved decisions, not defaults).
     network: jsonb("network").$type<NetworkPolicy>().notNull(),
     packages: jsonb("packages").$type<Packages>().notNull(),
+    // Null while the packages install nothing; replaced with each packages
+    // write, otherwise only settled (Store.settleEnvConfigTemplate).
+    template: jsonb("template").$type<TemplateBuild>(),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     // Latest recipe edit; archive is a lifecycle mark, not a recipe edit.

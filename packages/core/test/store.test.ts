@@ -16,6 +16,7 @@ import {
   PendingInput,
   Session,
   SessionRef,
+  TemplateBuild,
   UpdateAgentConfigRequest,
   UpdateEnvConfigRequest,
   WorkItem,
@@ -203,6 +204,32 @@ describe("env configs", () => {
     expect(EnvConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
   });
 
+  it("round-trips an env config carrying its package template", () => {
+    const config = {
+      envConfigId: "ec1",
+      network: { type: "unrestricted" },
+      packages: { pip: ["numpy"] },
+      template: { templateId: "tpl_1", buildId: "bld_1", status: "building" },
+      namespace: "tenant-a",
+      createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-11T12:00:00Z",
+    };
+    expect(roundTrip(EnvConfig, config)).toEqual(config);
+  });
+
+  it("carries a build error exactly when the build failed", () => {
+    const ref = { templateId: "tpl_1", buildId: "bld_1" };
+    expect(TemplateBuild.safeParse({ ...ref, status: "ready" }).success).toBe(true);
+    expect(
+      TemplateBuild.safeParse({ ...ref, status: "failed", error: "no such package" }).success,
+    ).toBe(true);
+    expect(TemplateBuild.safeParse({ ...ref, status: "failed" }).success).toBe(false);
+    expect(TemplateBuild.safeParse({ ...ref, status: "ready", error: "stale" }).success).toBe(
+      false,
+    );
+    expect(TemplateBuild.safeParse({ ...ref, status: "waiting" }).success).toBe(false);
+  });
+
   it("rejects a flat package list — specs are keyed by their package manager", () => {
     const result = CreateEnvConfigRequest.safeParse({
       namespace: "tenant-a",
@@ -350,10 +377,12 @@ describe("sessions", () => {
       // …and required in the copy a session provisions from.
       expect(Session.shape.envConfigSnapshot.shape[field].safeParse(undefined).success).toBe(false);
     }
-    // The row is the recipe plus its envelope, nothing else.
+    // The row is the recipe, its envelope, and the template derived from
+    // its packages, nothing else.
     expect(Object.keys(EnvConfig.shape).sort()).toEqual(
       [
         ...recipe,
+        "template",
         "namespace",
         "envConfigId",
         "metadata",
@@ -362,6 +391,9 @@ describe("sessions", () => {
         "archivedAt",
       ].sort(),
     );
+    // Derived, so never requestable: a request carrying one has it stripped.
+    expect("template" in CreateEnvConfigRequest.shape).toBe(false);
+    expect("template" in UpdateEnvConfigRequest.shape).toBe(false);
   });
 
   it("requires both halves of the recipe in a snapshot", () => {

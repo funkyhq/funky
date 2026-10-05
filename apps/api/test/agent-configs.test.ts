@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
 import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 import { buildApp } from "../src/app";
-import { get, post } from "./helpers";
+import { fakeTemplates, get, post } from "./helpers";
 
 const RECIPE = {
   namespace: "default",
@@ -31,6 +31,7 @@ beforeAll(async () => {
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   app = buildApp({
     store,
+    templates: fakeTemplates().templates,
     authToken: null,
     ping: async () => ({}),
     stream: { pollMs: 1000, heartbeatMs: 15_000 },

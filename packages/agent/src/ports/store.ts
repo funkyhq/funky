@@ -17,6 +17,7 @@ import type {
   Session,
   SessionEntry,
   SessionRef,
+  TemplateBuild,
   UpdateAgentConfigRequest,
   UpdateEnvConfigRequest,
   UserMessage,
@@ -96,8 +97,13 @@ export interface Store {
   /** One namespace's agent configs, newest first — see ListAgentConfigsRequest. */
   listAgentConfigs(req: ListAgentConfigsRequest): Promise<AgentConfig[]>;
 
-  /** Create an environment config. Namespace must be specified. */
-  createEnvConfig(req: CreateEnvConfigRequest): Promise<EnvConfigRef>;
+  /**
+   * Create an environment config. Namespace must be specified. `template`
+   * is the build started for the request's packages (core/store.ts
+   * TemplateBuild): derived by the caller, never part of the request, and
+   * absent when the packages install nothing.
+   */
+  createEnvConfig(req: CreateEnvConfigRequest, template?: TemplateBuild): Promise<EnvConfigRef>;
   /** Returns the namespace-scoped environment config. */
   getEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
   /**
@@ -114,8 +120,31 @@ export interface Store {
    * reaches no existing session. Sessions carry their own copy of the
    * recipe (createSession), so an update changes only what sessions
    * created after it will provision from.
+   *
+   * The template moves with the packages and only with them: a request
+   * that writes packages replaces the row's template with `template`, and
+   * absence clears it, so the row can never name a build of other
+   * packages. A request without packages leaves the template untouched,
+   * and passing a template without packages is a caller error that throws.
    */
-  updateEnvConfig(ref: EnvConfigRef, req: UpdateEnvConfigRequest): Promise<EnvConfig | undefined>;
+  updateEnvConfig(
+    ref: EnvConfigRef,
+    req: UpdateEnvConfigRequest,
+    template?: TemplateBuild,
+  ): Promise<EnvConfig | undefined>;
+  /**
+   * Record where the row's template build settled. Applies only while the
+   * row still names that build (templateId and buildId) in "building": a
+   * packages edit that replaced it, or an earlier settle, wins, and the
+   * call returns the current row unchanged. A settle is not a recipe edit,
+   * so updatedAt does not move, and it lands on archived rows too, whose
+   * build finished all the same. Settling to "building" throws. An
+   * unknown or foreign ref returns undefined.
+   */
+  settleEnvConfigTemplate(
+    ref: EnvConfigRef,
+    settled: TemplateBuild,
+  ): Promise<EnvConfig | undefined>;
   /**
    * Archive one namespace's environment config. The row stays readable and
    * sessions that already copied its recipe keep running; future writes and

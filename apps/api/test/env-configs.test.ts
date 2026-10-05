@@ -11,10 +11,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
 import { storeDdl } from "../../../packages/adapters/test/store-ddl";
 import { buildApp } from "../src/app";
-import { get, post } from "./helpers";
+import { fakeTemplates, get, post } from "./helpers";
 
 let client: PGlite;
 let app: ReturnType<typeof buildApp>;
+const builds = fakeTemplates();
 
 beforeAll(async () => {
   client = new PGlite();
@@ -22,6 +23,7 @@ beforeAll(async () => {
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   app = buildApp({
     store,
+    templates: builds.templates,
     authToken: null,
     ping: async () => ({}),
     stream: { pollMs: 1000, heartbeatMs: 15_000 },
@@ -161,8 +163,11 @@ describe("POST /v1/env-configs/:id", () => {
     expect(updated).toEqual({
       ...created,
       packages: { npm: ["zod@4"] },
+      template: { templateId: expect.any(String), buildId: expect.any(String), status: "building" },
       updatedAt: expect.any(String),
     });
+    // New packages, new build — the old template is never reused.
+    expect(updated.template.buildId).not.toBe(created.template.buildId);
     expect(await (await get(app, `/v1/env-configs/${created.id}`)).json()).toEqual(updated);
   });
 
@@ -288,5 +293,175 @@ describe("namespace scoping", () => {
       const res = await get(app, `/v1/env-configs/some-id?namespace=${namespace}`);
       expect(res.status).toBe(400);
     }
+  });
+});
+
+describe("package templates", () => {
+  const create = async (body: object) =>
+    (await post(app, "/v1/env-configs", { namespace: "templates", ...body })).json();
+
+  it("starts one build for packages that install something and stores it as building", async () => {
+    const before = builds.started.length;
+    const created = await create({ packages: { pip: ["pandas>=2"], npm: ["zod@4"] } });
+
+    expect(builds.started.slice(before)).toEqual([{ pip: ["pandas>=2"], npm: ["zod@4"] }]);
+    expect(created.template).toEqual({
+      templateId: expect.any(String),
+      buildId: expect.any(String),
+      status: "building",
+    });
+  });
+
+  it("builds nothing for packages that install nothing", async () => {
+    const before = builds.started.length;
+    for (const packages of [undefined, {}, { pip: [] }]) {
+      const created = await create(packages === undefined ? {} : { packages });
+      expect("template" in created).toBe(false);
+    }
+    expect(builds.started.length).toBe(before);
+  });
+
+  it("400s a manager the builder can't install and stores nothing", async () => {
+    const before = builds.started.length;
+    const res = await post(app, "/v1/env-configs", {
+      namespace: "templates-refused",
+      packages: { pip: ["numpy"], cargo: ["ripgrep"] },
+    });
+    expect(res.status).toBe(400);
+    const error = (await res.json()).error;
+    expect(error.type).toBe("invalid_request_error");
+    expect(error.message).toContain("cargo");
+
+    expect(builds.started.length).toBe(before);
+    const list = await (await get(app, "/v1/env-configs?namespace=templates-refused")).json();
+    expect(list.data).toEqual([]);
+  });
+
+  it("settles a building template when it is read, and keeps the answer", async () => {
+    const created = await create({ packages: { pip: ["numpy"] } });
+    builds.settle(created.template.buildId, { status: "ready" });
+
+    const read = await (await get(app, `/v1/env-configs/${created.id}?namespace=templates`)).json();
+    expect(read).toEqual({ ...created, template: { ...created.template, status: "ready" } });
+
+    // Recorded, not recomputed: a settled row never asks the provider again.
+    builds.state.failStatus = true;
+    try {
+      const again = await get(app, `/v1/env-configs/${created.id}?namespace=templates`);
+      expect(await again.json()).toEqual(read);
+    } finally {
+      builds.state.failStatus = false;
+    }
+  });
+
+  it("surfaces a failed build with the provider's reason", async () => {
+    const created = await create({ packages: { pip: ["nmupy"] } });
+    builds.settle(created.template.buildId, {
+      status: "failed",
+      error: "No matching distribution found for nmupy",
+    });
+
+    const read = await (await get(app, `/v1/env-configs/${created.id}?namespace=templates`)).json();
+    expect(read.template).toEqual({
+      ...created.template,
+      status: "failed",
+      error: "No matching distribution found for nmupy",
+    });
+  });
+
+  it("serves the stored row when the provider can't be reached", async () => {
+    const created = await create({ packages: { pip: ["numpy"] } });
+    builds.state.failStatus = true;
+    try {
+      const res = await get(app, `/v1/env-configs/${created.id}?namespace=templates`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(created);
+    } finally {
+      builds.state.failStatus = false;
+    }
+  });
+
+  it("settles building templates on the list read too", async () => {
+    const created = await (
+      await post(app, "/v1/env-configs", {
+        namespace: "templates-list",
+        packages: { apt: ["graphviz"] },
+      })
+    ).json();
+    builds.settle(created.template.buildId, { status: "ready" });
+
+    const list = await (await get(app, "/v1/env-configs?namespace=templates-list")).json();
+    expect(list.data[0].template.status).toBe("ready");
+  });
+
+  it("keeps the template across an edit that leaves the install unchanged", async () => {
+    const created = await create({ packages: { pip: ["numpy"], npm: ["zod@4"] } });
+    const before = builds.started.length;
+
+    const network = await (
+      await post(app, `/v1/env-configs/${created.id}?namespace=templates`, {
+        network: { type: "none" },
+      })
+    ).json();
+    expect(network.template).toEqual(created.template);
+
+    // The same install, reordered and with an empty manager added.
+    const resent = await (
+      await post(app, `/v1/env-configs/${created.id}?namespace=templates`, {
+        packages: { npm: ["zod@4"], apt: [], pip: ["numpy"] },
+      })
+    ).json();
+    expect(resent.template).toEqual(created.template);
+    expect(builds.started.length).toBe(before);
+  });
+
+  it("rebuilds when the same packages are sent after a failed build", async () => {
+    const created = await create({ packages: { pip: ["numpy"] } });
+    builds.settle(created.template.buildId, { status: "failed", error: "registry timeout" });
+    await get(app, `/v1/env-configs/${created.id}?namespace=templates`);
+
+    const retried = await (
+      await post(app, `/v1/env-configs/${created.id}?namespace=templates`, {
+        packages: { pip: ["numpy"] },
+      })
+    ).json();
+    expect(retried.template.status).toBe("building");
+    expect(retried.template.buildId).not.toBe(created.template.buildId);
+  });
+
+  it("drops the template when the packages stop installing anything", async () => {
+    const created = await create({ packages: { pip: ["numpy"] } });
+    const cleared = await (
+      await post(app, `/v1/env-configs/${created.id}?namespace=templates`, { packages: {} })
+    ).json();
+    expect("template" in cleared).toBe(false);
+  });
+
+  it("starts no build for an update that 404s, 409s, or names an unsupported manager", async () => {
+    const created = await create({ packages: { pip: ["numpy"] } });
+    const before = builds.started.length;
+
+    const refused = await post(app, `/v1/env-configs/${created.id}?namespace=templates`, {
+      packages: { cargo: ["ripgrep"] },
+    });
+    expect(refused.status).toBe(400);
+    const unchanged = await (
+      await get(app, `/v1/env-configs/${created.id}?namespace=templates`)
+    ).json();
+    expect(unchanged.packages).toEqual({ pip: ["numpy"] });
+    expect(unchanged.template.buildId).toBe(created.template.buildId);
+
+    const unknown = await post(app, "/v1/env-configs/nope?namespace=templates", {
+      packages: { pip: ["pandas"] },
+    });
+    expect(unknown.status).toBe(404);
+
+    await post(app, `/v1/env-configs/${created.id}/archive?namespace=templates`);
+    const archived = await post(app, `/v1/env-configs/${created.id}?namespace=templates`, {
+      packages: { pip: ["pandas"] },
+    });
+    expect(archived.status).toBe(409);
+
+    expect(builds.started.length).toBe(before);
   });
 });

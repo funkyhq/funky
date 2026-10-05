@@ -3,11 +3,13 @@
 // network. Stateless by construction: every row lives in the Store, so
 // SIGKILL is the shutdown story — no drain path, no signal handlers;
 // restart policy belongs to the container. (The worker drains, but only
-// to hand a held claim back sooner; the api holds nothing.)
+// to hand a held claim back sooner; the api holds nothing.) That holds
+// for template builds too: the api only starts one, and the build runs
+// on E2B, recorded on the env config row.
 import { serve } from "@hono/node-server";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import { createPgStore, type StoreDb } from "@funky/adapters";
+import { createE2bTemplateBuilder, createPgStore, type StoreDb } from "@funky/adapters";
 import { buildApp } from "./app";
 import { loadConfig } from "./config";
 
@@ -18,6 +20,7 @@ const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb);
 
 const app = buildApp({
   store,
+  templates: createE2bTemplateBuilder({ apiKey: cfg.e2bApiKey }),
   authToken: cfg.authToken,
   ping: () => pool.query("SELECT 1"),
   stream: { pollMs: cfg.streamPollMs, heartbeatMs: cfg.streamHeartbeatMs },

@@ -182,9 +182,36 @@ export const UpdateEnvConfigRequest = z.object({
 });
 export type UpdateEnvConfigRequest = z.infer<typeof UpdateEnvConfigRequest>;
 
+/**
+ * The sandbox template an env config's packages are baked into, and where
+ * its build stands. Derived, never requested: a create or update that
+ * writes packages installing anything starts a build (the TemplateBuilder
+ * port), and the row carries it from then on. The build runs on the
+ * provider, not in any funky process, so `status` is the provider's last
+ * answer — "building" is refreshed when the row is read, and "ready" and
+ * "failed" are final. A template is never rebuilt in place: a packages
+ * edit replaces this whole value with a new build, so the template a row
+ * names always holds exactly that row's packages.
+ */
+export const TemplateBuild = z
+  .object({
+    templateId: z.string().min(1),
+    buildId: z.string().min(1),
+    status: z.enum(["building", "ready", "failed"]),
+    // Why the build failed, in the provider's words — only on "failed".
+    error: z.string().optional(),
+  })
+  .refine((b) => (b.status === "failed") === (b.error !== undefined), {
+    message: "error is present exactly when status is failed",
+  });
+export type TemplateBuild = z.infer<typeof TemplateBuild>;
+
 export const EnvConfig = EnvConfigRef.extend({
   // Materialized at create — resolved decisions, not restatable defaults.
   ...EnvConfigSnapshot.shape,
+  // Absent while the packages install nothing: such a recipe boots the
+  // provider's default image and has nothing to build.
+  template: TemplateBuild.optional(),
   metadata: JsonValue.optional(),
   createdAt: z.iso.datetime(),
   // The latest recipe edit. Equal to createdAt until the first update;

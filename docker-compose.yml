@@ -43,6 +43,9 @@ services:
       DATABASE_URL: postgres://funky:funky@postgres:5432/funky
       # No default credential, ever: `:?` fails the boot with a message if unset.
       FUNKY_AUTH_TOKEN: ${FUNKY_AUTH_TOKEN:?set FUNKY_AUTH_TOKEN in .env — any random string, ≥16 chars}
+      # An env config's packages are built into an E2B template when it is
+      # written; the api starts the build, E2B runs it.
+      E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY in .env}
     depends_on:
       migrate:
         condition: service_completed_successfully

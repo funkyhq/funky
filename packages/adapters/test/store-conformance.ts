@@ -16,6 +16,7 @@ import {
   DEFAULT_NAMESPACE,
   type EnvConfigRef,
   type SessionRef,
+  type TemplateBuild,
   type UserMessage,
   type WorkItemRef,
 } from "@funky/core";
@@ -752,6 +753,140 @@ export function describeStoreConformance(
         const own = await store.getEnvConfig(ref);
         expect(own).toMatchObject({ namespace: "tenant-a" });
         expect("archivedAt" in own!).toBe(false);
+      });
+    });
+
+    describe("env config templates", () => {
+      const building = (n: number): TemplateBuild => ({
+        templateId: `tpl_${n}`,
+        buildId: `bld_${n}`,
+        status: "building",
+      });
+
+      it("stores the template given at create, and none when none is given", async () => {
+        const withTemplate = await store.createEnvConfig(
+          { namespace: DEFAULT_NAMESPACE, packages: { pip: ["numpy"] } },
+          building(1),
+        );
+        expect((await store.getEnvConfig(withTemplate))?.template).toEqual(building(1));
+
+        const without = await store.getEnvConfig(await newEnv());
+        expect("template" in without!).toBe(false);
+      });
+
+      it("moves the template with the packages, and only with them", async () => {
+        const ref = await store.createEnvConfig(
+          { namespace: DEFAULT_NAMESPACE, packages: { pip: ["numpy"] } },
+          building(1),
+        );
+
+        // No packages in the request: the template is untouched.
+        const network = await store.updateEnvConfig(ref, { network: { type: "none" } });
+        expect(network?.template).toEqual(building(1));
+
+        // Packages with a template replace both.
+        const replaced = await store.updateEnvConfig(
+          ref,
+          { packages: { npm: ["zod@4"] } },
+          building(2),
+        );
+        expect(replaced).toMatchObject({ packages: { npm: ["zod@4"] }, template: building(2) });
+
+        // Packages without one clear it: the row never names another install's build.
+        const cleared = await store.updateEnvConfig(ref, { packages: { pip: ["pandas"] } });
+        expect(cleared?.packages).toEqual({ pip: ["pandas"] });
+        expect("template" in cleared!).toBe(false);
+        expect(await store.getEnvConfig(ref)).toEqual(cleared);
+      });
+
+      it("rejects a template written without its packages", async () => {
+        const ref = await newEnv();
+        await expect(
+          store.updateEnvConfig(ref, { network: { type: "none" } }, building(1)),
+        ).rejects.toThrow();
+        expect("template" in (await store.getEnvConfig(ref))!).toBe(false);
+      });
+
+      it("settles the named build without editing the recipe", async () => {
+        const ref = await store.createEnvConfig(
+          { namespace: DEFAULT_NAMESPACE, packages: { pip: ["numpy"] } },
+          building(1),
+        );
+        const before = await store.getEnvConfig(ref);
+        clock.advance(1_000);
+
+        const ready = await store.settleEnvConfigTemplate(ref, { ...building(1), status: "ready" });
+        expect(ready).toEqual({ ...before, template: { ...building(1), status: "ready" } });
+        expect(await store.getEnvConfig(ref)).toEqual(ready);
+      });
+
+      it("records a failure with its reason", async () => {
+        const ref = await store.createEnvConfig(
+          { namespace: DEFAULT_NAMESPACE, packages: { pip: ["nmupy"] } },
+          building(1),
+        );
+        const failed = { ...building(1), status: "failed" as const, error: "no such package" };
+        expect((await store.settleEnvConfigTemplate(ref, failed))?.template).toEqual(failed);
+      });
+
+      it("ignores a settle for a build the row no longer names, or already settled", async () => {
+        const ref = await store.createEnvConfig(
+          { namespace: DEFAULT_NAMESPACE, packages: { pip: ["numpy"] } },
+          building(1),
+        );
+        await store.updateEnvConfig(ref, { packages: { pip: ["pandas"] } }, building(2));
+
+        // The replaced build finishing late must not overwrite its successor.
+        const stale = await store.settleEnvConfigTemplate(ref, { ...building(1), status: "ready" });
+        expect(stale?.template).toEqual(building(2));
+
+        // A settled build is final: a second, different answer is ignored.
+        await store.settleEnvConfigTemplate(ref, { ...building(2), status: "ready" });
+        const late = await store.settleEnvConfigTemplate(ref, {
+          ...building(2),
+          status: "failed",
+          error: "late",
+        });
+        expect(late?.template).toEqual({ ...building(2), status: "ready" });
+      });
+
+      it("settles an archived row's build — it finished all the same", async () => {
+        const ref = await store.createEnvConfig(
+          { namespace: DEFAULT_NAMESPACE, packages: { pip: ["numpy"] } },
+          building(1),
+        );
+        await store.archiveEnvConfig(ref);
+        const settled = await store.settleEnvConfigTemplate(ref, {
+          ...building(1),
+          status: "ready",
+        });
+        expect(settled).toMatchObject({
+          archivedAt: expect.any(String),
+          template: { ...building(1), status: "ready" },
+        });
+      });
+
+      it("refuses to settle to building, and treats unknown or foreign refs as absent", async () => {
+        const ref = await store.createEnvConfig(
+          { namespace: "tenant-a", packages: { pip: ["numpy"] } },
+          building(1),
+        );
+        await expect(store.settleEnvConfigTemplate(ref, building(1))).rejects.toThrow();
+
+        const ready = { ...building(1), status: "ready" as const };
+        expect(
+          await store.settleEnvConfigTemplate(
+            { namespace: "tenant-a", envConfigId: "nope" },
+            ready,
+          ),
+        ).toBeUndefined();
+        expect(
+          await store.settleEnvConfigTemplate(
+            { namespace: "tenant-b", envConfigId: ref.envConfigId },
+            ready,
+          ),
+        ).toBeUndefined();
+        expect((await store.getEnvConfig(ref))?.template).toEqual(building(1));
       });
     });
 

@@ -6,6 +6,7 @@ import { loadConfig } from "../src/config";
 const BASE = {
   DATABASE_URL: "postgres://funky:funky@localhost:5432/funky",
   FUNKY_AUTH_TOKEN: "0123456789abcdef",
+  E2B_API_KEY: "e2b_test",
 };
 
 let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -29,6 +30,7 @@ describe("loadConfig — valid input", () => {
       port: 3000,
       dbPoolMax: 10,
       authToken: BASE.FUNKY_AUTH_TOKEN,
+      e2bApiKey: BASE.E2B_API_KEY,
       streamPollMs: 1000,
       streamHeartbeatMs: 15_000,
     });
@@ -45,21 +47,30 @@ describe("loadConfig — valid input", () => {
   });
 
   it("FUNKY_AUTH=disabled yields a null token (and no token required)", () => {
-    const cfg = loadConfig({ DATABASE_URL: BASE.DATABASE_URL, FUNKY_AUTH: "disabled" });
+    const cfg = loadConfig({
+      DATABASE_URL: BASE.DATABASE_URL,
+      E2B_API_KEY: BASE.E2B_API_KEY,
+      FUNKY_AUTH: "disabled",
+    });
     expect(cfg.authToken).toBeNull();
   });
 });
 
 describe("loadConfig — invalid input", () => {
   it("exits when DATABASE_URL is missing", () => {
-    expect(() => loadConfig({ FUNKY_AUTH_TOKEN: BASE.FUNKY_AUTH_TOKEN })).toThrow(
-      "process.exit(1)",
-    );
+    const { DATABASE_URL: _, ...env } = BASE;
+    expect(() => loadConfig(env)).toThrow("process.exit(1)");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("exits when E2B_API_KEY is missing — env config templates build on E2B", () => {
+    const { E2B_API_KEY: _, ...env } = BASE;
+    expect(() => loadConfig(env)).toThrow("process.exit(1)");
+  });
+
   it("exits when auth is enabled (the default) but no token is set", () => {
-    expect(() => loadConfig({ DATABASE_URL: BASE.DATABASE_URL })).toThrow("process.exit(1)");
+    const { FUNKY_AUTH_TOKEN: _, ...env } = BASE;
+    expect(() => loadConfig(env)).toThrow("process.exit(1)");
   });
 
   it("exits on a short token", () => {
