@@ -69,6 +69,10 @@ export const agentConfigVersions = pgTable(
     version: integer("version").notNull(),
     inference: jsonb("inference").$type<InferenceConfig>().notNull(),
     systemPrompt: text("system_prompt").notNull(),
+    // Materialized at create and carried forward by every update — never
+    // SQL NULL (resolved decisions, not defaults).
+    network: jsonb("network").$type<NetworkPolicy>().notNull(),
+    packages: jsonb("packages").$type<Packages>().notNull(),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },

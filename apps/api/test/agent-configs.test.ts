@@ -53,6 +53,9 @@ describe("POST /v1/agent-configs", () => {
     expect(typeof body.id).toBe("string");
     expect(typeof body.createdAt).toBe("string");
     expect(body.updatedAt).toBe(body.createdAt);
+    // The environment the body omitted, resolved and stored at create.
+    expect(body.network).toEqual({ type: "unrestricted" });
+    expect(body.packages).toEqual({});
 
     // Reads default ?namespace= to "default" — the self-deploy shape.
     const fetched = await get(app, `/v1/agent-configs/${body.id}`);
@@ -98,6 +101,27 @@ describe("POST /v1/agent-configs", () => {
       inference: RECIPE.inference,
     });
     expect(res.status).toBe(400);
+  });
+
+  it("stores a provided environment verbatim", async () => {
+    const res = await post(app, "/v1/agent-configs", {
+      ...RECIPE,
+      network: { type: "allowlist", domains: ["pypi.org"] },
+      packages: { pip: ["pandas==2.2.0"] },
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      network: { type: "allowlist", domains: ["pypi.org"] },
+      packages: { pip: ["pandas==2.2.0"] },
+    });
+  });
+
+  it("rejects a malformed environment, 400", async () => {
+    for (const extra of [{ network: { type: "vpn" } }, { packages: ["numpy"] }]) {
+      const res = await post(app, "/v1/agent-configs", { ...RECIPE, ...extra });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
   });
 });
 
@@ -236,6 +260,24 @@ describe("POST /v1/agent-configs/:id", () => {
     });
   });
 
+  it("versions an environment change and carries the rest of the config forward", async () => {
+    const created = await (
+      await post(app, "/v1/agent-configs", { ...RECIPE, packages: { pip: ["numpy"] } })
+    ).json();
+    const res = await post(app, `/v1/agent-configs/${created.id}`, {
+      network: { type: "none" },
+      version: 1,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      inference: RECIPE.inference,
+      systemPrompt: RECIPE.systemPrompt,
+      network: { type: "none" },
+      packages: { pip: ["numpy"] },
+      version: 2,
+    });
+  });
+
   it("accepts an empty update as a no-op", async () => {
     const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
     const res = await post(app, `/v1/agent-configs/${created.id}`, {});
@@ -245,7 +287,12 @@ describe("POST /v1/agent-configs/:id", () => {
 
   it("validates the update body", async () => {
     const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
-    for (const body of [{ version: 0 }, { inference: "model-only" }]) {
+    for (const body of [
+      { version: 0 },
+      { inference: "model-only" },
+      { network: { type: "vpn" } },
+      { packages: ["numpy"] },
+    ]) {
       const res = await post(app, `/v1/agent-configs/${created.id}`, body);
       expect(res.status).toBe(400);
       expect((await res.json()).error.type).toBe("invalid_request_error");

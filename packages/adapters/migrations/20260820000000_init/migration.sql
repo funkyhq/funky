@@ -42,6 +42,10 @@ CREATE TABLE agent_config_versions (
   version integer NOT NULL,
   inference jsonb NOT NULL,
   system_prompt text NOT NULL,
+  -- The sandbox a session of this version runs in. Materialized at create
+  -- and carried forward by every update, so each snapshot is whole.
+  network jsonb NOT NULL,
+  packages jsonb NOT NULL,
   metadata jsonb,
   updated_at timestamptz NOT NULL,
   -- The PK is the AgentConfigVersionRef verbatim.

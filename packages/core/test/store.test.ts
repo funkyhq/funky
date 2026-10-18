@@ -36,6 +36,8 @@ describe("configs", () => {
         temperature: 0.7,
       },
       systemPrompt: "You are helpful.",
+      network: { type: "allowlist", domains: ["pypi.org"] },
+      packages: { pip: ["pandas==2.2.0"] },
       namespace: "tenant-a",
       metadata: { team: "growth" },
       version: 3,
@@ -95,6 +97,8 @@ describe("configs", () => {
       agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",
@@ -134,11 +138,53 @@ describe("configs", () => {
     expect(UpdateAgentConfigRequest.safeParse({ inference: "model-only" }).success).toBe(false);
   });
 
+  it("requires the environment on a stored agent config — it is materialized at create", () => {
+    const config = {
+      agentConfigId: "ac1",
+      inference: { provider: "fake", model: "scripted" },
+      systemPrompt: "s",
+      namespace: "default",
+      version: 1,
+      createdAt: "2026-08-11T12:00:00Z",
+      updatedAt: "2026-08-11T12:00:00Z",
+    };
+    expect(AgentConfig.safeParse(config).success).toBe(false);
+    expect(AgentConfig.safeParse({ ...config, network: { type: "none" } }).success).toBe(false);
+    expect(
+      AgentConfig.safeParse({ ...config, network: { type: "none" }, packages: {} }).success,
+    ).toBe(true);
+  });
+
+  it("accepts the environment on agent config create and update, and validates it", () => {
+    const create = {
+      namespace: "default",
+      inference: { provider: "fake", model: "scripted" },
+      systemPrompt: "s",
+    };
+    expect(
+      CreateAgentConfigRequest.safeParse({
+        ...create,
+        network: { type: "allowlist", domains: ["pypi.org"] },
+        packages: { pip: ["numpy"] },
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateAgentConfigRequest.safeParse({ ...create, network: { type: "vpn" } }).success,
+    ).toBe(false);
+    expect(CreateAgentConfigRequest.safeParse({ ...create, packages: ["numpy"] }).success).toBe(
+      false,
+    );
+    expect(UpdateAgentConfigRequest.safeParse({ network: { type: "none" } }).success).toBe(true);
+    expect(UpdateAgentConfigRequest.safeParse({ packages: ["numpy"] }).success).toBe(false);
+  });
+
   it("round-trips an archived agent config — the mark is a timestamp, not a flag", () => {
     const config = {
       agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
       namespace: "default",
       version: 2,
       createdAt: "2026-08-11T12:00:00Z",
@@ -153,6 +199,8 @@ describe("configs", () => {
       agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",

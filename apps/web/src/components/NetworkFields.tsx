@@ -1,8 +1,8 @@
 // apps/web/src/components/NetworkFields.tsx
 // The network policy as two controls: the policy itself, and — for the one
 // policy that carries anything beyond its own name — the domains on it.
-// Shared by the create and edit dialogs so the field a recipe is written
-// with is the same field it is edited through.
+// Shared by the env and agent config dialogs, create and edit alike, so the
+// field a policy is written with is the same field it is edited through.
 import { Field } from "./Field";
 import { type NetworkFields as Fields, POLICIES } from "../lib/network";
 
@@ -12,10 +12,13 @@ export function NetworkFields({
   /** An archived recipe takes no update, so its policy is shown rather
    *  than offered. */
   disabled,
+  /** Off where these follow other fields that take the first focus. */
+  autoFocus = true,
 }: {
   fields: Fields;
   onChange: (fields: Fields) => void;
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   return (
     <>
@@ -26,7 +29,7 @@ export function NetworkFields({
         onChange={(type) => onChange({ ...fields, type: type as Fields["type"] })}
         options={POLICIES}
         disabled={disabled}
-        autoFocus
+        autoFocus={autoFocus}
         required
       />
 

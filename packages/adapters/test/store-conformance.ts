@@ -298,6 +298,70 @@ export function describeStoreConformance(
         ).rejects.toThrow();
       });
 
+      it("materializes network and packages at agent config create", async () => {
+        const config = await store.getAgentConfig(await newAgent());
+        expect(config?.network).toEqual({ type: "unrestricted" });
+        expect(config?.packages).toEqual({});
+      });
+
+      it("preserves a provided agent environment verbatim", async () => {
+        const ref = await newAgent({
+          network: { type: "allowlist", domains: ["pypi.org"] },
+          packages: { pip: ["pandas==2.2.0"] },
+        });
+        expect(await store.getAgentConfig(ref)).toMatchObject({
+          network: { type: "allowlist", domains: ["pypi.org"] },
+          packages: { pip: ["pandas==2.2.0"] },
+        });
+      });
+
+      it("versions an environment change and carries it forward when an update omits it", async () => {
+        const ref = await newAgent({
+          network: { type: "allowlist", domains: ["pypi.org"] },
+          packages: { pip: ["pandas==2.2.0"] },
+        });
+        const v1 = await store.getAgentConfig(ref);
+
+        const v2 = await store.updateAgentConfig(ref, { network: { type: "none" }, version: 1 });
+        expect(v2).toMatchObject({
+          network: { type: "none" },
+          packages: { pip: ["pandas==2.2.0"] },
+          systemPrompt: v1?.systemPrompt,
+          version: 2,
+        });
+
+        const v3 = await store.updateAgentConfig(ref, { packages: { npm: ["zod@4"] } });
+        expect(v3).toMatchObject({
+          network: { type: "none" },
+          packages: { npm: ["zod@4"] },
+          version: 3,
+        });
+
+        const v4 = await store.updateAgentConfig(ref, { systemPrompt: "behavior only" });
+        expect(v4).toMatchObject({
+          network: { type: "none" },
+          packages: { npm: ["zod@4"] },
+          version: 4,
+        });
+
+        // Every snapshot is whole: a pinned version keeps the world it had.
+        expect(await store.getAgentConfig({ ...ref, version: 1 })).toEqual(v1);
+        expect(await store.getAgentConfig({ ...ref, version: 2 })).toEqual(v2);
+      });
+
+      it("rejects an invalid agent environment at the boundary", async () => {
+        await expect(
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+          newAgent({ network: { type: "vpn" } as any }),
+        ).rejects.toThrow();
+        const ref = await newAgent();
+        await expect(
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+          store.updateAgentConfig(ref, { packages: ["numpy"] } as any),
+        ).rejects.toThrow();
+        expect((await store.getAgentConfig(ref))?.version).toBe(1);
+      });
+
       it("materializes network and packages at env config create", async () => {
         const ref = await newEnv();
         const config = await store.getEnvConfig(ref);
@@ -461,6 +525,8 @@ export function describeStoreConformance(
           { systemPrompt: "after" },
           { inference: { provider: "fake", model: "m2" } },
           { metadata: { note: "after" } },
+          { network: { type: "none" } as const },
+          { packages: { pip: ["numpy"] } },
           { systemPrompt: "after", version: 1 },
         ]) {
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
