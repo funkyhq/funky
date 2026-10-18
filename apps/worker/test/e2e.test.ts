@@ -119,11 +119,9 @@ if (!url || !anthropicKey || !e2bKey) {
       network: { type: "unrestricted" },
       packages: {},
     });
-    const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
     const sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,
       agentConfigId: agentConfigRef.agentConfigId,
-      envConfigId: envConfigRef.envConfigId,
     });
     sessions.push(sessionRef);
     const result = await store.intake(sessionRef, {
@@ -377,12 +375,8 @@ if (!url || !anthropicKey || !e2bKey) {
             network: { type: "unrestricted" },
             packages: {},
           });
-          const env = await apiJson("POST", "/v1/env-configs", {
-            namespace: DEFAULT_NAMESPACE,
-          });
           const session = await apiJson("POST", "/v1/sessions", {
             agentConfigId: agent.id,
-            envConfigId: env.id,
           });
           // The wire echoes namespace, so the response rebuilds the ref
           // (apiJson returns any — nothing checks this line but us).

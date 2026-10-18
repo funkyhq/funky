@@ -26,7 +26,7 @@ docker compose up --build
 
 You can interact with the Funky service through Web UI or CURL.
 
-**The console**, at <http://localhost:5173>. Define an agent, give it an environment, start a
+**The console**, at <http://localhost:5173>. Define an agent and its sandbox, start a
 session, and watch the log stream live — all in the browser. It proxies the api and attaches
 the token itself, so no credential ever reaches the page.
 
@@ -47,17 +47,14 @@ AID=$(curl -s localhost:3000/v1/agent-configs -H "$H" -H "$J" -d '{
   "packages": {}
 }' | jq -r .id)
 
-# 2. an env config: the sandbox recipe (the defaults are fine)
-EID=$(curl -s localhost:3000/v1/env-configs -H "$H" -H "$J" -d '{}' | jq -r .id)
-
-# 3. a session: one agent config + one env config + a durable entry log
+# 2. a session: one pinned agent config version + a durable entry log
 SID=$(curl -s localhost:3000/v1/sessions -H "$H" -H "$J" \
-  -d "{\"agentConfigId\":\"$AID\",\"envConfigId\":\"$EID\"}" | jq -r .id)
+  -d "{\"agentConfigId\":\"$AID\"}" | jq -r .id)
 
-# 4. watch the log stream live (leave this running)
+# 3. watch the log stream live (leave this running)
 curl -N -H "$H" localhost:3000/v1/sessions/$SID/stream &
 
-# 5. give it work
+# 4. give it work
 curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
   -d '{"content":"Run uname -a in your sandbox and tell me what you see."}'
 ```
@@ -65,7 +62,9 @@ curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
 Agent configs can be updated with `POST /v1/agent-configs/$AID`. Send only the fields to
 replace; omitted fields are preserved. Responses include a monotonic `version`: include the
 current value in an update for optimistic concurrency (a stale value returns 409), or omit it
-for an unconditional last-write-wins update.
+for an unconditional last-write-wins update. A session pins the version current when it was
+created — behavior and sandbox together — so an update reaches only sessions created after it.
+`packages` is stored on the config but not yet installed in the sandbox.
 
 The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
 run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn

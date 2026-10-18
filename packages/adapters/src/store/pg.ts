@@ -8,14 +8,10 @@
 //   per-session log stays gapless and monotonic.
 // - Lock order is item → session everywhere an item is involved; no path
 //   takes session → item, so no cycle exists.
-// - createSession holds FOR SHARE locks on both config rows until it
-//   commits, while each config archive method's UPDATE takes its row
-//   exclusively: the operations serialize, so no session is born against
-//   either archived config. The env lock also makes the recipe snapshot a
-//   committed state: a racing updateEnvConfig lands strictly before or after
-//   it — never inside. Shared mode lets concurrent creates proceed together.
-//   Lock order is agent → env, and no path takes env → agent, so no cycle
-//   exists.
+// - createSession holds a FOR SHARE lock on the agent config row until it
+//   commits, while archiveAgentConfig's UPDATE takes the row exclusively:
+//   the operations serialize, so no session is born against an archived
+//   config. Shared mode lets concurrent creates proceed together.
 // - archiveSession, intake, and the liveness-changing half of commitStep
 //   serialize on the session row. Archive sees either idle or one open item,
 //   never a stale gap between checking and stamping the terminal state.
@@ -51,7 +47,6 @@ import {
   CreateSessionRequest,
   EnvConfig,
   EnvConfigRef,
-  EnvConfigSnapshot,
   IntakeResult,
   type JsonValue,
   ListAgentConfigsRequest,
@@ -160,8 +155,6 @@ const toSession = (row: typeof sessions.$inferSelect): Session =>
     sessionId: row.id,
     agentConfigId: row.agentConfigId,
     agentConfigVersion: row.agentConfigVersion,
-    envConfigId: row.envConfigId,
-    envConfigSnapshot: row.envConfigSnapshot,
     namespace: row.namespace,
     ...(row.sandboxId ? { sandboxId: row.sandboxId } : {}),
     ...unwrapped(row.metadata),
@@ -542,24 +535,16 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const id = randomUUID();
       // Ids, namespaces, and version snapshots are immutable and configs are
       // never deleted, so existence and ownership cannot go stale; the FK
-      // constraints remain as the backstop. The checks are namespace-scoped:
-      // a session and its configs always share one namespace, and a foreign
+      // constraint remains as the backstop. The check is namespace-scoped:
+      // a session and its config always share one namespace, and a foreign
       // config is "unknown" — indistinguishable from nonexistent, so nothing
       // leaks.
       //
-      // Archive is the one terminal fact that CAN change under these checks,
-      // so both config rows are read FOR SHARE and the locks held through the
+      // Archive is the one terminal fact that CAN change under this check,
+      // so the config row is read FOR SHARE and the lock held through the
       // insert. A concurrent archive waits behind this transaction or is
       // already committed and read here. "New sessions cannot reference an
       // archived config" is therefore structural, not a check/write window.
-      //
-      // The env recipe is the other mutable fact, and it is not merely
-      // checked but COPIED (core/store.ts EnvConfigSnapshot): env configs
-      // update in place, so a session that reloaded one could have its world
-      // reshaped mid-run. The env lock also makes the copy a committed state
-      // — a racing update waits behind this insert or is already in it — and
-      // nothing reads env_configs for this session again. Agent → env is the
-      // global lock order; neither archive path takes the other config row.
       await db.transaction(async (tx) => {
         const [agent] = await tx
           .select({ version: agentConfigVersions.version, archivedAt: agentConfigs.archivedAt })
@@ -573,28 +558,10 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         if (agent.archivedAt !== null) {
           throw ArchivedError.forAgentConfig({ namespace, agentConfigId: parsed.agentConfigId });
         }
-        const [env] = await tx
-          .select({
-            network: envConfigs.network,
-            packages: envConfigs.packages,
-            archivedAt: envConfigs.archivedAt,
-          })
-          .from(envConfigs)
-          .where(and(eq(envConfigs.id, parsed.envConfigId), eq(envConfigs.namespace, namespace)))
-          .for("share", { of: envConfigs });
-        if (!env) throw new Error(`unknown env config: ${parsed.envConfigId}`);
-        if (env.archivedAt !== null) {
-          throw ArchivedError.forEnvConfig({ namespace, envConfigId: parsed.envConfigId });
-        }
         await tx.insert(sessions).values({
           id,
           agentConfigId: parsed.agentConfigId,
           agentConfigVersion: agent.version,
-          envConfigId: parsed.envConfigId,
-          envConfigSnapshot: EnvConfigSnapshot.parse({
-            network: env.network,
-            packages: env.packages,
-          }),
           namespace,
           metadata: wrap(parsed.metadata),
           createdAt: now(),

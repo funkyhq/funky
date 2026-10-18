@@ -37,8 +37,8 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     label: "Quick Start",
     Icon: BoltIcon,
     blurb:
-      "Walk the whole quickstart in one flow: define an agent, give it an environment, open a session, and send it the first message.",
-    chip: "agent → environment → session → message",
+      "Walk the whole quickstart in one flow: define an agent and its sandbox, open a session, and send it the first message.",
+    chip: "agent → session → message",
     // Takes no route below itself: the walk holds nothing durable until its
     // last step, so `#/quick-start/2` would be a link to a form that landed
     // empty. The step is state, not a place.
@@ -49,7 +49,7 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     label: "Agent",
     Icon: AgentIcon,
     blurb:
-      "Agent configs are the model, the system prompt, and the tools a session runs with. Versioned, so an update lands as a new version rather than a rewrite.",
+      "Agent configs are the model, the system prompt, and the sandbox a session runs with. Versioned, so an update lands as a new version rather than a rewrite.",
     chip: "/v1/agent-configs",
     groupLabel: "Resources",
     Page: AgentConfigs,
@@ -68,7 +68,7 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     label: "Session",
     Icon: SessionIcon,
     blurb:
-      "A session is one agent config plus one env config plus a durable, append-only entry log — the log a fresh worker resumes from with nothing lost.",
+      "A session is one pinned agent config version plus a durable, append-only entry log — the log a fresh worker resumes from with nothing lost.",
     chip: "/v1/sessions",
     Page: Sessions,
   },

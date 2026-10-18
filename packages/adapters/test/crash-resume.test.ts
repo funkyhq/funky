@@ -337,11 +337,9 @@ beforeAll(async () => {
       network: { type: "unrestricted" },
       packages: {},
     });
-    const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
     sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,
       agentConfigId: agentConfigRef.agentConfigId,
-      envConfigId: envConfigRef.envConfigId,
     });
     const result = await store.intake(sessionRef, user(PROMPTS[0]));
     if (result.kind !== "started") throw new Error("seed intake did not start a run");

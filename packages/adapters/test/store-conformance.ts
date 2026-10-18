@@ -78,19 +78,25 @@ export function describeStoreConformance(
     }
 
     async function newSession(overrides: Partial<CreateSessionRequest> = {}): Promise<SessionRef> {
-      // A session and its configs always share one namespace, so the
-      // override steers all three, not just the session.
+      // A session and its config always share one namespace, so the
+      // override steers both, not just the session.
       const namespace = overrides.namespace ?? DEFAULT_NAMESPACE;
       const agentConfigRef = await newAgent({
         namespace,
         inference: { provider: "fake", model: "scripted" },
       });
-      const envConfigRef = await newEnv({ namespace });
       return store.createSession({
         namespace,
         agentConfigId: agentConfigRef.agentConfigId,
-        envConfigId: envConfigRef.envConfigId,
         ...overrides,
+      });
+    }
+
+    /** A session on an existing config, pinning its latest version. */
+    function newSessionOn(agentConfigRef: AgentConfigRef): Promise<SessionRef> {
+      return store.createSession({
+        namespace: agentConfigRef.namespace,
+        agentConfigId: agentConfigRef.agentConfigId,
       });
     }
 
@@ -600,14 +606,12 @@ export function describeStoreConformance(
       it("refuses a new session naming an archived config, at any version", async () => {
         const agentConfigRef = await newAgent();
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2" });
-        const envConfigRef = await newEnv();
         await store.archiveAgentConfig(agentConfigRef);
 
         await expect(
           store.createSession({
             namespace: DEFAULT_NAMESPACE,
             agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
           }),
         ).rejects.toBeInstanceOf(ArchivedError);
         await expect(
@@ -615,18 +619,15 @@ export function describeStoreConformance(
             namespace: DEFAULT_NAMESPACE,
             agentConfigId: agentConfigRef.agentConfigId,
             agentConfigVersion: 1,
-            envConfigId: envConfigRef.envConfigId,
           }),
         ).rejects.toBeInstanceOf(ArchivedError);
       });
 
       it("lets sessions that already reference it run on", async () => {
         const agentConfigRef = await newAgent({ systemPrompt: "pinned" });
-        const envConfigRef = await newEnv();
         const sessionRef = await store.createSession({
           namespace: DEFAULT_NAMESPACE,
           agentConfigId: agentConfigRef.agentConfigId,
-          envConfigId: envConfigRef.envConfigId,
         });
         await store.archiveAgentConfig(agentConfigRef);
 
@@ -653,13 +654,11 @@ export function describeStoreConformance(
 
       it("settles a create/archive race one of the two legal ways", async () => {
         const agentConfigRef = await newAgent();
-        const envConfigRef = await newEnv();
 
         const [created, archived] = await Promise.allSettled([
           store.createSession({
             namespace: DEFAULT_NAMESPACE,
             agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
           }),
           store.archiveAgentConfig(agentConfigRef),
         ]);
@@ -679,7 +678,6 @@ export function describeStoreConformance(
           store.createSession({
             namespace: DEFAULT_NAMESPACE,
             agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
           }),
         ).rejects.toBeInstanceOf(ArchivedError);
       });
@@ -764,64 +762,6 @@ export function describeStoreConformance(
             (c) => c.envConfigId,
           ),
         ).toContain(ref.envConfigId);
-      });
-
-      it("refuses new sessions but leaves an existing session's snapshot runnable", async () => {
-        const agentConfigRef = await newAgent();
-        const envConfigRef = await newEnv({
-          network: { type: "none" },
-          packages: { pip: ["numpy"] },
-        });
-        const create = {
-          namespace: DEFAULT_NAMESPACE,
-          agentConfigId: agentConfigRef.agentConfigId,
-          envConfigId: envConfigRef.envConfigId,
-        };
-        const sessionRef = await store.createSession(create);
-        await store.archiveEnvConfig(envConfigRef);
-
-        await expect(store.createSession(create)).rejects.toMatchObject({
-          name: "ArchivedError",
-          namespace: envConfigRef.namespace,
-          resourceId: envConfigRef.envConfigId,
-          resourceKind: "env",
-        });
-        expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
-          network: { type: "none" },
-          packages: { pip: ["numpy"] },
-        });
-
-        const { itemRef, token } = await startAndClaim(sessionRef);
-        await store.commitStep({
-          itemRef,
-          token,
-          append: [assistant("still here")],
-          next: { kind: "end_run", status: "completed" },
-        });
-        expect(await store.readEntries(sessionRef)).toHaveLength(2);
-      });
-
-      it("settles a create/archive race without admitting a session afterward", async () => {
-        const agentConfigRef = await newAgent();
-        const envConfigRef = await newEnv();
-        const create = {
-          namespace: DEFAULT_NAMESPACE,
-          agentConfigId: agentConfigRef.agentConfigId,
-          envConfigId: envConfigRef.envConfigId,
-        };
-
-        const [created, archived] = await Promise.allSettled([
-          store.createSession(create),
-          store.archiveEnvConfig(envConfigRef),
-        ]);
-
-        expect(archived.status).toBe("fulfilled");
-        if (created.status === "fulfilled") {
-          expect(await store.getSession(created.value)).toBeDefined();
-        } else {
-          expect(created.reason).toBeInstanceOf(ArchivedError);
-        }
-        await expect(store.createSession(create)).rejects.toBeInstanceOf(ArchivedError);
       });
 
       it("treats an unknown or foreign archive target as absent", async () => {
@@ -957,88 +897,36 @@ export function describeStoreConformance(
         expect(session?.namespace).toBe(DEFAULT_NAMESPACE);
         expect(session?.agentConfigId).toBeDefined();
         expect(session?.agentConfigVersion).toBe(1);
-        expect(session?.envConfigId).toBeDefined();
+        expect("envConfigId" in session!).toBe(false);
       });
 
-      // Env configs update in place — there is no version to pin — so the
-      // session copies the resolved recipe instead. These four cases are
-      // the whole contract: what is copied, that an edit cannot reach back
-      // through it, that a later session sees the edit, and that the copy
-      // is of a real row in the caller's own namespace.
-      describe("env config snapshot", () => {
-        it("copies the env config's resolved recipe at create", async () => {
-          const agentConfigRef = await newAgent();
-          const envConfigRef = await newEnv({
-            network: { type: "allowlist", domains: ["pypi.org"] },
-            packages: { pip: ["numpy"] },
-          });
-          const sessionRef = await store.createSession({
-            namespace: DEFAULT_NAMESPACE,
-            agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
-          });
-          expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
-            network: { type: "allowlist", domains: ["pypi.org"] },
-            packages: { pip: ["numpy"] },
-          });
+      it("takes its environment from the pinned version — an edit reaches only later sessions", async () => {
+        const agentConfigRef = await newAgent({
+          network: { type: "none" },
+          packages: { pip: ["numpy"] },
         });
-
-        // The materialized defaults are decisions too: the snapshot copies
-        // what the env config resolved, never the request that made it.
-        it("copies the materialized defaults, not the create request", async () => {
-          const sessionRef = await newSession(); // newEnv() states neither field
-          expect((await store.getSession(sessionRef))?.envConfigSnapshot).toEqual({
-            network: { type: "unrestricted" },
-            packages: {},
-          });
+        const before = await newSessionOn(agentConfigRef);
+        await store.updateAgentConfig(agentConfigRef, {
+          network: { type: "allowlist", domains: ["example.com"] },
+          packages: { npm: ["zod"] },
         });
+        const after = await newSessionOn(agentConfigRef);
 
-        it("does not change under a later env config update", async () => {
-          const agentConfigRef = await newAgent();
-          const envConfigRef = await newEnv({ network: { type: "none" } });
-          const before = await store.createSession({
-            namespace: DEFAULT_NAMESPACE,
-            agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
+        const environmentOf = async (ref: SessionRef) => {
+          const session = await store.getSession(ref);
+          const config = await store.getAgentConfig({
+            ...agentConfigRef,
+            version: session!.agentConfigVersion,
           });
-
-          await store.updateEnvConfig(envConfigRef, {
-            network: { type: "allowlist", domains: ["example.com"] },
-            packages: { npm: ["zod"] },
-          });
-
-          // The running session's world is the one it was born with…
-          expect((await store.getSession(before))?.envConfigSnapshot).toEqual({
-            network: { type: "none" },
-            packages: {},
-          });
-          // …and the next session gets the edit.
-          const after = await store.createSession({
-            namespace: DEFAULT_NAMESPACE,
-            agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
-          });
-          expect((await store.getSession(after))?.envConfigSnapshot).toEqual({
-            network: { type: "allowlist", domains: ["example.com"] },
-            packages: { npm: ["zod"] },
-          });
-          // The env config itself is untouched by either session.
-          expect((await store.getEnvConfig(envConfigRef))?.network).toEqual({
-            type: "allowlist",
-            domains: ["example.com"],
-          });
+          return { network: config?.network, packages: config?.packages };
+        };
+        expect(await environmentOf(before)).toEqual({
+          network: { type: "none" },
+          packages: { pip: ["numpy"] },
         });
-
-        it("has nothing to copy from a foreign env config — the create fails", async () => {
-          const agentConfigRef = await newAgent({ namespace: "tenant-a" });
-          const foreignEnv = await newEnv({ namespace: "tenant-b" });
-          await expect(
-            store.createSession({
-              namespace: "tenant-a",
-              agentConfigId: agentConfigRef.agentConfigId,
-              envConfigId: foreignEnv.envConfigId,
-            }),
-          ).rejects.toThrow("unknown env config");
+        expect(await environmentOf(after)).toEqual({
+          network: { type: "allowlist", domains: ["example.com"] },
+          packages: { npm: ["zod"] },
         });
       });
 
@@ -1047,12 +935,10 @@ export function describeStoreConformance(
           inference: { provider: "fake", model: "m1" },
           systemPrompt: "v1",
         });
-        const envConfigRef = await newEnv();
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2", version: 1 });
         const sessionRef = await store.createSession({
           namespace: DEFAULT_NAMESPACE,
           agentConfigId: agentConfigRef.agentConfigId,
-          envConfigId: envConfigRef.envConfigId,
         });
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v3", version: 2 });
 
@@ -1070,14 +956,12 @@ export function describeStoreConformance(
 
       it("pins an explicitly requested agent version", async () => {
         const agentConfigRef = await newAgent({ systemPrompt: "v1" });
-        const envConfigRef = await newEnv();
         await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2", version: 1 });
 
         const sessionRef = await store.createSession({
           namespace: DEFAULT_NAMESPACE,
           agentConfigId: agentConfigRef.agentConfigId,
           agentConfigVersion: 1,
-          envConfigId: envConfigRef.envConfigId,
         });
 
         expect((await store.getSession(sessionRef))?.agentConfigVersion).toBe(1);
@@ -1117,12 +1001,10 @@ export function describeStoreConformance(
       });
 
       it("rejects a session naming an unknown agent config or version", async () => {
-        const envConfigRef = await newEnv();
         await expect(
           store.createSession({
             namespace: DEFAULT_NAMESPACE,
             agentConfigId: "nope",
-            envConfigId: envConfigRef.envConfigId,
           }),
         ).rejects.toThrow();
         const agentConfigRef = await newAgent();
@@ -1131,18 +1013,6 @@ export function describeStoreConformance(
             namespace: DEFAULT_NAMESPACE,
             agentConfigId: agentConfigRef.agentConfigId,
             agentConfigVersion: 2,
-            envConfigId: envConfigRef.envConfigId,
-          }),
-        ).rejects.toThrow();
-      });
-
-      it("rejects a session naming an unknown env config", async () => {
-        const agentConfigRef = await newAgent();
-        await expect(
-          store.createSession({
-            namespace: DEFAULT_NAMESPACE,
-            agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: "nope",
           }),
         ).rejects.toThrow();
       });
@@ -1379,7 +1249,6 @@ export function describeStoreConformance(
         const sessionRef = await store.createSession({
           namespace: DEFAULT_NAMESPACE,
           agentConfigId: agentConfigRef.agentConfigId,
-          envConfigId: envConfigRef.envConfigId,
         });
         expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
         expect((await store.getEnvConfig(envConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
@@ -1392,7 +1261,6 @@ export function describeStoreConformance(
         const sessionRef = await store.createSession({
           namespace: "tenant-a",
           agentConfigId: agentConfigRef.agentConfigId,
-          envConfigId: envConfigRef.envConfigId,
         });
         expect(sessionRef.namespace).toBe("tenant-a");
         expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe("tenant-a");
@@ -1402,43 +1270,30 @@ export function describeStoreConformance(
 
       it("rejects a session create without a namespace at the boundary", async () => {
         const agentConfigRef = await newAgent();
-        const envConfigRef = await newEnv();
         await expect(
           store.createSession({
             agentConfigId: agentConfigRef.agentConfigId,
-            envConfigId: envConfigRef.envConfigId,
             // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
           } as any),
         ).rejects.toThrow();
       });
 
-      it("a foreign-namespace config is unknown — sessions and their configs share one namespace", async () => {
+      it("a foreign-namespace config is unknown — a session and its config share one namespace", async () => {
         const agentA = await newAgent({ namespace: "tenant-a" });
-        const envA = await newEnv({ namespace: "tenant-a" });
-        const envB = await newEnv({ namespace: "tenant-b" });
 
-        // Cross-namespace refs reject exactly like dangling refs — the
+        // A cross-namespace ref rejects exactly like a dangling one — the
         // error is the same "unknown", so existence never leaks.
-        await expect(
-          store.createSession({
-            namespace: "tenant-a",
-            agentConfigId: agentA.agentConfigId,
-            envConfigId: envB.envConfigId,
-          }),
-        ).rejects.toThrow("unknown env config");
         await expect(
           store.createSession({
             namespace: "tenant-b",
             agentConfigId: agentA.agentConfigId,
-            envConfigId: envA.envConfigId,
           }),
         ).rejects.toThrow("unknown agent config");
-        // The matched trio is accepted.
+        // The matched pair is accepted.
         await expect(
           store.createSession({
             namespace: "tenant-a",
             agentConfigId: agentA.agentConfigId,
-            envConfigId: envA.envConfigId,
           }),
         ).resolves.toBeDefined();
       });

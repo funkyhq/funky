@@ -112,8 +112,8 @@ function SessionList() {
           </span>
           <p className="notice-title">No sessions yet</p>
           <p className="notice-body">
-            A session pairs an agent config with an env config and runs them against an append-only
-            log. Start one here, or post both ids to <code>/v1/sessions</code>.
+            A session runs one agent config version against an append-only log. Start one here, or
+            post the config&rsquo;s id to <code>/v1/sessions</code>.
           </p>
           <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}>
             <PlusIcon />
