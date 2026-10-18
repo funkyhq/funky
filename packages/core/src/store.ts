@@ -96,29 +96,16 @@ export const ListAgentConfigsRequest = z.object({
 });
 export type ListAgentConfigsRequest = z.infer<typeof ListAgentConfigsRequest>;
 
-/**
- * The world an agent's sessions run in, carried on every agent config
- * version beside its behavior — so pinning a version pins both, and a
- * later edit to either can never reshape a run already under way.
- * Declared once and derived from in every direction: optional in the
- * create and update requests (absence is a default to resolve, or a
- * field to carry forward), required on the stored row.
- *
- * Not yet read by provisioning: sessions still take their world from the
- * env config they name (envConfigSnapshot) until that config folds into
- * this one.
- */
-export const AgentEnvironment = z.object({
-  network: NetworkPolicy, // absence at create resolved to { type: "unrestricted" }
-  packages: Packages, // absence at create resolved to {}
-});
-export type AgentEnvironment = z.infer<typeof AgentEnvironment>;
-
 export const CreateAgentConfigRequest = z.object({
   namespace: z.string().min(1),
   inference: InferenceConfig,
   systemPrompt: z.string(),
-  ...AgentEnvironment.partial().shape,
+  // The sandbox a session of this config runs in, carried on every version
+  // beside the behavior — so pinning a version pins both. Not yet read by
+  // provisioning: sessions still take their world from the env config they
+  // name (envConfigSnapshot) until that config folds into this one.
+  network: NetworkPolicy.optional(), // absence resolved to { type: "unrestricted" }
+  packages: Packages.optional(), // absence resolved to {}
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
@@ -127,7 +114,8 @@ export const UpdateAgentConfigRequest = z.object({
   inference: InferenceConfig.optional(),
   systemPrompt: z.string().optional(),
   // Omission carries the previous version's value into the new one.
-  ...AgentEnvironment.partial().shape,
+  network: NetworkPolicy.optional(),
+  packages: Packages.optional(),
   metadata: JsonValue.optional(),
   // Optional optimistic-concurrency precondition: version 3 updates only if 3 is current.
   version: z.number().int().min(1).optional(),
@@ -137,7 +125,8 @@ export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
 export const AgentConfig = AgentConfigRef.extend({
   ...CreateAgentConfigRequest.omit({ namespace: true }).shape,
   // Materialized at create — resolved decisions, not restatable defaults.
-  ...AgentEnvironment.shape,
+  network: NetworkPolicy,
+  packages: Packages,
   version: z.number().int().min(1),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
