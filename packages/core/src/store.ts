@@ -100,12 +100,8 @@ export const CreateAgentConfigRequest = z.object({
   namespace: z.string().min(1),
   inference: InferenceConfig,
   systemPrompt: z.string(),
-  // The sandbox a session of this config runs in, carried on every version
-  // beside the behavior — so pinning a version pins both. Not yet read by
-  // provisioning: sessions still take their world from the env config they
-  // name (envConfigSnapshot) until that config folds into this one.
-  network: NetworkPolicy.optional(), // absence resolved to { type: "unrestricted" }
-  packages: Packages.optional(), // absence resolved to {}
+  network: NetworkPolicy.optional(),
+  packages: Packages.optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
