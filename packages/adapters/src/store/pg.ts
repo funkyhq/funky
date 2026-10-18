@@ -253,9 +253,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           version: 1,
           inference: parsed.inference,
           systemPrompt: parsed.systemPrompt,
-          // Materialized at create — resolved decisions, not restatable defaults.
-          network: parsed.network ?? { type: "unrestricted" },
-          packages: parsed.packages ?? {},
+          network: parsed.network,
+          packages: parsed.packages,
           metadata: wrap(parsed.metadata),
           updatedAt: timestamp,
         });

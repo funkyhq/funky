@@ -116,6 +116,8 @@ if (!url || !anthropicKey || !e2bKey) {
         "You are an agent in a fresh Linux sandbox. Complete the task with the " +
         "tools, then reply with a one-sentence summary. If a tool result says " +
         "the execution was interrupted, issue that call again.",
+      network: { type: "unrestricted" },
+      packages: {},
     });
     const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
     const sessionRef = await store.createSession({
@@ -372,6 +374,8 @@ if (!url || !anthropicKey || !e2bKey) {
               "You are an agent in a fresh Linux sandbox. Complete the task with the " +
               "tools, then reply with a one-sentence summary. If a tool result says " +
               "the execution was interrupted, issue that call again.",
+            network: { type: "unrestricted" },
+            packages: {},
           });
           const env = await apiJson("POST", "/v1/env-configs", {
             namespace: DEFAULT_NAMESPACE,

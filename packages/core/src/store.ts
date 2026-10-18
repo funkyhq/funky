@@ -100,8 +100,8 @@ export const CreateAgentConfigRequest = z.object({
   namespace: z.string().min(1),
   inference: InferenceConfig,
   systemPrompt: z.string(),
-  network: NetworkPolicy.optional(),
-  packages: Packages.optional(),
+  network: NetworkPolicy,
+  packages: Packages,
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
@@ -120,9 +120,6 @@ export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
 
 export const AgentConfig = AgentConfigRef.extend({
   ...CreateAgentConfigRequest.omit({ namespace: true }).shape,
-  // Materialized at create — resolved decisions, not restatable defaults.
-  network: NetworkPolicy,
-  packages: Packages,
   version: z.number().int().min(1),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

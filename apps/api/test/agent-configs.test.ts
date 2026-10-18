@@ -18,6 +18,8 @@ const RECIPE = {
   namespace: "default",
   inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
   systemPrompt: "You are a data analyst.",
+  network: { type: "unrestricted" },
+  packages: {},
 };
 
 const recipeFor = (namespace: string) => ({ ...RECIPE, namespace });
@@ -53,9 +55,8 @@ describe("POST /v1/agent-configs", () => {
     expect(typeof body.id).toBe("string");
     expect(typeof body.createdAt).toBe("string");
     expect(body.updatedAt).toBe(body.createdAt);
-    // The environment the body omitted, resolved and stored at create.
-    expect(body.network).toEqual({ type: "unrestricted" });
-    expect(body.packages).toEqual({});
+    expect(body.network).toEqual(RECIPE.network);
+    expect(body.packages).toEqual(RECIPE.packages);
 
     // Reads default ?namespace= to "default" — the self-deploy shape.
     const fetched = await get(app, `/v1/agent-configs/${body.id}`);
@@ -80,6 +81,8 @@ describe("POST /v1/agent-configs", () => {
     const res = await post(app, "/v1/agent-configs", {
       inference: RECIPE.inference,
       systemPrompt: RECIPE.systemPrompt,
+      network: RECIPE.network,
+      packages: RECIPE.packages,
     });
     expect(res.status).toBe(201);
     expect((await res.json()).namespace).toBe("default");
@@ -114,6 +117,18 @@ describe("POST /v1/agent-configs", () => {
       network: { type: "allowlist", domains: ["pypi.org"] },
       packages: { pip: ["pandas==2.2.0"] },
     });
+  });
+
+  it("rejects a create without network or packages, 400", async () => {
+    const { network, packages, ...bare } = RECIPE;
+    for (const body of [
+      { ...bare, packages },
+      { ...bare, network },
+    ]) {
+      const res = await post(app, "/v1/agent-configs", body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
   });
 
   it("rejects a malformed environment, 400", async () => {

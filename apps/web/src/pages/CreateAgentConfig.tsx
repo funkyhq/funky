@@ -1,15 +1,13 @@
 // apps/web/src/pages/CreateAgentConfig.tsx
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
-// The form is the request's REQUIRED shape plus the network policy:
-// provider, model, system prompt, network. The network is optional on the
-// wire, but it starts at the api's own default (unrestricted) and is offered
-// here because it decides what a session's commands can reach. The body's
-// other optional parts — maxTokens, temperature, packages, metadata — are
-// left out and therefore left absent, which is what the api reads as "the
-// provider's own default", "install nothing" and "no metadata". They belong
-// to a config being tuned, not to one being made; POST the body directly, or
-// update the config afterwards, when that is what you want.
+// The form is the request's REQUIRED shape: provider, model, system prompt,
+// network, packages. Packages aren't offered yet, so the body sends {} —
+// install nothing, said explicitly. The body's optional parts — maxTokens,
+// temperature, metadata — are left out and therefore left absent, which is
+// what the api reads as "the provider's own default" and "no metadata". They
+// belong to a config being tuned, not to one being made; POST the body
+// directly, or update the config afterwards, when that is what you want.
 //
 // The fields themselves are components/AgentFields.tsx and the state they
 // hold is lib/agent.ts, shared with the quickstart — this file is the
@@ -103,8 +101,7 @@ function Form({
   // established there is one of: this branch renders only when PROVIDERS
   // is non-empty.
   const [fields, setFields] = useState<AgentFields>(initialFields);
-  // The api's own default is where the policy starts: an unrestricted
-  // config is what leaving the network out of the body would have made.
+  // The policy starts open: reach anything.
   const [networkFields, setNetworkFields] = useState<NetworkFields>({
     type: "unrestricted",
     domains: "",
@@ -126,6 +123,7 @@ function Form({
       inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
       network,
+      packages: {},
     };
 
     setFailure(undefined);

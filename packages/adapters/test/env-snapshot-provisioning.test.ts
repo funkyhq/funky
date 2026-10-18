@@ -73,6 +73,8 @@ describe("provisioning from the session's env snapshot", () => {
       namespace: DEFAULT_NAMESPACE,
       inference: { provider: "fake", model: "m" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
     });
     const env = await store.createEnvConfig({
       namespace: DEFAULT_NAMESPACE,

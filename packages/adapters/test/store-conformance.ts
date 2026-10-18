@@ -64,6 +64,8 @@ export function describeStoreConformance(
         namespace: DEFAULT_NAMESPACE,
         inference: { provider: "fake", model: "m" },
         systemPrompt: "s",
+        network: { type: "unrestricted" },
+        packages: {},
         ...overrides,
       });
     }
@@ -110,6 +112,8 @@ export function describeStoreConformance(
           namespace: DEFAULT_NAMESPACE,
           inference: { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 8192 },
           systemPrompt: "You are helpful.",
+          network: { type: "unrestricted" },
+          packages: {},
           metadata: { team: "growth" },
         });
         const config = await store.getAgentConfig(ref);
@@ -149,6 +153,8 @@ export function describeStoreConformance(
             // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
             inference: "claude-sonnet-5" as any,
             systemPrompt: "s",
+            network: { type: "unrestricted" },
+            packages: {},
           }),
         ).rejects.toThrow();
       });
@@ -298,10 +304,22 @@ export function describeStoreConformance(
         ).rejects.toThrow();
       });
 
-      it("materializes network and packages at agent config create", async () => {
-        const config = await store.getAgentConfig(await newAgent());
-        expect(config?.network).toEqual({ type: "unrestricted" });
-        expect(config?.packages).toEqual({});
+      it("requires network and packages at agent config create — no default to resolve", async () => {
+        const base = {
+          namespace: DEFAULT_NAMESPACE,
+          inference: { provider: "fake", model: "m" },
+          systemPrompt: "s",
+        };
+        for (const req of [
+          { ...base, packages: {} },
+          { ...base, network: { type: "unrestricted" } },
+        ]) {
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
+          await expect(store.createAgentConfig(req as any)).rejects.toThrow();
+        }
+        expect(await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 })).toEqual(
+          [],
+        );
       });
 
       it("preserves a provided agent environment verbatim", async () => {

@@ -334,6 +334,8 @@ beforeAll(async () => {
       namespace: DEFAULT_NAMESPACE,
       inference: inferenceConfig,
       systemPrompt: "be brief",
+      network: { type: "unrestricted" },
+      packages: {},
     });
     const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
     sessionRef = await store.createSession({

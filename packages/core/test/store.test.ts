@@ -52,6 +52,8 @@ describe("configs", () => {
       namespace: "default",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
     });
     expect(result.success).toBe(true);
   });
@@ -138,7 +140,7 @@ describe("configs", () => {
     expect(UpdateAgentConfigRequest.safeParse({ inference: "model-only" }).success).toBe(false);
   });
 
-  it("requires the environment on a stored agent config — it is materialized at create", () => {
+  it("requires the environment on a stored agent config", () => {
     const config = {
       agentConfigId: "ac1",
       inference: { provider: "fake", model: "scripted" },
@@ -155,19 +157,18 @@ describe("configs", () => {
     ).toBe(true);
   });
 
-  it("accepts the environment on agent config create and update, and validates it", () => {
+  it("requires the environment on agent config create, accepts it on update, and validates it", () => {
     const create = {
       namespace: "default",
       inference: { provider: "fake", model: "scripted" },
       systemPrompt: "s",
+      network: { type: "allowlist", domains: ["pypi.org"] },
+      packages: { pip: ["numpy"] },
     };
-    expect(
-      CreateAgentConfigRequest.safeParse({
-        ...create,
-        network: { type: "allowlist", domains: ["pypi.org"] },
-        packages: { pip: ["numpy"] },
-      }).success,
-    ).toBe(true);
+    expect(CreateAgentConfigRequest.safeParse(create).success).toBe(true);
+    const { network, packages, ...bare } = create;
+    expect(CreateAgentConfigRequest.safeParse({ ...bare, packages }).success).toBe(false);
+    expect(CreateAgentConfigRequest.safeParse({ ...bare, network }).success).toBe(false);
     expect(
       CreateAgentConfigRequest.safeParse({ ...create, network: { type: "vpn" } }).success,
     ).toBe(false);

@@ -28,8 +28,8 @@ export type AgentConfig = {
   namespace: string;
   inference: InferenceConfig;
   systemPrompt: string;
-  /** The sandbox its sessions run in, resolved at create and carried by
-   *  every version — so pinning a version pins this too. */
+  /** The sandbox its sessions run in, carried by every version — so pinning
+   *  a version pins this too. */
   network: NetworkPolicy;
   packages: Packages;
   /** Monotonic; an update lands as the next version rather than a rewrite. */
@@ -178,13 +178,13 @@ export function listAgentConfigs(
 }
 
 /** The create body, minus the namespace this console pins for every call.
- *  An absent network is unrestricted and absent packages are none — the api
- *  resolves both at create, as it does for an env config. */
+ *  Network and packages are required: the request says what the sandbox
+ *  is, rather than leaving it to an api default. */
 export type CreateAgentConfigInput = {
   inference: InferenceConfig;
   systemPrompt: string;
-  network?: NetworkPolicy;
-  packages?: Packages;
+  network: NetworkPolicy;
+  packages: Packages;
   metadata?: unknown;
 };
 
