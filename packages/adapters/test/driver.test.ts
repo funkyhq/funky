@@ -146,6 +146,8 @@ async function newSession(inference = inferenceConfig): Promise<SessionRef> {
     namespace: DEFAULT_NAMESPACE,
     inference,
     systemPrompt: "be brief",
+    network: { type: "unrestricted" },
+    packages: {},
   });
   const envConfigRef = await store.createEnvConfig({ namespace: DEFAULT_NAMESPACE });
   return store.createSession({

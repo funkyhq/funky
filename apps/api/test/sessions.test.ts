@@ -43,6 +43,8 @@ async function seedConfigs(
       namespace,
       inference: { provider: "fake", model: "m" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
     })
   ).json();
   const env = await (await post(on, "/v1/env-configs", { namespace })).json();
@@ -87,6 +89,8 @@ describe("POST /v1/sessions", () => {
       await post(app, "/v1/agent-configs", {
         inference: { provider: "fake", model: "m" },
         systemPrompt: "s",
+        network: { type: "unrestricted" },
+        packages: {},
       })
     ).json();
     const env = await (await post(app, "/v1/env-configs", { network: { type: "none" } })).json();

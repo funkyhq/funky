@@ -109,6 +109,8 @@ describe("GET /v1/env-configs", () => {
       namespace: "list-env",
       inference: { provider: "fake", model: "m" },
       systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
     });
 
     const res = await get(app, "/v1/env-configs?namespace=list-env");

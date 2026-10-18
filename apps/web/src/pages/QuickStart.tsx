@@ -195,6 +195,8 @@ export function QuickStart() {
         (await createAgentConfig({
           inference: toInference(agent),
           systemPrompt: agent.systemPrompt,
+          network,
+          packages: {},
         }));
       setMade((prev) => ({ ...prev, agent: agentConfig }));
 

@@ -100,6 +100,8 @@ export const CreateAgentConfigRequest = z.object({
   namespace: z.string().min(1),
   inference: InferenceConfig,
   systemPrompt: z.string(),
+  network: NetworkPolicy,
+  packages: Packages,
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
@@ -107,6 +109,8 @@ export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
 export const UpdateAgentConfigRequest = z.object({
   inference: InferenceConfig.optional(),
   systemPrompt: z.string().optional(),
+  network: NetworkPolicy.optional(),
+  packages: Packages.optional(),
   metadata: JsonValue.optional(),
   // Optional optimistic-concurrency precondition: version 3 updates only if 3 is current.
   version: z.number().int().min(1).optional(),

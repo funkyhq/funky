@@ -111,6 +111,8 @@ const agentConfigColumns = {
   version: agentConfigVersions.version,
   inference: agentConfigVersions.inference,
   systemPrompt: agentConfigVersions.systemPrompt,
+  network: agentConfigVersions.network,
+  packages: agentConfigVersions.packages,
   metadata: agentConfigVersions.metadata,
   updatedAt: agentConfigVersions.updatedAt,
   id: agentConfigs.id,
@@ -130,6 +132,8 @@ const toAgentConfig = (row: AgentConfigRow): AgentConfig =>
     agentConfigId: row.id,
     inference: row.inference,
     systemPrompt: row.systemPrompt,
+    network: row.network,
+    packages: row.packages,
     namespace: row.namespace,
     ...unwrapped(row.metadata),
     version: row.version,
@@ -249,6 +253,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           version: 1,
           inference: parsed.inference,
           systemPrompt: parsed.systemPrompt,
+          network: parsed.network,
+          packages: parsed.packages,
           metadata: wrap(parsed.metadata),
           updatedAt: timestamp,
         });
@@ -298,6 +304,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const hasMutation =
         parsed.inference !== undefined ||
         parsed.systemPrompt !== undefined ||
+        parsed.network !== undefined ||
+        parsed.packages !== undefined ||
         parsed.metadata !== undefined;
 
       return db.transaction(async (tx) => {
@@ -322,6 +330,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               .select({
                 inference: agentConfigVersions.inference,
                 systemPrompt: agentConfigVersions.systemPrompt,
+                network: agentConfigVersions.network,
+                packages: agentConfigVersions.packages,
                 metadata: agentConfigVersions.metadata,
               })
               .from(agentConfigVersions)
@@ -342,6 +352,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               version: identity.nextVersion,
               inference: parsed.inference ?? previous.inference,
               systemPrompt: parsed.systemPrompt ?? previous.systemPrompt,
+              network: parsed.network ?? previous.network,
+              packages: parsed.packages ?? previous.packages,
               metadata: parsed.metadata === undefined ? previous.metadata : wrap(parsed.metadata),
               updatedAt: now(),
             };

@@ -1,12 +1,13 @@
 // apps/web/src/pages/CreateAgentConfig.tsx
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
-// The form is the request's REQUIRED shape and nothing else: provider,
-// model, system prompt. The body's optional parts — maxTokens, temperature,
-// metadata — are left out and therefore left absent, which is what the api
-// reads as "the provider's own default" and "no metadata". They belong to a
-// config being tuned, not to one being made; POST the body directly, or
-// update the config afterwards, when that is what you want.
+// The form is the request's REQUIRED shape: provider, model, system prompt,
+// network, packages. Packages aren't offered yet, so the body sends {} —
+// install nothing, said explicitly. The body's optional parts — maxTokens,
+// temperature, metadata — are left out and therefore left absent, which is
+// what the api reads as "the provider's own default" and "no metadata". They
+// belong to a config being tuned, not to one being made; POST the body
+// directly, or update the config afterwards, when that is what you want.
 //
 // The fields themselves are components/AgentFields.tsx and the state they
 // hold is lib/agent.ts, shared with the quickstart — this file is the
@@ -25,8 +26,10 @@ import {
   DEFAULT_NAMESPACE,
 } from "../lib/api";
 import { type AgentFields, initialFields, toInference } from "../lib/agent";
+import { type NetworkFields, toPolicy } from "../lib/network";
 import { PROVIDERS } from "../lib/providers";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
+import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { Modal } from "../components/Modal";
 import { ProviderKeys } from "../components/ProviderKeys";
 
@@ -98,19 +101,29 @@ function Form({
   // established there is one of: this branch renders only when PROVIDERS
   // is non-empty.
   const [fields, setFields] = useState<AgentFields>(initialFields);
+  // The policy starts open: reach anything.
+  const [networkFields, setNetworkFields] = useState<NetworkFields>({
+    type: "unrestricted",
+    domains: "",
+  });
   const [busy, setBusy] = useState(false);
-  // The api's refusal — a 400, or an api that isn't there. There is nothing
-  // for the fields themselves to refuse: every one of them is either a
-  // closed choice or free text the api takes as-is.
+  // The api's refusal — a 400, or an api that isn't there. The one thing
+  // the fields themselves refuse is an allowlist with no domain on it.
   const [failure, setFailure] = useState<string>();
+
+  // Absent while the allowlist has no domain on it — the one state of this
+  // form that isn't a request yet (see toPolicy).
+  const network = toPolicy(networkFields);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || network === undefined) return;
 
     const input: CreateAgentConfigInput = {
       inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
+      network,
+      packages: {},
     };
 
     setFailure(undefined);
@@ -132,8 +145,9 @@ function Form({
       title="Create agent config"
       description={
         <>
-          The model and system prompt a session runs with. Lands as version 1 in the{" "}
-          <code>{DEFAULT_NAMESPACE}</code> namespace.
+          The model, system prompt and network a session runs with. Lands as version 1 in the{" "}
+          <code>{DEFAULT_NAMESPACE}</code> namespace with no packages — those aren&rsquo;t set here
+          yet.
         </>
       }
       dismissible={!busy}
@@ -147,6 +161,7 @@ function Form({
               a refusal, so there is nothing a late edit could be silently
               dropped from. */}
           <AgentFieldset fields={fields} onChange={setFields} />
+          <NetworkFieldset fields={networkFields} onChange={setNetworkFields} autoFocus={false} />
         </div>
 
         <footer className="modal-foot">
@@ -158,7 +173,11 @@ function Form({
           <button className="btn" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button className="btn btn-primary" type="submit" disabled={busy}>
+          <button
+            className="btn btn-primary"
+            type="submit"
+            disabled={busy || network === undefined}
+          >
             {busy ? "Creating…" : "Create"}
           </button>
         </footer>
