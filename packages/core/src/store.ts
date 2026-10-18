@@ -109,7 +109,6 @@ export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
 export const UpdateAgentConfigRequest = z.object({
   inference: InferenceConfig.optional(),
   systemPrompt: z.string().optional(),
-  // Omission carries the previous version's value into the new one.
   network: NetworkPolicy.optional(),
   packages: Packages.optional(),
   metadata: JsonValue.optional(),
