@@ -97,7 +97,7 @@ async function executeOne(
   }
 }
 
-function errorResult(call: ToolCall, message: string): ToolResultMessage {
+export function errorResult(call: ToolCall, message: string): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId: call.id,
