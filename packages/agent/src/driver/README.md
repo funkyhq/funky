@@ -24,9 +24,9 @@ What lives here is what neither the engine nor a host may own:
   lease (a template build) is not re-claimed out from under it. The bind
   gets `bindTimeoutMs` (default 10 minutes), past which the claim is
   released like a drained one, so a hung bind cannot hold its session
-  forever. A lost — or merely unreachable — lease aborts the step. Like the drain
-  deadline below, it bounds a zombie's side effects and spend, never
-  correctness.
+  forever. A lost — or merely unreachable — lease aborts the step.
+  Like the drain deadline below, it bounds a zombie's side effects and
+  spend, never correctness.
 - **The crash rule.** An interrupted step is never committed. A dying
   worker commits nothing mid-step; the lease expires and the next
   claimer resumes from the unchanged log — re-running an inference
