@@ -51,7 +51,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await client.exec(
-    "TRUNCATE agent_configs, env_configs, sessions, session_entries, work_items, pending_inputs RESTART IDENTITY CASCADE",
+    "TRUNCATE agent_configs, sessions, session_entries, work_items, pending_inputs RESTART IDENTITY CASCADE",
   );
   let offsetMs = 0;
   store = createPgStore(drizzle({ client }) as unknown as StoreDb, {

@@ -53,22 +53,6 @@ CREATE TABLE agent_config_versions (
   FOREIGN KEY (namespace, agent_config_id) REFERENCES agent_configs (namespace, id)
 );
 
-CREATE TABLE env_configs (
-  namespace text NOT NULL,
-  id text NOT NULL,
-  network jsonb NOT NULL,
-  packages jsonb NOT NULL,
-  metadata jsonb,
-  created_at timestamptz NOT NULL,
-  -- Latest recipe edit; equal to created_at until the first update.
-  -- Archive is a lifecycle mark rather than an edit, so it does not move.
-  updated_at timestamptz NOT NULL,
-  -- Retires the recipe without deleting it. NULL means no archive event,
-  -- and the mark is never cleared.
-  archived_at timestamptz,
-  PRIMARY KEY (namespace, id)
-);
-
 CREATE TABLE sessions (
   namespace text NOT NULL,
   id text NOT NULL,

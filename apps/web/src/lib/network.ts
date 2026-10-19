@@ -2,8 +2,8 @@
 // The network policy as a form: the choices a dialog offers, the reading of
 // what gets typed into the one choice that carries anything, and the two
 // conversions between a stored policy and the fields holding it. Shared by
-// the create and edit dialogs, which write the same field of the same
-// recipe and must not drift apart in how they read it.
+// the agent config dialogs and the quickstart, which write the same field of
+// the same config and must not drift apart in how they read it.
 import type { NetworkPolicy } from "./api";
 
 /** The three policies core defines, in the order they narrow: reach
@@ -38,7 +38,7 @@ export function parseDomains(text: string): string[] {
 /**
  * The fields as a policy — or nothing, when the allowlist has no domain on
  * it. An allowlist of nothing reaches nothing, which is what `none` already
- * says legibly, so a form asks for the domain rather than writing a recipe
+ * says legibly, so a form asks for the domain rather than writing a policy
  * whose type and effect disagree. Callers read the absence as "not ready".
  */
 export function toPolicy(fields: NetworkFields): NetworkPolicy | undefined {

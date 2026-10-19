@@ -4,21 +4,16 @@ import type {
   AgentConfigVersionRef,
   AgentMessage,
   CreateAgentConfigRequest,
-  CreateEnvConfigRequest,
   CreateSessionRequest,
-  EnvConfig,
-  EnvConfigRef,
   InputId,
   IntakeResult,
   ListAgentConfigsRequest,
-  ListEnvConfigsRequest,
   ListSessionsRequest,
   PendingInput,
   Session,
   SessionEntry,
   SessionRef,
   UpdateAgentConfigRequest,
-  UpdateEnvConfigRequest,
   UserMessage,
   WorkItem,
   WorkItemRef,
@@ -95,34 +90,6 @@ export interface Store {
   archiveAgentConfig(ref: AgentConfigRef): Promise<AgentConfig | undefined>;
   /** One namespace's agent configs, newest first — see ListAgentConfigsRequest. */
   listAgentConfigs(req: ListAgentConfigsRequest): Promise<AgentConfig[]>;
-
-  /** Create an environment config. Namespace must be specified. */
-  createEnvConfig(req: CreateEnvConfigRequest): Promise<EnvConfigRef>;
-  /** Returns the namespace-scoped environment config. */
-  getEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
-  /**
-   * Partially update one namespace's environment config in place. Omitted
-   * fields are preserved; a real edit advances updatedAt, while an empty
-   * request is a read-like no-op that preserves it. Namespace is immutable
-   * and carried by the ref. An unknown or foreign ref is indistinguishable
-   * from absence and returns undefined.
-   *
-   * An archived config is read-only: a mutation throws ArchivedError. An
-   * empty request remains a read and returns the archived row unchanged.
-   *
-   * In place means exactly that: there is no version history. No session
-   * references an env config, so an update reaches none.
-   */
-  updateEnvConfig(ref: EnvConfigRef, req: UpdateEnvConfigRequest): Promise<EnvConfig | undefined>;
-  /**
-   * Archive one namespace's environment config. The row stays readable;
-   * future writes are refused. Archiving does not edit the recipe, so
-   * updatedAt is preserved. There is no unarchive, making repeat calls
-   * idempotent: they return the original archivedAt.
-   */
-  archiveEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
-  /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */
-  listEnvConfigs(req: ListEnvConfigsRequest): Promise<EnvConfig[]>;
 
   // --- sessions ---
 
@@ -264,19 +231,18 @@ export class FencedError extends Error {
   }
 }
 
-export type ArchivedResourceKind = "agent" | "env" | "session";
+export type ArchivedResourceKind = "agent" | "session";
 
 /** What each kind is called in the message; the wording belongs to the
  *  kind, not to the factory that names it. */
 const ARCHIVED_LABEL: Record<ArchivedResourceKind, string> = {
   agent: "agent config",
-  env: "env config",
   session: "session",
 };
 
 /**
  * Thrown when a mutation or new reference targets any archived resource.
- * One type is deliberate: agent configs, env configs, and sessions share
+ * One type is deliberate: agent configs and sessions share
  * the same terminal verdict and callers normally need one catch path. The
  * resourceKind/resourceId pair preserves specific identity when it matters.
  * Terminal, unlike VersionConflictError or SessionNotIdleError: no retry can
@@ -303,10 +269,6 @@ export class ArchivedError extends Error {
 
   static forAgentConfig(ref: AgentConfigRef): ArchivedError {
     return new ArchivedError("agent", ref.namespace, ref.agentConfigId);
-  }
-
-  static forEnvConfig(ref: EnvConfigRef): ArchivedError {
-    return new ArchivedError("env", ref.namespace, ref.envConfigId);
   }
 
   static forSession(ref: SessionRef): ArchivedError {

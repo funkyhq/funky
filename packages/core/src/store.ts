@@ -19,9 +19,9 @@ import { InferenceConfig } from "./inference";
  * configs).
  * Two rules keep every row one-shaped:
  * - Rows store decisions, not rules: a default that is RESOLVED at
- *   creation time is materialized into the stored row (network →
- *   unrestricted), so a later change of the platform default can never
- *   reinterpret an old row. Where absence itself is the fact (no
+ *   creation time is materialized into the stored row (a session's
+ *   agentConfigVersion → the latest at create), so a later change can
+ *   never reinterpret an old row. Where absence itself is the fact (no
  *   sampling override, no metadata), absence is stored as absence.
  * - null never appears in structured vocabulary. Absence has one
  *   spelling — the TS-native one that composes with `?.`, `??`, and
@@ -125,66 +125,6 @@ export const AgentConfig = AgentConfigRef.extend({
   archivedAt: z.iso.datetime().optional(),
 });
 export type AgentConfig = z.infer<typeof AgentConfig>;
-
-// The env config is a standalone sandbox recipe. No session references one:
-// a session's sandbox comes from its pinned agent config version.
-/** A namespace-scoped reference to an env config. */
-export const EnvConfigRef = z.object({
-  namespace: z.string().min(1),
-  envConfigId: z.string().min(1),
-});
-export type EnvConfigRef = z.infer<typeof EnvConfigRef>;
-
-/** Lists one namespace's env configs with keyset pagination. */
-export const ListEnvConfigsRequest = z.object({
-  namespace: z.string().min(1),
-  limit: z.number().int().min(1),
-  after: z.string().min(1).optional(),
-});
-export type ListEnvConfigsRequest = z.infer<typeof ListEnvConfigsRequest>;
-
-/**
- * The recipe proper — the fields that describe the world, resolved, with
- * no envelope around them. Optional in the create and update requests
- * (absence is a default to resolve), required on the stored row.
- */
-export const EnvConfigSnapshot = z.object({
-  network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
-  // Presence is guaranteed at create() or creation fails — missing deps
-  // surface at provision, not mid-session.
-  packages: Packages, // absence resolved to {}
-});
-export type EnvConfigSnapshot = z.infer<typeof EnvConfigSnapshot>;
-
-// The recipe arrives partial and is stored materialized: every field a
-// request may omit is one the store resolves to a decision at create.
-export const CreateEnvConfigRequest = z.object({
-  namespace: z.string().min(1),
-  ...EnvConfigSnapshot.partial().shape,
-  metadata: JsonValue.optional(),
-});
-export type CreateEnvConfigRequest = z.infer<typeof CreateEnvConfigRequest>;
-
-/** An in-place partial update; omission preserves the stored field. */
-export const UpdateEnvConfigRequest = z.object({
-  ...EnvConfigSnapshot.partial().shape,
-  metadata: JsonValue.optional(),
-});
-export type UpdateEnvConfigRequest = z.infer<typeof UpdateEnvConfigRequest>;
-
-export const EnvConfig = EnvConfigRef.extend({
-  // Materialized at create — resolved decisions, not restatable defaults.
-  ...EnvConfigSnapshot.shape,
-  metadata: JsonValue.optional(),
-  createdAt: z.iso.datetime(),
-  // The latest recipe edit. Equal to createdAt until the first update;
-  // archiving retires the recipe without editing it, so it does not move.
-  updatedAt: z.iso.datetime(),
-  // Set once when the recipe is retired. Absence is the active state;
-  // archive is terminal, so there is no boolean state to toggle back.
-  archivedAt: z.iso.datetime().optional(),
-});
-export type EnvConfig = z.infer<typeof EnvConfig>;
 
 // --- sessions ---
 

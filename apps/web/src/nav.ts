@@ -3,9 +3,8 @@
 // the router resolves a hash against it, so adding a section is one entry.
 // Kept free of JSX so it can hold both the data and the route resolver.
 import type { ReactElement, SVGProps } from "react";
-import { AgentIcon, BoltIcon, EnvironmentIcon, SessionIcon } from "./components/Icons";
+import { AgentIcon, BoltIcon, SessionIcon } from "./components/Icons";
 import { AgentConfigs } from "./pages/AgentConfigs";
-import { EnvConfigs } from "./pages/EnvConfigs";
 import { QuickStart } from "./pages/QuickStart";
 import { Sessions } from "./pages/Sessions";
 
@@ -53,15 +52,6 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     chip: "/v1/agent-configs",
     groupLabel: "Resources",
     Page: AgentConfigs,
-  },
-  {
-    id: "environment",
-    label: "Environment",
-    Icon: EnvironmentIcon,
-    blurb:
-      "Env configs are the sandbox recipe: the base image a session's commands execute inside. One sandbox per session, bound in the store so it outlives any worker.",
-    chip: "/v1/env-configs",
-    Page: EnvConfigs,
   },
   {
     id: "session",

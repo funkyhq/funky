@@ -43,17 +43,6 @@ export function AgentIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** Environment — the sandbox recipe, as a box. */
-export function EnvironmentIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Stroke {...props}>
-      <path d="M11 2.7 3.6 6.6a1.9 1.9 0 0 0-1 1.7v7.4a1.9 1.9 0 0 0 1 1.7l7.4 3.9a2 2 0 0 0 2 0l7.4-3.9a1.9 1.9 0 0 0 1-1.7V8.3a1.9 1.9 0 0 0-1-1.7L13 2.7a2 2 0 0 0-2 0Z" />
-      <path d="M3.2 7.2 12 12l8.8-4.8" />
-      <path d="M12 12v9.6" />
-    </Stroke>
-  );
-}
-
 /** Session — a conversation backed by a durable log. */
 export function SessionIcon(props: SVGProps<SVGSVGElement>) {
   return (
