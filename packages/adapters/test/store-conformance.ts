@@ -11,10 +11,8 @@ import {
   type AgentConfigRef,
   type AssistantMessage,
   type CreateAgentConfigRequest,
-  type CreateEnvConfigRequest,
   type CreateSessionRequest,
   DEFAULT_NAMESPACE,
-  type EnvConfigRef,
   type SessionRef,
   type UserMessage,
   type WorkItemRef,
@@ -66,13 +64,6 @@ export function describeStoreConformance(
         systemPrompt: "s",
         network: { type: "unrestricted" },
         packages: {},
-        ...overrides,
-      });
-    }
-
-    async function newEnv(overrides: Partial<CreateEnvConfigRequest> = {}): Promise<EnvConfigRef> {
-      return store.createEnvConfig({
-        namespace: DEFAULT_NAMESPACE,
         ...overrides,
       });
     }
@@ -386,85 +377,6 @@ export function describeStoreConformance(
         expect((await store.getAgentConfig(ref))?.version).toBe(1);
       });
 
-      it("materializes network and packages at env config create", async () => {
-        const ref = await newEnv();
-        const config = await store.getEnvConfig(ref);
-        expect(config?.network).toEqual({ type: "unrestricted" });
-        expect(config?.packages).toEqual({});
-        expect(config?.updatedAt).toBe(config?.createdAt);
-      });
-
-      it("preserves a provided recipe verbatim", async () => {
-        const ref = await newEnv({
-          network: { type: "allowlist", domains: ["pypi.org"] },
-          packages: { pip: ["pandas==2.2.0"] },
-        });
-        const config = await store.getEnvConfig(ref);
-        expect(config?.network).toEqual({ type: "allowlist", domains: ["pypi.org"] });
-        expect(config?.packages).toEqual({ pip: ["pandas==2.2.0"] });
-      });
-
-      it("partially updates an env config in place while preserving its identity", async () => {
-        const ref = await newEnv({
-          network: { type: "allowlist", domains: ["pypi.org"] },
-          packages: { pip: ["pandas==2.2.0"] },
-          metadata: { stage: "initial" },
-        });
-        const before = await store.getEnvConfig(ref);
-        clock.advance(1_000);
-
-        const withPackages = await store.updateEnvConfig(ref, {
-          packages: { npm: ["zod@4"] },
-        });
-        expect(withPackages).toEqual({
-          ...before,
-          packages: { npm: ["zod@4"] },
-          updatedAt: withPackages?.updatedAt,
-        });
-        expect(Date.parse(withPackages!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
-        clock.advance(1_000);
-
-        const updated = await store.updateEnvConfig(ref, {
-          network: { type: "none" },
-          metadata: null,
-        });
-        expect(updated).toEqual({
-          ...withPackages,
-          network: { type: "none" },
-          metadata: null,
-          updatedAt: updated?.updatedAt,
-        });
-        expect(Date.parse(updated!.updatedAt)).toBeGreaterThan(Date.parse(withPackages!.updatedAt));
-        expect(await store.getEnvConfig(ref)).toEqual(updated);
-      });
-
-      it("treats an empty env config update as a read-like no-op", async () => {
-        const ref = await newEnv();
-        const before = await store.getEnvConfig(ref);
-        expect(await store.updateEnvConfig(ref, {})).toEqual(before);
-        expect(await store.getEnvConfig(ref)).toEqual(before);
-      });
-
-      it("preserves disjoint concurrent env config updates", async () => {
-        const ref = await newEnv();
-        await Promise.all([
-          store.updateEnvConfig(ref, { network: { type: "none" } }),
-          store.updateEnvConfig(ref, { packages: { npm: ["zod@4"] } }),
-        ]);
-        expect(await store.getEnvConfig(ref)).toMatchObject({
-          network: { type: "none" },
-          packages: { npm: ["zod@4"] },
-        });
-      });
-
-      it("rejects an invalid env config update at the boundary", async () => {
-        const ref = await newEnv();
-        await expect(
-          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
-          store.updateEnvConfig(ref, { network: { type: "vpn" } } as any),
-        ).rejects.toThrow();
-      });
-
       it("returns undefined for unknown or foreign agent config refs", async () => {
         const ref = await newAgent({ namespace: "tenant-a" });
         expect(
@@ -480,33 +392,6 @@ export function describeStoreConformance(
             version: 1,
           }),
         ).toBeUndefined();
-      });
-
-      it("returns undefined for unknown or foreign env config refs", async () => {
-        const ref = await newEnv({ namespace: "tenant-a" });
-        expect(
-          await store.getEnvConfig({ namespace: DEFAULT_NAMESPACE, envConfigId: "nope" }),
-        ).toBeUndefined();
-        expect(
-          await store.getEnvConfig({ namespace: "tenant-b", envConfigId: ref.envConfigId }),
-        ).toBeUndefined();
-      });
-
-      it("treats an unknown or foreign env config update target as absent", async () => {
-        const ref = await newEnv({ namespace: "tenant-a", packages: { pip: ["numpy"] } });
-        await expect(
-          store.updateEnvConfig(
-            { namespace: "tenant-a", envConfigId: "nope" },
-            { packages: { npm: ["zod"] } },
-          ),
-        ).resolves.toBeUndefined();
-        await expect(
-          store.updateEnvConfig(
-            { namespace: "tenant-b", envConfigId: ref.envConfigId },
-            { packages: { npm: ["zod"] } },
-          ),
-        ).resolves.toBeUndefined();
-        expect((await store.getEnvConfig(ref))?.packages).toEqual({ pip: ["numpy"] });
       });
     });
 
@@ -699,86 +584,6 @@ export function describeStoreConformance(
       });
     });
 
-    describe("archiving env configs", () => {
-      it("marks the config archived without changing its recipe", async () => {
-        const ref = await newEnv({
-          network: { type: "allowlist", domains: ["pypi.org"] },
-          packages: { pip: ["numpy"] },
-          metadata: { stage: "final" },
-        });
-        const before = await store.getEnvConfig(ref);
-        clock.advance(1_000);
-
-        const archived = await store.archiveEnvConfig(ref);
-
-        expect(archived).toMatchObject({ ...before, archivedAt: expect.any(String) });
-        expect(archived?.updatedAt).toBe(before?.updatedAt);
-        expect(await store.getEnvConfig(ref)).toEqual(archived);
-      });
-
-      it("stores absence as absence — an active config has no archivedAt key", async () => {
-        const config = await store.getEnvConfig(await newEnv());
-        expect(config).toBeDefined();
-        expect("archivedAt" in config!).toBe(false);
-      });
-
-      it("is idempotent and preserves the first archive time", async () => {
-        const ref = await newEnv();
-        const first = await store.archiveEnvConfig(ref);
-        clock.advance(1_000);
-        const second = await store.archiveEnvConfig(ref);
-
-        expect(second).toEqual(first);
-        expect(second?.archivedAt).toBe(first?.archivedAt);
-      });
-
-      it("makes every recipe mutation fail with a namespace-scoped ArchivedError", async () => {
-        const ref = await newEnv({ packages: { pip: ["numpy"] } });
-        await store.archiveEnvConfig(ref);
-
-        for (const req of [
-          { network: { type: "none" } as const },
-          { packages: { npm: ["zod@4"] } },
-          { metadata: { stage: "after" } },
-        ]) {
-          await expect(store.updateEnvConfig(ref, req)).rejects.toMatchObject({
-            name: "ArchivedError",
-            namespace: ref.namespace,
-            resourceId: ref.envConfigId,
-            resourceKind: "env",
-          });
-        }
-        expect((await store.getEnvConfig(ref))?.packages).toEqual({ pip: ["numpy"] });
-      });
-
-      it("keeps an empty update a read and keeps get and list readable", async () => {
-        const ref = await newEnv();
-        const archived = await store.archiveEnvConfig(ref);
-
-        expect(await store.updateEnvConfig(ref, {})).toEqual(archived);
-        expect(await store.getEnvConfig(ref)).toEqual(archived);
-        expect(
-          (await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 })).map(
-            (c) => c.envConfigId,
-          ),
-        ).toContain(ref.envConfigId);
-      });
-
-      it("treats an unknown or foreign archive target as absent", async () => {
-        const ref = await newEnv({ namespace: "tenant-a" });
-        expect(
-          await store.archiveEnvConfig({ namespace: "tenant-a", envConfigId: "nope" }),
-        ).toBeUndefined();
-        expect(
-          await store.archiveEnvConfig({ namespace: "tenant-b", envConfigId: ref.envConfigId }),
-        ).toBeUndefined();
-
-        const own = await store.getEnvConfig(ref);
-        expect(own).toMatchObject({ namespace: "tenant-a" });
-        expect("archivedAt" in own!).toBe(false);
-      });
-    });
-
     describe("listing configs", () => {
       /** n configs, each a tick newer than the last, oldest id first. */
       async function agentConfigIds(n: number, namespace?: string): Promise<string[]> {
@@ -838,24 +643,11 @@ export function describeStoreConformance(
         // (createdAt, id) key's total order — walking in pages must equal
         // the whole list exactly.
         for (let i = 0; i < 5; i++) {
-          await newEnv();
+          await newAgent();
         }
-        const whole = await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        const whole = await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
         expect(whole).toHaveLength(5);
-
-        const walked: string[] = [];
-        let after: string | undefined;
-        for (let guard = 0; guard < 20; guard++) {
-          const page = await store.listEnvConfigs({
-            namespace: DEFAULT_NAMESPACE,
-            limit: 2,
-            after,
-          });
-          if (page.length === 0) break;
-          walked.push(...page.map((c) => c.envConfigId));
-          after = page[page.length - 1]?.envConfigId;
-        }
-        expect(walked).toEqual(whole.map((c) => c.envConfigId));
+        expect(await walk(DEFAULT_NAMESPACE, 2)).toEqual(whole.map((c) => c.agentConfigId));
       });
 
       it("scopes the list to one namespace — a page walk never crosses the boundary", async () => {
@@ -875,17 +667,6 @@ export function describeStoreConformance(
           store.listAgentConfigs({ namespace: "tenant-a", limit: 10, after: foreign }),
         ).rejects.toThrow("unknown cursor");
       });
-
-      it("lists the two config kinds independently", async () => {
-        await agentConfigIds(2);
-        const envRef = await newEnv();
-        const envs = await store.listEnvConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 });
-        expect(envs.map((c) => c.envConfigId)).toEqual([envRef.envConfigId]);
-        expect(envs[0]).toEqual(await store.getEnvConfig(envRef));
-        expect(
-          await store.listAgentConfigs({ namespace: DEFAULT_NAMESPACE, limit: 10 }),
-        ).toHaveLength(2);
-      });
     });
 
     describe("sessions", () => {
@@ -897,7 +678,6 @@ export function describeStoreConformance(
         expect(session?.namespace).toBe(DEFAULT_NAMESPACE);
         expect(session?.agentConfigId).toBeDefined();
         expect(session?.agentConfigVersion).toBe(1);
-        expect("envConfigId" in session!).toBe(false);
       });
 
       it("takes its environment from the pinned version — an edit reaches only later sessions", async () => {
@@ -1245,26 +1025,22 @@ export function describeStoreConformance(
     describe("namespace", () => {
       it("stamps every row with the namespace it was created under", async () => {
         const agentConfigRef = await newAgent();
-        const envConfigRef = await newEnv();
         const sessionRef = await store.createSession({
           namespace: DEFAULT_NAMESPACE,
           agentConfigId: agentConfigRef.agentConfigId,
         });
         expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
-        expect((await store.getEnvConfig(envConfigRef))?.namespace).toBe(DEFAULT_NAMESPACE);
         expect((await store.getSession(sessionRef))?.namespace).toBe(DEFAULT_NAMESPACE);
       });
 
       it("stores an explicit namespace verbatim", async () => {
         const agentConfigRef = await newAgent({ namespace: "tenant-a" });
-        const envConfigRef = await newEnv({ namespace: "tenant-a" });
         const sessionRef = await store.createSession({
           namespace: "tenant-a",
           agentConfigId: agentConfigRef.agentConfigId,
         });
         expect(sessionRef.namespace).toBe("tenant-a");
         expect((await store.getAgentConfig(agentConfigRef))?.namespace).toBe("tenant-a");
-        expect((await store.getEnvConfig(envConfigRef))?.namespace).toBe("tenant-a");
         expect((await store.getSession(sessionRef))?.namespace).toBe("tenant-a");
       });
 

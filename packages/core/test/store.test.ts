@@ -4,20 +4,14 @@ import {
   AgentConfigRef,
   AgentConfigVersionRef,
   CreateAgentConfigRequest,
-  CreateEnvConfigRequest,
   CreateSessionRequest,
-  EnvConfig,
-  EnvConfigRef,
-  EnvConfigSnapshot,
   IntakeResult,
   ListAgentConfigsRequest,
-  ListEnvConfigsRequest,
   ListSessionsRequest,
   PendingInput,
   Session,
   SessionRef,
   UpdateAgentConfigRequest,
-  UpdateEnvConfigRequest,
   WorkItem,
   WorkItemRef,
 } from "../src/store";
@@ -212,118 +206,6 @@ describe("configs", () => {
   });
 });
 
-describe("env configs", () => {
-  it("round-trips a stored env config with the full recipe spine", () => {
-    const config = {
-      envConfigId: "ec1",
-      network: { type: "allowlist", domains: ["api.anthropic.com", "pypi.org"] },
-      packages: { pip: ["pandas==2.2.0", "numpy"], npm: ["express@4.18.0"] },
-      namespace: "tenant-a",
-      metadata: { envId: "env_014588" },
-      createdAt: "2026-08-11T12:00:00Z",
-      updatedAt: "2026-08-12T12:00:00Z",
-    };
-    expect(roundTrip(EnvConfig, config)).toEqual(config);
-  });
-
-  it("round-trips an archived env config — the mark is a timestamp, not a flag", () => {
-    const config = {
-      envConfigId: "ec1",
-      network: { type: "none" },
-      packages: {},
-      namespace: "tenant-a",
-      createdAt: "2026-08-11T12:00:00Z",
-      updatedAt: "2026-08-12T12:00:00Z",
-      archivedAt: "2026-08-13T12:00:00Z",
-    };
-    expect(roundTrip(EnvConfig, config)).toEqual(config);
-  });
-
-  it("rejects a null or boolean env config archivedAt — absence is spelled by absence", () => {
-    const config = {
-      envConfigId: "ec1",
-      network: { type: "none" },
-      packages: {},
-      namespace: "tenant-a",
-      createdAt: "2026-08-11T12:00:00Z",
-      updatedAt: "2026-08-11T12:00:00Z",
-    };
-    expect(EnvConfig.safeParse({ ...config, archivedAt: null }).success).toBe(false);
-    expect(EnvConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
-  });
-
-  it("rejects a flat package list — specs are keyed by their package manager", () => {
-    const result = CreateEnvConfigRequest.safeParse({
-      namespace: "tenant-a",
-      packages: ["numpy", "pandas"],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts a create request without recipe overrides — they resolve at create", () => {
-    const result = CreateEnvConfigRequest.safeParse({ namespace: "tenant-a" });
-    expect(result.success).toBe(true);
-  });
-
-  it("requires an explicit namespace when creating an env config", () => {
-    expect(CreateEnvConfigRequest.safeParse({}).success).toBe(false);
-  });
-
-  it("validates namespace-scoped env config references", () => {
-    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", envConfigId: "ec1" }).success).toBe(
-      true,
-    );
-    expect(EnvConfigRef.safeParse({ namespace: "tenant-a", envConfigId: "" }).success).toBe(false);
-    expect(EnvConfigRef.safeParse({ namespace: "", envConfigId: "ec1" }).success).toBe(false);
-  });
-
-  it("validates namespaced env config pagination", () => {
-    expect(
-      ListEnvConfigsRequest.safeParse({ namespace: "tenant-a", limit: 10, after: "ec1" }).success,
-    ).toBe(true);
-    expect(ListEnvConfigsRequest.safeParse({ namespace: "", limit: 10 }).success).toBe(false);
-    expect(ListEnvConfigsRequest.safeParse({ namespace: "tenant-a", limit: 0 }).success).toBe(
-      false,
-    );
-  });
-
-  it("accepts partial and empty in-place env config updates", () => {
-    expect(
-      UpdateEnvConfigRequest.safeParse({
-        network: { type: "none" },
-        packages: { pip: ["numpy"] },
-        metadata: { revision: 2 },
-      }).success,
-    ).toBe(true);
-    expect(UpdateEnvConfigRequest.safeParse({ packages: {} }).success).toBe(true);
-    expect(UpdateEnvConfigRequest.safeParse({}).success).toBe(true);
-  });
-
-  it("rejects malformed env config updates", () => {
-    expect(UpdateEnvConfigRequest.safeParse({ network: { type: "vpn" } }).success).toBe(false);
-    expect(UpdateEnvConfigRequest.safeParse({ packages: ["numpy"] }).success).toBe(false);
-  });
-
-  it("rejects an unknown network policy type", () => {
-    const result = CreateEnvConfigRequest.safeParse({
-      namespace: "tenant-a",
-      network: { type: "vpn" },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects a stored env config missing network — materialized decisions must be present", () => {
-    const result = EnvConfig.safeParse({
-      envConfigId: "ec1",
-      namespace: "tenant-a",
-      packages: {},
-      createdAt: "2026-08-11T12:00:00Z",
-      updatedAt: "2026-08-11T12:00:00Z",
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
 describe("sessions", () => {
   it("round-trips a stored session — no metadata means no metadata key", () => {
     const session = {
@@ -358,45 +240,6 @@ describe("sessions", () => {
     };
     expect(Session.safeParse({ ...session, archivedAt: null }).success).toBe(false);
     expect(Session.safeParse({ ...session, archivedAt: true }).success).toBe(false);
-  });
-
-  // The guard against the drift this derivation exists to prevent: if
-  // anyone re-hand-lists these shapes, a recipe field added in one place
-  // and forgotten in another fails here rather than at provision time.
-  it("derives every env config shape from the one recipe declaration", () => {
-    const recipe = Object.keys(EnvConfigSnapshot.shape) as (keyof EnvConfigSnapshot)[];
-    expect(recipe).toEqual(["network", "packages"]);
-    for (const field of recipe) {
-      // Optional in both requests — absence is a default to resolve…
-      expect(CreateEnvConfigRequest.shape[field].safeParse(undefined).success).toBe(true);
-      expect(UpdateEnvConfigRequest.shape[field].safeParse(undefined).success).toBe(true);
-      // …and required on the stored row, which holds decisions, not rules.
-      expect(EnvConfig.shape[field].safeParse(undefined).success).toBe(false);
-    }
-    // The row is the recipe plus its envelope, nothing else.
-    expect(Object.keys(EnvConfig.shape).sort()).toEqual(
-      [
-        ...recipe,
-        "namespace",
-        "envConfigId",
-        "metadata",
-        "createdAt",
-        "updatedAt",
-        "archivedAt",
-      ].sort(),
-    );
-  });
-
-  it("requires both halves of the recipe in a snapshot", () => {
-    expect(EnvConfigSnapshot.safeParse({ network: { type: "none" }, packages: {} }).success).toBe(
-      true,
-    );
-    expect(EnvConfigSnapshot.safeParse({ network: { type: "none" } }).success).toBe(false);
-    expect(EnvConfigSnapshot.safeParse({ packages: {} }).success).toBe(false);
-    // Intent, not mechanism — an unknown policy shape is not a recipe.
-    expect(EnvConfigSnapshot.safeParse({ network: { type: "vpn" }, packages: {} }).success).toBe(
-      false,
-    );
   });
 
   it("rejects a stored session missing namespace — the row is its own ref", () => {

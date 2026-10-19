@@ -1,5 +1,5 @@
 // Route tests over the REAL store — PGlite + the pg adapter — same
-// pattern as env-configs.test.ts. The middleware machinery (auth) is
+// pattern as sessions.test.ts. The middleware machinery (auth) is
 // covered in app.test.ts; here we pin this resource's wiring,
 // materialization, and its namespace-scoped Store references.
 //

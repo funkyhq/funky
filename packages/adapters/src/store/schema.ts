@@ -83,24 +83,6 @@ export const agentConfigVersions = pgTable(
   ],
 );
 
-export const envConfigs = pgTable(
-  "env_configs",
-  {
-    namespace: text("namespace").notNull(),
-    id: text("id").notNull(),
-    // Materialized at create — never SQL NULL (resolved decisions, not defaults).
-    network: jsonb("network").$type<NetworkPolicy>().notNull(),
-    packages: jsonb("packages").$type<Packages>().notNull(),
-    metadata: jsonb("metadata").$type<WrappedJson>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-    // Latest recipe edit; archive is a lifecycle mark, not a recipe edit.
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-    // The terminal state, set once: null = active.
-    archivedAt: timestamp("archived_at", { withTimezone: true }),
-  },
-  (t) => [primaryKey({ columns: [t.namespace, t.id] })],
-);
-
 export const sessions = pgTable(
   "sessions",
   {

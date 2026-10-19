@@ -32,10 +32,9 @@ const messageOf = (err: unknown) => (err instanceof Error ? err.message : String
  * Whether an answer may still land when its token TIES the one already held
  * — the other half of a `supersedes` test (see replace()).
  *
- * The tie is not hypothetical: archiving mints no token of its own. An env
- * config's updatedAt marks the last edit and archiving is not one; an agent
- * config's archive writes no version. So the archived answer and the update
- * just before it carry the same token, and whichever arrived second would
+ * The tie is not hypothetical: archiving mints no token of its own — an
+ * agent config's archive writes no version. So the archived answer and the
+ * update just before it carry the same token, and whichever arrived second would
  * otherwise win — letting a late update answer show a retired row as active.
  * Archive is terminal, so at a tie it is the later fact, and the only answer
  * that may still land is one that does not undo it.

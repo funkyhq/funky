@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ArchivedError, SessionNotIdleError } from "../src";
 
 describe("Store port errors", () => {
-  it("identifies the namespace and kind of config that is archived", () => {
+  it("identifies the namespace and kind of an archived agent config", () => {
     expect(
       ArchivedError.forAgentConfig({ namespace: "tenant-a", agentConfigId: "ac1" }),
     ).toMatchObject({
@@ -12,15 +12,6 @@ describe("Store port errors", () => {
       resourceKind: "agent",
       message: "agent config tenant-a/ac1 is archived",
     });
-    expect(ArchivedError.forEnvConfig({ namespace: "tenant-b", envConfigId: "ec1" })).toMatchObject(
-      {
-        name: "ArchivedError",
-        namespace: "tenant-b",
-        resourceId: "ec1",
-        resourceKind: "env",
-        message: "env config tenant-b/ec1 is archived",
-      },
-    );
   });
 
   it("identifies terminal and running session conflicts", () => {

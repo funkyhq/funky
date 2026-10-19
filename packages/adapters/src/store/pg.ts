@@ -43,21 +43,16 @@ import {
   AgentConfigVersionRef,
   AgentMessage,
   CreateAgentConfigRequest,
-  CreateEnvConfigRequest,
   CreateSessionRequest,
-  EnvConfig,
-  EnvConfigRef,
   IntakeResult,
   type JsonValue,
   ListAgentConfigsRequest,
-  ListEnvConfigsRequest,
   ListSessionsRequest,
   PendingInput,
   Session,
   SessionEntry,
   SessionRef,
   UpdateAgentConfigRequest,
-  UpdateEnvConfigRequest,
   UserMessage,
   WorkItem,
   WorkItemRef,
@@ -73,7 +68,6 @@ import {
 import {
   agentConfigs,
   agentConfigVersions,
-  envConfigs,
   pendingInputs,
   sessionEntries,
   sessions,
@@ -138,18 +132,6 @@ const toAgentConfig = (row: AgentConfigRow): AgentConfig =>
     ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
-const toEnvConfig = (row: typeof envConfigs.$inferSelect): EnvConfig =>
-  EnvConfig.parse({
-    envConfigId: row.id,
-    network: row.network,
-    packages: row.packages,
-    namespace: row.namespace,
-    ...unwrapped(row.metadata),
-    createdAt: iso(row.createdAt),
-    updatedAt: iso(row.updatedAt),
-    ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
-  });
-
 const toSession = (row: typeof sessions.$inferSelect): Session =>
   Session.parse({
     sessionId: row.id,
@@ -191,7 +173,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
    * newest (and drizzle's and() drops it).
    */
   async function olderThanCursor(
-    table: typeof agentConfigs | typeof envConfigs | typeof sessions,
+    table: typeof agentConfigs | typeof sessions,
     scope: SQL,
     after: string | undefined,
   ): Promise<SQL | undefined> {
@@ -426,99 +408,6 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .orderBy(desc(agentConfigs.createdAt), desc(agentConfigs.id))
         .limit(parsed.limit);
       return rows.map(toAgentConfig);
-    },
-
-    async createEnvConfig(req) {
-      const parsed = CreateEnvConfigRequest.parse(req);
-      const id = randomUUID();
-      const timestamp = now();
-      await db.insert(envConfigs).values({
-        id,
-        // Materialized at create — resolved decisions, not restatable defaults.
-        namespace: parsed.namespace,
-        network: parsed.network ?? { type: "unrestricted" },
-        packages: parsed.packages ?? {},
-        metadata: wrap(parsed.metadata),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      return EnvConfigRef.parse({ namespace: parsed.namespace, envConfigId: id });
-    },
-
-    async getEnvConfig(ref) {
-      const { envConfigId, namespace } = EnvConfigRef.parse(ref);
-      const [row] = await db
-        .select()
-        .from(envConfigs)
-        .where(and(eq(envConfigs.id, envConfigId), eq(envConfigs.namespace, namespace)));
-      return row === undefined ? undefined : toEnvConfig(row);
-    },
-
-    async updateEnvConfig(ref, req) {
-      const { envConfigId, namespace } = EnvConfigRef.parse(ref);
-      const parsed = UpdateEnvConfigRequest.parse(req);
-      const scope = and(eq(envConfigs.id, envConfigId), eq(envConfigs.namespace, namespace));
-      const mutable = and(scope, isNull(envConfigs.archivedAt));
-      const updates = {
-        ...(parsed.network === undefined ? {} : { network: parsed.network }),
-        ...(parsed.packages === undefined ? {} : { packages: parsed.packages }),
-        ...(parsed.metadata === undefined ? {} : { metadata: wrap(parsed.metadata) }),
-      };
-
-      if (Object.keys(updates).length === 0) {
-        const [row] = await db.select().from(envConfigs).where(scope);
-        return row === undefined ? undefined : toEnvConfig(row);
-      }
-
-      const [row] = await db
-        .update(envConfigs)
-        .set({ ...updates, updatedAt: now() })
-        .where(mutable)
-        .returning();
-      if (row !== undefined) return toEnvConfig(row);
-
-      // An unmatched mutation is either unknown/foreign or archived. Rows
-      // are never deleted, so this read resolves the verdict without a race;
-      // archive is terminal and therefore always outranks the write.
-      const [current] = await db
-        .select({ archivedAt: envConfigs.archivedAt })
-        .from(envConfigs)
-        .where(scope);
-      if (current === undefined) return undefined;
-      if (current.archivedAt !== null) {
-        throw ArchivedError.forEnvConfig({ namespace, envConfigId });
-      }
-      throw new Error(`env config ${envConfigId} was not updated`);
-    },
-
-    async archiveEnvConfig(ref) {
-      const { envConfigId, namespace } = EnvConfigRef.parse(ref);
-      const scope = and(eq(envConfigs.id, envConfigId), eq(envConfigs.namespace, namespace));
-      return db.transaction(async (tx) => {
-        // Only the first caller stamps the row. A repeat (or racing archive)
-        // leaves the original time untouched, then reads the same terminal
-        // state back. The UPDATE's row lock also serializes with the shared
-        // lock held by createSession while it copies an active recipe.
-        await tx
-          .update(envConfigs)
-          .set({ archivedAt: now() })
-          .where(and(scope, isNull(envConfigs.archivedAt)));
-        const [row] = await tx.select().from(envConfigs).where(scope);
-        return row === undefined ? undefined : toEnvConfig(row);
-      });
-    },
-
-    async listEnvConfigs(req) {
-      const parsed = ListEnvConfigsRequest.parse(req);
-      const scope = eq(envConfigs.namespace, parsed.namespace);
-      const page = await olderThanCursor(envConfigs, scope, parsed.after);
-      const rows = await db
-        .select()
-        .from(envConfigs)
-        .where(and(scope, page))
-        .orderBy(desc(envConfigs.createdAt), desc(envConfigs.id))
-        .limit(parsed.limit);
-      return rows.map(toEnvConfig);
     },
 
     async createSession(req) {

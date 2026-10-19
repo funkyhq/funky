@@ -29,7 +29,7 @@ describe("auth", () => {
 
   it("401s /v1 requests without the bearer token", async () => {
     const app = makeApp({ authToken: TOKEN });
-    const res = await post(app, "/v1/env-configs", {});
+    const res = await post(app, "/v1/agent-configs", {});
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.error.type).toBe("authentication_error");
@@ -37,7 +37,7 @@ describe("auth", () => {
 
   it("401s a wrong token", async () => {
     const app = makeApp({ authToken: TOKEN });
-    const res = await get(app, "/v1/env-configs/x", { authorization: "Bearer wrong" });
+    const res = await get(app, "/v1/agent-configs/x", { authorization: "Bearer wrong" });
     expect(res.status).toBe(401);
   });
 
@@ -45,7 +45,7 @@ describe("auth", () => {
     const app = makeApp({ authToken: TOKEN });
     // The inert store makes a passing request throw — reaching the 500
     // handler proves auth admitted it (401 would short-circuit first).
-    const res = await get(app, "/v1/env-configs/x", { authorization: `Bearer ${TOKEN}` });
+    const res = await get(app, "/v1/agent-configs/x", { authorization: `Bearer ${TOKEN}` });
     expect(res.status).toBe(500);
   });
 });

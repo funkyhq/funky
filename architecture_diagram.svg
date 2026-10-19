@@ -54,7 +54,7 @@
 
   <!-- API -> Config Store -->
   <path class="edge" d="M300,200 V226 H220 V248" marker-end="url(#arw)"/>
-  <text class="elbl" x="258" y="219" text-anchor="end" font-size="12.5">Agent Config, Env Config</text>
+  <text class="elbl" x="258" y="219" text-anchor="end" font-size="12.5">Agent Config</text>
   <!-- API -> Job Queue -->
   <path class="edge" d="M480,200 V226 H560 V248" marker-end="url(#arw)"/>
   <text class="elbl" x="522" y="219" text-anchor="start" font-size="12.5">Inference, tool call, etc.</text>

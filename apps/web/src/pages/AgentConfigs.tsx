@@ -82,10 +82,13 @@ export function AgentConfigs({ route }: PageProps) {
   // open, so it is the one that decides whether to close (see
   // EditAgentConfig).
   function changed(config: AgentConfig) {
-    // Never older than what is already held — see EnvConfigs for why answers
-    // can arrive out of commit order. Here the token is the version, which is
-    // monotonic by construction; an archive writes no version, so it ties
-    // with the update before it and keepsArchive() settles which one wins.
+    // Never older than what is already held: two writes to one config can be
+    // in flight at once — a save outliving the dialog that sent it, then a
+    // second from the editor that replaced it — and their answers need not
+    // come back in the order the api committed them. The token is the
+    // version, which is monotonic by construction; an archive writes no
+    // version, so it ties with the update before it and keepsArchive()
+    // settles which one wins.
     replace(config, (incoming, held) =>
       incoming.version === held.version
         ? keepsArchive(incoming, held)

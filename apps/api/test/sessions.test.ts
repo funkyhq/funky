@@ -74,9 +74,6 @@ describe("POST /v1/sessions", () => {
     expect(body.agentConfigVersion).toBe(1);
     expect(body.namespace).toBe("default");
     expect(typeof body.id).toBe("string");
-    // The pinned version carries the sandbox; the session names nothing else.
-    expect("envConfigId" in body).toBe(false);
-    expect("envConfigSnapshot" in body).toBe(false);
   });
 
   it("keeps the version it pinned when the agent config's sandbox is edited", async () => {
