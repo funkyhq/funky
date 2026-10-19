@@ -20,12 +20,14 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
+/* A group's name is a line inside the field, not a label of its own: a
+   step quieter than the "Packages" label above it. */
 .pkg-title {
-  font-weight: 500;
-  color: var(--text);
+  font-weight: 400;
+  color: var(--text-2);
 }
 
 .pkg-registry,
