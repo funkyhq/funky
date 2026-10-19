@@ -216,16 +216,16 @@ async function runClaim(
   // Ensure-on-claim: only an execute_tools item that will actually
   // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
   // interrupted results and needs none.
-  let bound: Bound | undefined;
+  let boundTools: BoundTools | undefined;
   if (claim.item.type === "execute_tools" && claim.item.attempt === 1) {
     try {
-      bound = await bindHeld(deps, claim, leaseMs, bindTimeoutMs);
+      boundTools = await bindHeld(deps, claim, leaseMs, bindTimeoutMs);
     } catch (err) {
       if (!(err instanceof SandboxProvisionError)) throw err;
-      bound = err; // committed by runStep, not thrown: see Bound
+      boundTools = err; // committed by runStep, not thrown: see BoundTools
     }
     if (abort.aborted) return; // drained during the bind: the claim is being released
-    if (bound === undefined) {
+    if (boundTools === undefined) {
       // Past the bind deadline: hand the item back, as the drain does.
       // A release the store cannot serve is swallowed — the lease then
       // expires on its own, the same re-claim later.
@@ -233,7 +233,7 @@ async function runClaim(
       return;
     }
   }
-  await runStep(deps, claim, leaseMs, bound, abort);
+  await runStep(deps, claim, leaseMs, boundTools, abort);
 }
 
 /**
@@ -315,15 +315,16 @@ const EMPTY_TOOLS = new Map<string, Tool>();
  * cannot have would fail the same way on every claim (compare
  * unservedProvider).
  */
-export type Bound = Map<string, Tool> | SandboxProvisionError;
+export type BoundTools = Map<string, Tool> | SandboxProvisionError;
 
 /**
  * One claim → at most one commit; the tested unit of the driver — the
  * loop above is policy around it. Holds the lease via heartbeats for
  * the step's duration; a lost lease aborts the step, and an interrupted
- * step is dropped, never committed. `bound` carries what the loop bound
- * for an execute_tools claim — the executables, or the provisioning
- * failure that ends the run; an inference step never reads it.
+ * step is dropped, never committed. `boundTools` carries what the loop
+ * bound for an execute_tools claim — the executables, or the
+ * provisioning failure that ends the run; an inference step never
+ * reads it.
  * `abort` is the caller's stop (the drain deadline): the step aborts
  * exactly as on lease loss — dropped, never committed.
  */
@@ -331,7 +332,7 @@ export async function runStep(
   deps: StepDeps,
   claim: Claim,
   leaseMs: number,
-  bound: Bound = EMPTY_TOOLS,
+  boundTools: BoundTools = EMPTY_TOOLS,
   abort?: AbortSignal,
 ): Promise<void> {
   const { store } = deps;
@@ -426,9 +427,13 @@ export async function runStep(
       const results =
         item.attempt > 1
           ? calls.map((call) => interruptedResult(call))
-          : bound instanceof SandboxProvisionError
-            ? calls.map((call) => errorResult(call, `Sandbox unavailable: ${bound.message}`))
-            : await executeTools({ tools: bound, onUpdate: deps.onUpdate }, { calls }, step.signal);
+          : boundTools instanceof SandboxProvisionError
+            ? calls.map((call) => errorResult(call, `Sandbox unavailable: ${boundTools.message}`))
+            : await executeTools(
+                { tools: boundTools, onUpdate: deps.onUpdate },
+                { calls },
+                step.signal,
+              );
       append = results;
       // All results share one fate; the last one becomes the tail.
       const last = results[results.length - 1];
@@ -451,7 +456,7 @@ export async function runStep(
     // results to inference: the session's pinned version would fail the
     // same way on its every later call. The reason is in the results.
     const action: Action =
-      bound instanceof SandboxProvisionError && !cancelled
+      boundTools instanceof SandboxProvisionError && !cancelled
         ? { kind: "error" }
         : nextAction(tail, cancelled);
 
