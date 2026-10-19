@@ -64,7 +64,8 @@ replace; omitted fields are preserved. Responses include a monotonic `version`: 
 current value in an update for optimistic concurrency (a stale value returns 409), or omit it
 for an unconditional last-write-wins update. A session pins the version current when it was
 created — behavior and sandbox together — so an update reaches only sessions created after it.
-`packages` is stored on the config but not yet installed in the sandbox.
+`packages` are installed into the sandbox before the agent's first tool call; see
+[Packages](#packages).
 
 The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
 run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
@@ -113,6 +114,32 @@ the session's config names, so one stack runs sessions on different vendors side
 
 Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
 port.
+
+### Packages
+
+A config's `packages` maps a package manager to specs in that manager's own syntax:
+
+```json
+"packages": { "apt": ["graphviz"], "pip": ["pandas==2.2.0"], "npm": ["express@4.18.0"] }
+```
+
+On E2B, `apt`, `pip`, and `npm` are supported; any other manager ends the run with an error
+saying so. Each distinct package set is built once into an E2B template and shared by every
+session that asks for the same set, so packages are installed before the sandbox exists and
+work under any `network` policy, `none` included. pip and npm install globally, so packages
+import from anywhere in the sandbox.
+
+What to expect:
+
+- **The first session on a new package set waits for the build**, usually tens of seconds
+  and longer for large sets. Later sessions start from the built template.
+- **Unpinned specs are frozen at the first build.** `"pandas"` resolves once, when the
+  set is first built, and every later session with the same set gets that version. Pin
+  versions, or change the set, to get a different one.
+- **A spec that fails to install ends the run as `"error"`**, with the installer's message
+  in the tool result. Each new session on that config tries the build again.
+- **Packages apply when a sandbox is created.** A session that already has a sandbox keeps
+  it until it is replaced.
 
 ## Why Funky?
 
@@ -166,6 +193,13 @@ over HTTP — is gated on `E2E_DATABASE_URL` (a scratch database), `ANTHROPIC_AP
 
 ```bash
 E2E_DATABASE_URL=postgres://... pnpm -F worker test   # with the keys in the environment
+```
+
+The E2B adapter's own live suites need only `E2B_API_KEY`; the package-template suite
+builds real templates and takes about a minute:
+
+```bash
+E2B_API_KEY=... pnpm -F @funky/adapters test e2b-live e2b-packages-live
 ```
 
 ## Contributing
