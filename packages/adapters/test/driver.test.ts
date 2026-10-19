@@ -631,6 +631,52 @@ describe("runDriver drains", () => {
     expect(reclaimed.item).toMatchObject({ type: "execute_tools", attempt: 2 });
   });
 
+  it("beats through a bind slower than the lease: no re-claim mid-bind, and the batch runs", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi"), sayText("done")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    const binding = deferred();
+    const built = deferred();
+    const deps: DriverDeps = {
+      ...stepDeps,
+      // A sandbox create that waits on a template build.
+      bindTools: async () => {
+        binding.resolve();
+        await built.promise;
+        return echoOnly;
+      },
+    };
+    const drain = new AbortController();
+    const running = runDriver(deps, {
+      leaseMs: 300,
+      idlePollMs: 10,
+      session: sessionRef,
+      drain: drain.signal,
+      drainMs: 5_000,
+    });
+    await binding.promise;
+    // Over three leases into the bind: unbeaten, the claim would be long
+    // expired and another worker's for the taking.
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(await store.claimItem({ leaseMs: 300, session: sessionRef })).toBeUndefined();
+
+    built.resolve();
+    await until(async () => messages(await store.readEntries(sessionRef)).length === 4);
+    drain.abort();
+    await running;
+
+    const log = messages(await store.readEntries(sessionRef));
+    expect(log.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+    expect(log[2]).toMatchObject({ isError: false, content: [{ type: "text", text: "hi" }] });
+  });
+
   it("waits for the release even when the aborted step settles first", async () => {
     const sessionRef = await newSession();
     await store.intake(sessionRef, user("go"));

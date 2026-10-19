@@ -198,16 +198,35 @@ async function runClaim(
 ): Promise<void> {
   // Ensure-on-claim: only an execute_tools item that will actually
   // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
-  // interrupted results and needs none. The bind runs on the claim's
-  // initial lease — heartbeats start inside runStep — so if a slow
-  // sandbox create outlives the lease, the step's commit is fenced:
-  // wasted work, never wrong work.
+  // interrupted results and needs none.
   const tools =
     claim.item.type === "execute_tools" && claim.item.attempt === 1
-      ? await deps.bindTools(claim.item)
+      ? await bindHeld(deps, claim, leaseMs)
       : undefined;
   if (abort.aborted) return; // drained during the bind: the claim is being released
   await runStep(deps, claim, leaseMs, tools, abort);
+}
+
+/**
+ * The bind under its own heartbeat. A sandbox create — a template build
+ * above all — can outlive the lease, and an unbeaten lease expires into
+ * another worker's re-claim mid-bind: attempt 2, so the batch is
+ * interrupted without ever having run. The keeper stops when the bind
+ * settles. A lost lease is not acted on here — the bind takes no signal
+ * — but runStep's first, awaited beat revalidates, so the step still
+ * drops before executing a single tool.
+ */
+async function bindHeld(
+  deps: DriverDeps,
+  claim: Claim,
+  leaseMs: number,
+): Promise<Map<string, Tool>> {
+  const heartbeat = startHeartbeat(deps.store, claim.item, claim.token, leaseMs, () => {});
+  try {
+    return await deps.bindTools(claim.item);
+  } finally {
+    heartbeat.stop();
+  }
 }
 
 /** The drain as the loop sees it: whether the host has asked for one,
@@ -471,10 +490,10 @@ function toNext(action: Action): CommitStepRequest["next"] {
 /**
  * Extend the lease immediately and then every leaseMs / 3 until
  * stopped. The first beat is an entry-time revalidation runStep AWAITS
- * (`validated`) before doing any work: it re-covers whatever the
- * claim's initial lease already spent before the step began — above
- * all the loop's sandbox bind — so a step whose lease is already gone
- * drops before executing a single tool. A heartbeat that throws gets
+ * (`validated`) before doing any work: it catches a lease lost since
+ * the claim — above all during the loop's sandbox bind, whose own
+ * keeper only beats — so a step whose lease is already gone drops
+ * before executing a single tool. A heartbeat that throws gets
  * the lost-lease response: abort the step and let the lease decide —
  * if it was actually alive, the item simply expires into a re-claim
  * (inference re-runs; a tool batch interrupts). Wasted work, never

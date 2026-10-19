@@ -19,8 +19,10 @@ the Store port's second caller (`intake` is the api's write path;
 
 What lives here is what neither the engine nor a host may own:
 
-- **Leases.** The heartbeat keeper extends the claim every `leaseMs / 3`;
-  a lost — or merely unreachable — lease aborts the step. Like the drain
+- **Leases.** The heartbeat keeper extends the claim every `leaseMs / 3`,
+  from the sandbox bind through the commit, so a bind slower than the
+  lease (a template build) is not re-claimed out from under it; a lost
+  — or merely unreachable — lease aborts the step. Like the drain
   deadline below, it bounds a zombie's side effects and spend, never
   correctness.
 - **The crash rule.** An interrupted step is never committed. A dying
