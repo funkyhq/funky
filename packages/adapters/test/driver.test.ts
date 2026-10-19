@@ -27,6 +27,7 @@ import {
   type InferenceProvider,
   runDriver,
   runStep,
+  SandboxProvisionError,
   type StepDeps,
   type Store,
   type StreamRequest,
@@ -599,6 +600,76 @@ describe("runDriver drains", () => {
       content: [{ type: "text", text: "Tool execution was interrupted." }],
     });
     expect(signals).toHaveLength(1); // never re-executed
+  });
+
+  it("ends the run on a sandbox that can never be provisioned, and keeps claiming", async () => {
+    const doomed = await newSession();
+    await store.intake(doomed, user("go"));
+    const provider = scriptedProvider([callEcho("hi"), sayText("other")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(doomed), 60_000); // → execute_tools ready
+
+    let binds = 0;
+    const deps: DriverDeps = {
+      ...stepDeps,
+      bindTools: async () => {
+        binds += 1;
+        throw new SandboxProvisionError("pip: no matching distribution for numpy==99");
+      },
+    };
+    const drain = new AbortController();
+    const running = runDriver(deps, { idlePollMs: 10, drain: drain.signal, drainMs: 5_000 });
+    // The same driver serves another session afterwards: nothing crashed.
+    const other = await newSession();
+    await store.intake(other, user("hello"));
+    await until(async () => messages(await store.readEntries(other)).length === 2);
+    drain.abort();
+    await running;
+
+    const log = messages(await store.readEntries(doomed));
+    expect(log.map((m) => m.role)).toEqual(["user", "assistant", "toolResult"]);
+    expect(log[2]).toMatchObject({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Sandbox unavailable: pip: no matching distribution for numpy==99",
+        },
+      ],
+    });
+    // The run ended — no inference chained to retry against the same sandbox.
+    expect((await store.listItems(doomed)).map((i) => [i.type, i.status])).toEqual([
+      ["inference", "done"],
+      ["execute_tools", "done"],
+    ]);
+    expect(binds).toBe(1);
+  });
+
+  it("still takes the crash path on any other bind failure", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    const deps: DriverDeps = {
+      ...stepDeps,
+      bindTools: async () => {
+        throw new Error("sandbox provider unreachable");
+      },
+    };
+    await expect(runDriver(deps, { idlePollMs: 10, session: sessionRef })).rejects.toThrow(
+      "sandbox provider unreachable",
+    );
+    expect(messages(await store.readEntries(sessionRef))).toHaveLength(2); // nothing committed
   });
 
   it("covers the sandbox bind: a drain during a hung bind releases the claim", async () => {

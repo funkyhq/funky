@@ -53,11 +53,17 @@ import type {
   WorkItemRef,
 } from "@funky/core";
 import { buildContext } from "../engine/build-context";
-import { executeTools, interruptedResult, type ToolUpdate } from "../engine/execute-tools";
+import {
+  errorResult,
+  executeTools,
+  interruptedResult,
+  type ToolUpdate,
+} from "../engine/execute-tools";
 import { inference } from "../engine/inference";
 import { type Action, nextAction } from "../engine/next-action";
 import type { Tool } from "../engine/tool";
 import type { InferenceProvider } from "../ports/inference-provider";
+import { SandboxProvisionError } from "../ports/sandbox-provider";
 import {
   type Claim,
   type CommitStepRequest,
@@ -88,12 +94,15 @@ export interface DriverDeps extends StepDeps {
   /** Bind the executables for a claim whose item is execute_tools:
    *  ensure the sandbox, bind the tools, hand the map to runStep. The
    *  composition root closes this over ensureSandbox +
-   *  createSandboxTools; tests hand back a fixed map. A rejection is
-   *  worker trouble, not tool trouble: it propagates uncommitted and
-   *  the crash rule applies. Note the cost: the claim already counted,
-   *  so the re-claim sees attempt > 1 and interrupts the batch rather
-   *  than retrying the bind — a transient sandbox outage costs the
-   *  model one recoverable batch, never a duplicated side effect. */
+   *  createSandboxTools; tests hand back a fixed map. A
+   *  SandboxProvisionError is the session's trouble — its pinned
+   *  sandbox can never be made — and runStep commits it, ending the run
+   *  as "error". Any other rejection is worker trouble, not tool
+   *  trouble: it propagates uncommitted and the crash rule applies.
+   *  Note the cost: the claim already counted, so the re-claim sees
+   *  attempt > 1 and interrupts the batch rather than retrying the
+   *  bind — a transient sandbox outage costs the model one recoverable
+   *  batch, never a duplicated side effect. */
   bindTools(ref: SessionRef): Promise<Map<string, Tool>>;
 }
 
@@ -207,11 +216,16 @@ async function runClaim(
   // Ensure-on-claim: only an execute_tools item that will actually
   // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
   // interrupted results and needs none.
-  let tools: Map<string, Tool> | undefined;
+  let bound: Bound | undefined;
   if (claim.item.type === "execute_tools" && claim.item.attempt === 1) {
-    tools = await bindHeld(deps, claim, leaseMs, bindTimeoutMs);
+    try {
+      bound = await bindHeld(deps, claim, leaseMs, bindTimeoutMs);
+    } catch (err) {
+      if (!(err instanceof SandboxProvisionError)) throw err;
+      bound = err; // committed by runStep, not thrown: see Bound
+    }
     if (abort.aborted) return; // drained during the bind: the claim is being released
-    if (tools === undefined) {
+    if (bound === undefined) {
       // Past the bind deadline: hand the item back, as the drain does.
       // A release the store cannot serve is swallowed — the lease then
       // expires on its own, the same re-claim later.
@@ -219,7 +233,7 @@ async function runClaim(
       return;
     }
   }
-  await runStep(deps, claim, leaseMs, tools, abort);
+  await runStep(deps, claim, leaseMs, bound, abort);
 }
 
 /**
@@ -295,19 +309,29 @@ export function watchDrain(signal: AbortSignal | undefined, budgetMs: number): D
 const EMPTY_TOOLS = new Map<string, Tool>();
 
 /**
+ * What the loop's bind hands runStep: the executables, or why there
+ * can never be any. A SandboxProvisionError is committed, not thrown —
+ * an uncommitted item is re-claimed, and a sandbox the pinned version
+ * cannot have would fail the same way on every claim (compare
+ * unservedProvider).
+ */
+export type Bound = Map<string, Tool> | SandboxProvisionError;
+
+/**
  * One claim → at most one commit; the tested unit of the driver — the
  * loop above is policy around it. Holds the lease via heartbeats for
  * the step's duration; a lost lease aborts the step, and an interrupted
- * step is dropped, never committed. `tools` carries the executables the
- * loop bound for an execute_tools claim; an inference step never reads
- * it. `abort` is the caller's stop (the drain deadline): the step aborts
+ * step is dropped, never committed. `bound` carries what the loop bound
+ * for an execute_tools claim — the executables, or the provisioning
+ * failure that ends the run; an inference step never reads it.
+ * `abort` is the caller's stop (the drain deadline): the step aborts
  * exactly as on lease loss — dropped, never committed.
  */
 export async function runStep(
   deps: StepDeps,
   claim: Claim,
   leaseMs: number,
-  tools: Map<string, Tool> = EMPTY_TOOLS,
+  bound: Bound = EMPTY_TOOLS,
   abort?: AbortSignal,
 ): Promise<void> {
   const { store } = deps;
@@ -402,7 +426,9 @@ export async function runStep(
       const results =
         item.attempt > 1
           ? calls.map((call) => interruptedResult(call))
-          : await executeTools({ tools, onUpdate: deps.onUpdate }, { calls }, step.signal);
+          : bound instanceof SandboxProvisionError
+            ? calls.map((call) => errorResult(call, `Sandbox unavailable: ${bound.message}`))
+            : await executeTools({ tools: bound, onUpdate: deps.onUpdate }, { calls }, step.signal);
       append = results;
       // All results share one fate; the last one becomes the tail.
       const last = results[results.length - 1];
@@ -420,7 +446,14 @@ export async function runStep(
     // appending messages — so the context cannot have grown behind us.
     const lastSeq = entries.length > 0 ? entries[entries.length - 1]?.seq : undefined;
     const delta = bySeq(await store.readEntries(item, lastSeq));
-    const action = nextAction(tail, cancelRequested([...entries, ...delta]));
+    const cancelled = cancelRequested([...entries, ...delta]);
+    // An unprovisionable sandbox ends the run rather than handing the
+    // results to inference: the session's pinned version would fail the
+    // same way on its every later call. The reason is in the results.
+    const action: Action =
+      bound instanceof SandboxProvisionError && !cancelled
+        ? { kind: "error" }
+        : nextAction(tail, cancelled);
 
     await store.commitStep({
       itemRef: item,
@@ -511,8 +544,9 @@ function toNext(action: Action): CommitStepRequest["next"] {
     case "end_run":
       return { kind: "end_run", status: action.status };
     case "error":
-      // v1 retry policy: none. The provider failure is committed — the
-      // message in `append` says why — and the run ends as "error".
+      // v1 retry policy: none. The failure — a provider's, or a sandbox
+      // that cannot be provisioned — is committed, the messages in
+      // `append` say why, and the run ends as "error".
       return { kind: "end_run", status: "error" };
   }
 }
