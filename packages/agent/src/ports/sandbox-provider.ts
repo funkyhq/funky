@@ -30,7 +30,7 @@
 //   simply never committed, and the fence rejects late work.
 // - `kill` destroys the sandbox including its workspace.
 
-import type { NetworkPolicy } from "@funky/core";
+import type { NetworkPolicy, Packages } from "@funky/core";
 
 /**
  * connect()'s "definitively gone" rejection: the sandbox no longer
@@ -72,6 +72,12 @@ export interface CreateSandboxOptions {
    *  cannot enforce it — never silently run more open than asked.
    *  Absent = unrestricted. */
   network?: NetworkPolicy;
+  /** Packages to have installed before the sandbox is handed back, by
+   *  package manager (core/environment.ts). Adapters MUST reject
+   *  create() with SandboxProvisionError when they cannot install them
+   *  — never hand back a sandbox missing what was asked for. Absent or
+   *  empty = nothing beyond the provider's base image. */
+  packages?: Packages;
   /** Opaque labels; the driver stores the session mapping here. */
   metadata?: Record<string, string>;
 }

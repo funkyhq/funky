@@ -58,6 +58,7 @@ const deps: DriverDeps = {
     const sandbox = await ensureSandbox(store, sandboxes, ref, {
       timeoutMs: cfg.sandboxTimeoutMs,
       network: config.network,
+      packages: config.packages,
     });
     return createSandboxTools(sandbox);
   },

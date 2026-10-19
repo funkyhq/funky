@@ -15,7 +15,9 @@
 //
 // E2B enforces every NetworkPolicy variant (allowOut takes hostnames;
 // allowInternetAccess: false is deny-all), so the port's reject-when-
-// unenforceable clause never triggers here.
+// unenforceable clause never triggers for the network. It does for
+// packages: installing them is not built yet, so any asked-for package
+// rejects create() before anything is provisioned.
 
 import {
   CommandExitError,
@@ -25,7 +27,7 @@ import {
 } from "e2b";
 import type { SandboxInfo as E2bSandboxInfo, SandboxOpts } from "e2b";
 import type { NetworkPolicy } from "@funky/core";
-import { SandboxNotFoundError } from "@funky/agent";
+import { SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
 import type {
   CommandResult,
   CreateSandboxOptions,
@@ -45,6 +47,15 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
 
   return {
     async create(opts?: CreateSandboxOptions): Promise<Sandbox> {
+      const managers = Object.entries(opts?.packages ?? {})
+        .filter(([, specs]) => specs.length > 0)
+        .map(([manager]) => manager);
+      if (managers.length > 0) {
+        throw new SandboxProvisionError(
+          `installing packages is not supported by the E2B sandbox provider yet ` +
+            `(asked for: ${managers.sort().join(", ")})`,
+        );
+      }
       const sandbox = await E2bSandbox.create({
         ...connection,
         timeoutMs: opts?.timeoutMs,
