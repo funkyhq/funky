@@ -29,14 +29,15 @@ export const MANAGERS = [
 export const managerOf = (id: string) => MANAGERS.find((manager) => manager.id === id);
 
 /**
- * The specs typed into a group's input, added to it. Whitespace or commas
- * separate specs (none of the three managers' syntaxes contains either), and
- * a spec the group already holds is not added twice.
+ * The spec typed into a group's input, added to it whole — never split, since
+ * the managers' own syntaxes use commas and spaces ("pandas>=2.0,<3",
+ * "express@>=4 <5"). A spec the group already holds is not added twice.
  */
-export function addSpecs(packages: Packages, manager: string, typed: string): Packages {
-  const specs = new Set(packages[manager] ?? []);
-  for (const spec of typed.split(/[\s,]+/)) if (spec !== "") specs.add(spec);
-  return { ...packages, [manager]: [...specs] };
+export function addSpec(packages: Packages, manager: string, typed: string): Packages {
+  const spec = typed.trim();
+  const specs = packages[manager] ?? [];
+  if (spec === "" || specs.includes(spec)) return packages;
+  return { ...packages, [manager]: [...specs, spec] };
 }
 
 export function removeSpec(packages: Packages, manager: string, spec: string): Packages {

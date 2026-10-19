@@ -10,7 +10,7 @@
 // api — and its group is shown with its chips removable but nothing to add.
 import { type KeyboardEvent, useState } from "react";
 import type { Packages } from "../lib/api";
-import { addSpecs, MANAGERS, managerOf, removeSpec } from "../lib/packages";
+import { addSpec, MANAGERS, managerOf, removeSpec } from "../lib/packages";
 import { CloseIcon, PlusIcon } from "./Icons";
 import "./PackagesFields.css";
 
@@ -41,7 +41,7 @@ export function PackagesFields({
   /** Adds what was typed and, unless asked to stay, closes the input. */
   function commit(keepOpen: boolean) {
     if (!adding) return;
-    if (adding.text.trim() !== "") onChange(addSpecs(packages, adding.manager, adding.text));
+    if (adding.text.trim() !== "") onChange(addSpec(packages, adding.manager, adding.text));
     setAdding(keepOpen ? { manager: adding.manager, text: "" } : undefined);
   }
 
