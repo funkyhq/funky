@@ -1,11 +1,11 @@
 // The e2b adapter's translation layer, pinned against a mocked SDK: the
 // explicit lifecycle default (the SDK's own is "kill"), the NetworkPolicy
-// mapping, exit/timeout errors settling as results, the one-reconnect
+// mapping, the not-yet-supported packages rejection, exit/timeout errors settling as results, the one-reconnect
 // recovery, and the Uint8Array → ArrayBuffer copy. The real SDK is
 // exercised by the key-gated live suite in e2b-live.test.ts.
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { SandboxNotFoundError } from "@funky/agent";
+import { SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
 import { createE2bProvider } from "../src/sandbox/e2b";
 
 const mocks = vi.hoisted(() => {
@@ -92,6 +92,21 @@ describe("createE2bProvider", () => {
     expect(mocks.create.mock.lastCall?.[0]).toMatchObject({
       network: { allowOut: ["api.example.com"] },
     });
+  });
+
+  test("create rejects asked-for packages before provisioning anything — installing is not built yet", async () => {
+    mocks.create.mockResolvedValue(fakeSandbox());
+    const provider = createE2bProvider();
+
+    const rejected = provider.create({ packages: { pip: ["numpy"], apt: ["graphviz"], npm: [] } });
+    await expect(rejected).rejects.toBeInstanceOf(SandboxProvisionError);
+    await expect(rejected).rejects.toThrow("(asked for: apt, pip)");
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    // Nothing asked for is nothing to install.
+    await provider.create({ packages: {} });
+    await provider.create({ packages: { pip: [] } });
+    expect(mocks.create).toHaveBeenCalledTimes(2);
   });
 
   test("connect rides e2b's auto-resuming connect — no state check first", async () => {

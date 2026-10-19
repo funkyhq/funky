@@ -67,7 +67,10 @@ async function provision(
     version: session.agentConfigVersion,
   });
   if (!config) throw new Error("no agent config");
-  const sandbox = await ensureSandbox(store, provider, ref, { network: config.network });
+  const sandbox = await ensureSandbox(store, provider, ref, {
+    network: config.network,
+    packages: config.packages,
+  });
   return { sandboxId: sandbox.sandboxId, network: config.network };
 }
 
@@ -92,7 +95,7 @@ describe("provisioning from the session's pinned agent config version", () => {
     const { provider, created, kill } = fakeProvider();
     const first = await provision(s1, provider);
     expect(first.network).toEqual({ type: "none" });
-    expect(created[0]?.network).toEqual({ type: "none" });
+    expect(created[0]).toMatchObject({ network: { type: "none" }, packages: { pip: ["numpy"] } });
 
     // 2. the agent config is updated underneath it — a new version 2.
     await store.updateAgentConfig(agent, {
@@ -105,14 +108,17 @@ describe("provisioning from the session's pinned agent config version", () => {
     kill(first.sandboxId);
     const replaced = await provision(s1, provider);
     expect(replaced.sandboxId).not.toBe(first.sandboxId); // really a new sandbox
-    expect(created[1]?.network).toEqual({ type: "none" });
+    expect(created[1]).toMatchObject({ network: { type: "none" }, packages: { pip: ["numpy"] } });
     expect((await store.getSession(s1))?.agentConfigVersion).toBe(1);
 
     // 4. session 2, created after the update, pins version 2.
     const s2 = await newSession();
     const second = await provision(s2, provider);
     expect(second.network).toEqual({ type: "allowlist", domains: ["example.com"] });
-    expect(created[2]?.network).toEqual({ type: "allowlist", domains: ["example.com"] });
+    expect(created[2]).toMatchObject({
+      network: { type: "allowlist", domains: ["example.com"] },
+      packages: { npm: ["zod"] },
+    });
 
     // 5. a session may still ask for the old version explicitly.
     const s3 = await newSession(1);
