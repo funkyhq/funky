@@ -3,9 +3,10 @@
 // a select when `options`, a textarea when `multiline`, an input otherwise.
 //
 // Nothing sits under the control: the label says what the field is, and
-// these forms are short enough to say the rest by being short. What a field
-// can't do is be wrong — every one is either a closed choice or free text
-// the api takes as-is — so there is no error slot here either.
+// these forms are short enough to say the rest by being short. Nearly every
+// field is a closed choice or free text the api takes as-is, so there is no
+// error slot here; the one that can hold something unreadable, the packages,
+// says so under itself (PackagesFields).
 import type { ChangeEvent } from "react";
 import { ChevronDownIcon } from "./Icons";
 import "./Field.css";

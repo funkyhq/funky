@@ -124,6 +124,19 @@ select.control {
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+/* A line under a control: what it takes, or what it refused. Only a field
+   that can hold something unreadable — the packages — has one. */
+.field-hint,
+.field-error {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.field-error {
+  color: var(--bad);
+}
+
 /* Beside the fields ------------------------------------------------------
    Here rather than in Modal.css because a form is not only ever a dialog:
    the quickstart writes the same two configs down a page and has the same

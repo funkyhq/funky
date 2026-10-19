@@ -2,9 +2,9 @@
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
 // The form is the request's REQUIRED shape: provider, model, system prompt,
-// network, packages. Packages aren't offered yet, so the body sends {} —
-// install nothing, said explicitly. The body's optional parts — maxTokens,
-// temperature, metadata — are left out and therefore left absent, which is
+// network, packages — no packages typed is {}, install nothing, said
+// explicitly. The body's optional parts — maxTokens, temperature, metadata —
+// are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
 // directly, or update the config afterwards, when that is what you want.
@@ -27,9 +27,11 @@ import {
 } from "../lib/api";
 import { type AgentFields, initialFields, toInference } from "../lib/agent";
 import { type NetworkFields, toPolicy } from "../lib/network";
+import { readPackages } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
+import { PackagesFields } from "../components/PackagesFields";
 import { Modal } from "../components/Modal";
 import { ProviderKeys } from "../components/ProviderKeys";
 
@@ -106,24 +108,28 @@ function Form({
     type: "unrestricted",
     domains: "",
   });
+  const [packagesText, setPackagesText] = useState("");
   const [busy, setBusy] = useState(false);
-  // The api's refusal — a 400, or an api that isn't there. The one thing
-  // the fields themselves refuse is an allowlist with no domain on it.
+  // The api's refusal — a 400, or an api that isn't there. What the fields
+  // themselves refuse is an allowlist with no domain on it, and a packages
+  // line that isn't one.
   const [failure, setFailure] = useState<string>();
 
-  // Absent while the allowlist has no domain on it — the one state of this
-  // form that isn't a request yet (see toPolicy).
+  // Absent while the allowlist has no domain on it — not a request yet
+  // (see toPolicy). The packages likewise, while a line doesn't read.
   const network = toPolicy(networkFields);
+  const read = readPackages(packagesText);
+  const packages = "packages" in read ? read.packages : undefined;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || network === undefined) return;
+    if (busy || network === undefined || packages === undefined) return;
 
     const input: CreateAgentConfigInput = {
       inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
       network,
-      packages: {},
+      packages,
     };
 
     setFailure(undefined);
@@ -145,9 +151,8 @@ function Form({
       title="Create agent config"
       description={
         <>
-          The model, system prompt and network a session runs with. Lands as version 1 in the{" "}
-          <code>{DEFAULT_NAMESPACE}</code> namespace with no packages — those aren&rsquo;t set here
-          yet.
+          The model, system prompt, network and packages a session runs with. Lands as version 1 in
+          the <code>{DEFAULT_NAMESPACE}</code> namespace.
         </>
       }
       dismissible={!busy}
@@ -162,6 +167,11 @@ function Form({
               dropped from. */}
           <AgentFieldset fields={fields} onChange={setFields} />
           <NetworkFieldset fields={networkFields} onChange={setNetworkFields} autoFocus={false} />
+          <PackagesFields
+            text={packagesText}
+            onChange={setPackagesText}
+            error={"error" in read ? read.error : undefined}
+          />
         </div>
 
         <footer className="modal-foot">
@@ -176,7 +186,7 @@ function Form({
           <button
             className="btn btn-primary"
             type="submit"
-            disabled={busy || network === undefined}
+            disabled={busy || network === undefined || packages === undefined}
           >
             {busy ? "Creating…" : "Create"}
           </button>
