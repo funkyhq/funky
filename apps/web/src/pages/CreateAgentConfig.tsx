@@ -2,9 +2,9 @@
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
 // The form is the request's REQUIRED shape: provider, model, system prompt,
-// network, packages. Packages aren't offered yet, so the body sends {} —
-// install nothing, said explicitly. The body's optional parts — maxTokens,
-// temperature, metadata — are left out and therefore left absent, which is
+// network, packages — no packages typed is {}, install nothing, said
+// explicitly. The body's optional parts — maxTokens, temperature, metadata —
+// are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
 // directly, or update the config afterwards, when that is what you want.
@@ -24,12 +24,15 @@ import {
   createAgentConfig,
   type CreateAgentConfigInput,
   DEFAULT_NAMESPACE,
+  type Packages,
 } from "../lib/api";
 import { type AgentFields, initialFields, toInference } from "../lib/agent";
 import { type NetworkFields, toPolicy } from "../lib/network";
+import { compact } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
+import { PackagesFields } from "../components/PackagesFields";
 import { Modal } from "../components/Modal";
 import { ProviderKeys } from "../components/ProviderKeys";
 
@@ -106,6 +109,7 @@ function Form({
     type: "unrestricted",
     domains: "",
   });
+  const [packages, setPackages] = useState<Packages>({});
   const [busy, setBusy] = useState(false);
   // The api's refusal — a 400, or an api that isn't there. The one thing
   // the fields themselves refuse is an allowlist with no domain on it.
@@ -123,7 +127,7 @@ function Form({
       inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
       network,
-      packages: {},
+      packages: compact(packages),
     };
 
     setFailure(undefined);
@@ -145,9 +149,8 @@ function Form({
       title="Create agent config"
       description={
         <>
-          The model, system prompt and network a session runs with. Lands as version 1 in the{" "}
-          <code>{DEFAULT_NAMESPACE}</code> namespace with no packages — those aren&rsquo;t set here
-          yet.
+          The model, system prompt, network and packages a session runs with. Lands as version 1 in
+          the <code>{DEFAULT_NAMESPACE}</code> namespace.
         </>
       }
       dismissible={!busy}
@@ -162,6 +165,7 @@ function Form({
               dropped from. */}
           <AgentFieldset fields={fields} onChange={setFields} />
           <NetworkFieldset fields={networkFields} onChange={setNetworkFields} autoFocus={false} />
+          <PackagesFields packages={packages} onChange={setPackages} />
         </div>
 
         <footer className="modal-foot">

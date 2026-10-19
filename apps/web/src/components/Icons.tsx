@@ -72,6 +72,15 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Remove — takes one item out of a set, like a package off a config. */
+export function CloseIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke width={13} height={13} {...props}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </Stroke>
+  );
+}
+
 /** The affordance on a <select>, which draws no arrow of its own once its
  *  native appearance is dropped for the shared control styling. */
 export function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {

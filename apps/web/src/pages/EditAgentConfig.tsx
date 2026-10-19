@@ -1,12 +1,12 @@
 // apps/web/src/pages/EditAgentConfig.tsx
-// The Edit Agent dialog, at `#/agent/<id>`: the same four fields the create
+// The Edit Agent dialog, at `#/agent/<id>`: the same fields the create
 // dialog writes, over POST /v1/agent-configs/:id — plus Archive, the one
 // action on a config that isn't an edit.
 //
 // Two things the api's update semantics dictate, both load-bearing:
 //
 //  - It is a PARTIAL update. An absent field is left as it was, so what this
-//    form doesn't show — packages, metadata — rides into the new version
+//    form doesn't show — metadata — rides into the new version
 //    untouched. But a field that IS sent bumps the version even when its
 //    value is identical, so
 //    this sends only what actually changed, and saves nothing at all when
@@ -38,10 +38,12 @@ import {
   samePolicy,
   toPolicy,
 } from "../lib/network";
+import { compact, samePackages } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
+import { PackagesFields } from "../components/PackagesFields";
 import { absoluteTime } from "../lib/format";
 
 type Fields = { provider: string; model: string; systemPrompt: string };
@@ -155,6 +157,7 @@ function EditForm({
   const [networkFields, setNetworkFields] = useState<NetworkFields>(() =>
     networkFieldsOf(config.network),
   );
+  const [packages, setPackages] = useState(config.packages);
   const [failure, setFailure] = useState<string>();
   // WHICH write is in flight, not merely whether one is. The two paths out
   // of this dialog are mutually exclusive and every control is disabled by
@@ -181,8 +184,6 @@ function EditForm({
   }, []);
 
   const archived = config.archivedAt !== undefined;
-  // Read-only here: packages ride into the next version as they are.
-  const packages = Object.entries(config.packages).filter(([, specs]) => specs.length > 0);
   const saved = fieldsOf(config);
   const inferenceChanged = fields.provider !== saved.provider || fields.model !== saved.model;
   const promptChanged = fields.systemPrompt !== saved.systemPrompt;
@@ -190,7 +191,8 @@ function EditForm({
   // nothing to save (see toPolicy).
   const network = toPolicy(networkFields);
   const networkChanged = network !== undefined && !samePolicy(network, config.network);
-  const changed = inferenceChanged || promptChanged || networkChanged;
+  const packagesChanged = !samePackages(packages, config.packages);
+  const changed = inferenceChanged || promptChanged || networkChanged || packagesChanged;
 
   // The offered provider, when it is one; otherwise the config's own, whose
   // models this console can't enumerate — so the model it already has is
@@ -232,6 +234,7 @@ function EditForm({
         : undefined,
       systemPrompt: promptChanged ? fields.systemPrompt : undefined,
       network: networkChanged ? network : undefined,
+      packages: packagesChanged ? compact(packages) : undefined,
       version: config.version,
     };
 
@@ -332,16 +335,7 @@ function EditForm({
             autoFocus={false}
           />
 
-          {packages.length > 0 ? (
-            <p className="prose note">
-              Packages are left as they are — this dialog doesn&rsquo;t write them yet.
-              {packages.map(([manager, specs]) => (
-                <span className="meta" key={manager}>
-                  {manager}: {specs.join(", ")}
-                </span>
-              ))}
-            </p>
-          ) : null}
+          <PackagesFields packages={packages} onChange={setPackages} disabled={archived || busy} />
         </div>
 
         {/* Archive sits away from the two buttons that answer the form:

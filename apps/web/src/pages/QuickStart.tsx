@@ -29,6 +29,7 @@ import {
   type AgentConfig,
   ApiError,
   DEFAULT_NAMESPACE,
+  type Packages,
   type Session,
   createAgentConfig,
   createSession,
@@ -36,9 +37,11 @@ import {
 } from "../lib/api";
 import { type AgentFields, byId, initialFields, toInference } from "../lib/agent";
 import { type NetworkFields, POLICIES, toPolicy } from "../lib/network";
+import { compact, packagesLine } from "../lib/packages";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { Field } from "../components/Field";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
+import { PackagesFields } from "../components/PackagesFields";
 import { ProviderKeys } from "../components/ProviderKeys";
 import { AgentIcon, SessionIcon } from "../components/Icons";
 import "./QuickStart.css";
@@ -54,7 +57,7 @@ const STEPS = [
     Icon: AgentIcon,
     title: "Create the agent config",
     blurb:
-      "The model a session thinks with, the prompt it starts from, and the network its commands can reach.",
+      "The model a session thinks with, the prompt it starts from, the network its commands can reach, and the packages installed for them.",
   },
   {
     label: "Session",
@@ -98,6 +101,7 @@ export function QuickStart() {
     type: "unrestricted",
     domains: "",
   });
+  const [packages, setPackages] = useState<Packages>({});
   const [text, setText] = useState("");
   /** Which call is out, when one is. Absent between presses. */
   const [doing, setDoing] = useState<Stage>();
@@ -147,6 +151,7 @@ export function QuickStart() {
   // Absent while the allowlist has no domain on it — the one state of the
   // network form that isn't a policy yet (see toPolicy).
   const network = toPolicy(networkFields);
+  const packagesSummary = packagesLine(packages);
   const message = text.trim();
   const last = STEPS.length - 1;
 
@@ -189,7 +194,7 @@ export function QuickStart() {
           inference: toInference(agent),
           systemPrompt: agent.systemPrompt,
           network,
-          packages: {},
+          packages: compact(packages),
         }));
       setMade((prev) => ({ ...prev, agent: agentConfig }));
 
@@ -315,6 +320,11 @@ export function QuickStart() {
                     disabled={busy || made.agent !== undefined}
                     autoFocus={false}
                   />
+                  <PackagesFields
+                    packages={packages}
+                    onChange={setPackages}
+                    disabled={busy || made.agent !== undefined}
+                  />
                 </>
               )
             ) : (
@@ -340,9 +350,7 @@ export function QuickStart() {
                         : agent.systemPrompt.trim()}
                     </span>
                     <span className="qs-plan-note">Network: {policyLine(networkFields)}</span>
-                    <span className="qs-plan-note">
-                      No packages — the console doesn&rsquo;t set those yet.
-                    </span>
+                    <span className="qs-plan-note">Packages: {packagesSummary}</span>
                     <span className="qs-plan-state">
                       {made.agent === undefined ? (
                         "created when you start"
