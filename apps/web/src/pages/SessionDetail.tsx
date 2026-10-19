@@ -457,9 +457,6 @@ export function SessionDetail({ id }: { id: string }) {
           <span>
             agent <code>{session.agentConfigId}</code> v{session.agentConfigVersion}
           </span>
-          <span>
-            env <code>{session.envConfigId}</code>
-          </span>
           {session.sandboxId === undefined ? null : (
             <span>
               sandbox <code>{session.sandboxId}</code>

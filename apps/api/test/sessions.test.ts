@@ -32,12 +32,12 @@ afterAll(async () => {
   await client.close();
 });
 
-/** Seed the two configs over HTTP; returns their ids. Namespace is part
- *  of the request: it rides in the create bodies. */
+/** Seed an agent config over HTTP; returns its id. Namespace is part of
+ *  the request: it rides in the create body. */
 async function seedConfigs(
   on: ReturnType<typeof buildApp>,
   namespace = "default",
-): Promise<{ agentConfigId: string; envConfigId: string }> {
+): Promise<{ agentConfigId: string }> {
   const agent = await (
     await post(on, "/v1/agent-configs", {
       namespace,
@@ -47,8 +47,7 @@ async function seedConfigs(
       packages: {},
     })
   ).json();
-  const env = await (await post(on, "/v1/env-configs", { namespace })).json();
-  return { agentConfigId: agent.id, envConfigId: env.id };
+  return { agentConfigId: agent.id };
 }
 
 async function seedSession(
@@ -73,39 +72,27 @@ describe("POST /v1/sessions", () => {
     const body = await res.json();
     expect(body.agentConfigId).toBe(configs.agentConfigId);
     expect(body.agentConfigVersion).toBe(1);
-    expect(body.envConfigId).toBe(configs.envConfigId);
     expect(body.namespace).toBe("default");
     expect(typeof body.id).toBe("string");
-    // The recipe rides along resolved: the wire shows the world this
-    // session will provision, not a pointer to a row that can change.
-    expect(body.envConfigSnapshot).toEqual({
-      network: { type: "unrestricted" },
-      packages: {},
-    });
+    // The pinned version carries the sandbox; the session names nothing else.
+    expect("envConfigId" in body).toBe(false);
+    expect("envConfigSnapshot" in body).toBe(false);
   });
 
-  it("returns the snapshot the session was created with, not the env config's current state", async () => {
-    const agent = await (
-      await post(app, "/v1/agent-configs", {
-        inference: { provider: "fake", model: "m" },
-        systemPrompt: "s",
-        network: { type: "unrestricted" },
-        packages: {},
-      })
-    ).json();
-    const env = await (await post(app, "/v1/env-configs", { network: { type: "none" } })).json();
-    const created = await (
-      await post(app, "/v1/sessions", { agentConfigId: agent.id, envConfigId: env.id })
-    ).json();
+  it("keeps the version it pinned when the agent config's sandbox is edited", async () => {
+    const { agentConfigId } = await seedConfigs(app);
+    const created = await (await post(app, "/v1/sessions", { agentConfigId })).json();
 
-    const updated = await post(app, `/v1/env-configs/${env.id}`, {
+    const updated = await post(app, `/v1/agent-configs/${agentConfigId}`, {
       network: { type: "allowlist", domains: ["example.com"] },
     });
     expect(updated.status).toBe(200);
+    expect((await updated.json()).version).toBe(2);
 
     const read = await (await get(app, `/v1/sessions/${created.id}`)).json();
-    expect(read.envConfigSnapshot.network).toEqual({ type: "none" });
-    expect(read.envConfigId).toBe(env.id); // provenance survives the edit
+    expect(read.agentConfigVersion).toBe(1);
+    const later = await (await post(app, "/v1/sessions", { agentConfigId })).json();
+    expect(later.agentConfigVersion).toBe(2);
   });
 
   it("defaults the namespace when the body omits it", async () => {
@@ -116,11 +103,9 @@ describe("POST /v1/sessions", () => {
   });
 
   it("400s a dangling config reference", async () => {
-    const { envConfigId } = await seedConfigs(app);
     const res = await post(app, "/v1/sessions", {
       namespace: "default",
       agentConfigId: "nope",
-      envConfigId,
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error.type).toBe("invalid_request_error");
@@ -150,23 +135,6 @@ describe("POST /v1/sessions", () => {
     expect((await res.json()).error.type).toBe("conflict_error");
 
     // Existing sessions continue: the archive closes the door to new ones.
-    const message = await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
-    expect(message.status).toBe(202);
-    expect((await message.json()).kind).toBe("started");
-  });
-
-  it("409s an archived env config, while sessions with its snapshot keep working", async () => {
-    const configs = await seedConfigs(app);
-    const create = { namespace: "default", ...configs };
-    const sessionId = (await (await post(app, "/v1/sessions", create)).json()).id;
-    expect((await post(app, `/v1/env-configs/${configs.envConfigId}/archive`)).status).toBe(200);
-
-    const res = await post(app, "/v1/sessions", create);
-    expect(res.status).toBe(409);
-    const error = (await res.json()).error;
-    expect(error.type).toBe("conflict_error");
-    expect(error.message).toBe(`env config default/${configs.envConfigId} is archived`);
-
     const message = await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
     expect(message.status).toBe(202);
     expect((await message.json()).kind).toBe("started");

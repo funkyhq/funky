@@ -63,8 +63,8 @@ CREATE TABLE env_configs (
   -- Latest recipe edit; equal to created_at until the first update.
   -- Archive is a lifecycle mark rather than an edit, so it does not move.
   updated_at timestamptz NOT NULL,
-  -- Retires the recipe without deleting it. Existing sessions have their
-  -- own copy; NULL means no archive event, and the mark is never cleared.
+  -- Retires the recipe without deleting it. NULL means no archive event,
+  -- and the mark is never cleared.
   archived_at timestamptz,
   PRIMARY KEY (namespace, id)
 );
@@ -74,14 +74,8 @@ CREATE TABLE sessions (
   id text NOT NULL,
   agent_config_id text NOT NULL,
   -- Resolved from the agent's latest version at session creation; the
-  -- composite FK below makes that behavior snapshot durable.
+  -- composite FK below makes that behavior and sandbox snapshot durable.
   agent_config_version integer NOT NULL,
-  env_config_id text NOT NULL,
-  -- The env recipe resolved at create (core/store.ts EnvConfigSnapshot).
-  -- Env configs update in place, so there is no version to pin: the copy
-  -- is what makes a session's world deterministic. Provisioning reads
-  -- this; env_config_id stays for provenance, never for a reload.
-  env_config_snapshot jsonb NOT NULL,
   -- The session's one workspace; null until the driver's first
   -- execute_tools claim registers it (Store.bindSandbox, set-if-null).
   sandbox_id text,
@@ -91,11 +85,10 @@ CREATE TABLE sessions (
   -- session accepts no new client writes; NULL means active.
   archived_at timestamptz,
   PRIMARY KEY (namespace, id),
-  -- Same-namespace, structural, on both references: the pinned version
-  -- and the env recipe must live in the session's own namespace.
+  -- Same-namespace, structural: the pinned version must live in the
+  -- session's own namespace.
   FOREIGN KEY (namespace, agent_config_id, agent_config_version)
-    REFERENCES agent_config_versions (namespace, agent_config_id, version),
-  FOREIGN KEY (namespace, env_config_id) REFERENCES env_configs (namespace, id)
+    REFERENCES agent_config_versions (namespace, agent_config_id, version)
 );
 
 -- The list scan's index (Store.listSessions). The PK's second column is a

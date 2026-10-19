@@ -331,11 +331,6 @@ describe("sessions", () => {
       sessionId: "s1",
       agentConfigId: "ac1",
       agentConfigVersion: 2,
-      envConfigId: "ec1",
-      envConfigSnapshot: {
-        network: { type: "allowlist", domains: ["pypi.org"] },
-        packages: { pip: ["numpy"] },
-      },
       createdAt: "2026-08-11T12:00:00Z",
     };
     expect(roundTrip(Session, session)).toEqual(session);
@@ -347,8 +342,6 @@ describe("sessions", () => {
       sessionId: "s1",
       agentConfigId: "ac1",
       agentConfigVersion: 2,
-      envConfigId: "ec1",
-      envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
       createdAt: "2026-08-11T12:00:00Z",
       archivedAt: "2026-08-13T12:00:00Z",
     };
@@ -361,27 +354,10 @@ describe("sessions", () => {
       sessionId: "s1",
       agentConfigId: "ac1",
       agentConfigVersion: 1,
-      envConfigId: "ec1",
-      envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
       createdAt: "2026-08-11T12:00:00Z",
     };
     expect(Session.safeParse({ ...session, archivedAt: null }).success).toBe(false);
     expect(Session.safeParse({ ...session, archivedAt: true }).success).toBe(false);
-  });
-
-  // The recipe is copied, not referenced: env configs update in place, so
-  // a session that resolved one at read time could change under a running
-  // run. The snapshot is a resolved decision, so it is never absent.
-  it("rejects a stored session missing its env config snapshot", () => {
-    const result = Session.safeParse({
-      namespace: "default",
-      sessionId: "s1",
-      agentConfigId: "ac1",
-      agentConfigVersion: 1,
-      envConfigId: "ec1",
-      createdAt: "2026-08-11T12:00:00Z",
-    });
-    expect(result.success).toBe(false);
   });
 
   // The guard against the drift this derivation exists to prevent: if
@@ -394,10 +370,8 @@ describe("sessions", () => {
       // Optional in both requests — absence is a default to resolve…
       expect(CreateEnvConfigRequest.shape[field].safeParse(undefined).success).toBe(true);
       expect(UpdateEnvConfigRequest.shape[field].safeParse(undefined).success).toBe(true);
-      // …required on the stored row, which holds decisions, not rules…
+      // …and required on the stored row, which holds decisions, not rules.
       expect(EnvConfig.shape[field].safeParse(undefined).success).toBe(false);
-      // …and required in the copy a session provisions from.
-      expect(Session.shape.envConfigSnapshot.shape[field].safeParse(undefined).success).toBe(false);
     }
     // The row is the recipe plus its envelope, nothing else.
     expect(Object.keys(EnvConfig.shape).sort()).toEqual(
@@ -430,8 +404,6 @@ describe("sessions", () => {
       sessionId: "s1",
       agentConfigId: "ac1",
       agentConfigVersion: 1,
-      envConfigId: "ec1",
-      envConfigSnapshot: { network: { type: "unrestricted" }, packages: {} },
       createdAt: "2026-08-11T12:00:00Z",
     });
     expect(result.success).toBe(false);
@@ -462,19 +434,17 @@ describe("sessions", () => {
   });
 
   it("requires an explicit namespace when creating a session", () => {
-    expect(
-      CreateSessionRequest.safeParse({ agentConfigId: "ac1", envConfigId: "ec1" }).success,
-    ).toBe(false);
+    expect(CreateSessionRequest.safeParse({ agentConfigId: "ac1" }).success).toBe(false);
   });
 
   it("rejects a create request without an agent config id", () => {
-    const result = CreateSessionRequest.safeParse({ namespace: "default", envConfigId: "ec1" });
+    const result = CreateSessionRequest.safeParse({ namespace: "default" });
     expect(result.success).toBe(false);
   });
 
-  it("rejects a create request without an env config id — every session names its world", () => {
+  it("accepts a create request that names only the agent config — it carries the sandbox", () => {
     const result = CreateSessionRequest.safeParse({ namespace: "default", agentConfigId: "ac1" });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("accepts an optional positive agent config version", () => {
@@ -483,7 +453,6 @@ describe("sessions", () => {
         namespace: "default",
         agentConfigId: "ac1",
         agentConfigVersion: 2,
-        envConfigId: "ec1",
       }).success,
     ).toBe(true);
     expect(
@@ -491,7 +460,6 @@ describe("sessions", () => {
         namespace: "default",
         agentConfigId: "ac1",
         agentConfigVersion: 0,
-        envConfigId: "ec1",
       }).success,
     ).toBe(false);
   });

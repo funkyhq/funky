@@ -61,19 +61,16 @@ export const DEFAULT_NAMESPACE = "default";
 // --- configs ---
 
 // Agent configs are mutable, with a monotonic version used for optional
-// optimistic concurrency. Env configs update in place. Both being mutable,
-// a session has to make each one durable at creation — by a different
-// mechanism, because only one of them leaves something immutable to point
-// at. It PINS the agent config's concrete version, and COPIES the env
-// config's resolved recipe (EnvConfigSnapshot below), keeping the env
-// config id beside the copy for provenance rather than resolution. Either
-// way, a later edit cannot reshape a run already under way.
+// optimistic concurrency. Every version is an immutable snapshot of both
+// the behavior (inference, system prompt) and the sandbox (network,
+// packages). A session PINS one concrete version at creation, so a later
+// edit cannot reshape a run already under way.
 //
-// Archive is the one terminal transition: it retires either config without
+// Archive is the one terminal transition: it retires a config without
 // deleting it. The row stays readable, and an agent config's versions stay
-// resolvable; sessions that already pinned the agent version and copied the
-// env recipe keep running. What stops is further update and use by a new
-// session. There is no unarchive, so nothing here spells one.
+// resolvable; sessions that already pinned a version keep running. What
+// stops is further update and use by a new session. There is no unarchive,
+// so nothing here spells one.
 
 /** A namespace-scoped reference to an agent config. */
 export const AgentConfigRef = z.object({
@@ -129,7 +126,8 @@ export const AgentConfig = AgentConfigRef.extend({
 });
 export type AgentConfig = z.infer<typeof AgentConfig>;
 
-// The env config is the sandbox recipe describing the world a session runs in.
+// The env config is a standalone sandbox recipe. No session references one:
+// a session's sandbox comes from its pinned agent config version.
 /** A namespace-scoped reference to an env config. */
 export const EnvConfigRef = z.object({
   namespace: z.string().min(1),
@@ -147,20 +145,8 @@ export type ListEnvConfigsRequest = z.infer<typeof ListEnvConfigsRequest>;
 
 /**
  * The recipe proper — the fields that describe the world, resolved, with
- * no envelope around them. Declared once here and derived from in every
- * direction: optional in the create and update requests (absence is a
- * default to resolve), required on the stored row, and required in the
- * copy a session carries. A capability promoted into the recipe therefore
- * cannot be half-wired — it becomes requestable, storable, and
- * snapshotted in one edit — and no session can provision from a recipe
- * that quietly lost a field.
- *
- * A session stores this by COPY rather than by reference: env configs
- * update in place, so there is no immutable version to pin the way a
- * session pins one agent config version. The copy is what makes a
- * session's world deterministic — a later edit can never reshape a run
- * already under way. envConfigId stays beside it for provenance; nothing
- * reads through it to provision.
+ * no envelope around them. Optional in the create and update requests
+ * (absence is a default to resolve), required on the stored row.
  */
 export const EnvConfigSnapshot = z.object({
   network: NetworkPolicy, // absence resolved to { type: "unrestricted" }
@@ -226,7 +212,6 @@ export const CreateSessionRequest = z.object({
   agentConfigId: z.string(),
   // Omit to pin the latest version at creation time.
   agentConfigVersion: z.number().int().min(1).optional(),
-  envConfigId: z.string(),
   metadata: JsonValue.optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -237,11 +222,8 @@ export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 export const Session = SessionRef.extend({
   ...CreateSessionRequest.omit({ namespace: true }).shape,
   // Materialized from the request or the agent config's latest version.
+  // The pinned version carries the session's sandbox (network, packages).
   agentConfigVersion: z.number().int().min(1),
-  // The env recipe as it read at create (EnvConfigSnapshot above). A
-  // resolved decision, materialized like the version above it, so it is
-  // always present — never restated from the env config row.
-  envConfigSnapshot: EnvConfigSnapshot,
   // The session's one workspace, registered by the driver's first
   // execute_tools claim (Store.bindSandbox); absent until then.
   sandboxId: z.string().optional(),

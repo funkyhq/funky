@@ -1,7 +1,7 @@
-// The env config snapshot end to end: the real pg store, the real
+// The pinned environment end to end: the real pg store, the real
 // ensureSandbox, and a fake provider that records what each create was
-// asked to enforce. The invariant under test is the whole point of the
-// snapshot — an env config edit reaches sessions created after it and
+// asked to enforce. The invariant under test is the whole point of
+// pinning — an agent config edit reaches sessions created after it and
 // nothing else, including across a sandbox replacement, which is the one
 // moment a running session provisions a second time.
 
@@ -54,77 +54,73 @@ function fakeProvider() {
 }
 
 /** What the worker's bindTools does: read the session, provision from
- *  the snapshot it carries. Deliberately never touches getEnvConfig. */
+ *  the agent config version it pinned. */
 async function provision(
   ref: SessionRef,
   provider: SandboxProvider,
 ): Promise<{ sandboxId: string; network: NetworkPolicy }> {
   const session = await store.getSession(ref);
   if (!session) throw new Error("no session");
-  const sandbox = await ensureSandbox(store, provider, ref, {
-    network: session.envConfigSnapshot.network,
+  const config = await store.getAgentConfig({
+    namespace: session.namespace,
+    agentConfigId: session.agentConfigId,
+    version: session.agentConfigVersion,
   });
-  return { sandboxId: sandbox.sandboxId, network: session.envConfigSnapshot.network };
+  if (!config) throw new Error("no agent config");
+  const sandbox = await ensureSandbox(store, provider, ref, { network: config.network });
+  return { sandboxId: sandbox.sandboxId, network: config.network };
 }
 
-describe("provisioning from the session's env snapshot", () => {
-  it("holds session 1 to its own recipe across an env update and a sandbox restart", async () => {
+describe("provisioning from the session's pinned agent config version", () => {
+  it("holds session 1 to its version across an agent update and a sandbox restart", async () => {
     const agent = await store.createAgentConfig({
       namespace: DEFAULT_NAMESPACE,
       inference: { provider: "fake", model: "m" },
       systemPrompt: "s",
-      network: { type: "unrestricted" },
-      packages: {},
-    });
-    const env = await store.createEnvConfig({
-      namespace: DEFAULT_NAMESPACE,
       network: { type: "none" },
       packages: { pip: ["numpy"] },
     });
-    const newSession = () =>
+    const newSession = (agentConfigVersion?: number) =>
       store.createSession({
         namespace: DEFAULT_NAMESPACE,
         agentConfigId: agent.agentConfigId,
-        envConfigId: env.envConfigId,
+        ...(agentConfigVersion === undefined ? {} : { agentConfigVersion }),
       });
 
-    // 1. session 1 exists and has provisioned once.
+    // 1. session 1 pins version 1 and has provisioned once.
     const s1 = await newSession();
     const { provider, created, kill } = fakeProvider();
     const first = await provision(s1, provider);
     expect(first.network).toEqual({ type: "none" });
     expect(created[0]?.network).toEqual({ type: "none" });
 
-    // 2. the env config is updated underneath it.
-    await store.updateEnvConfig(env, {
+    // 2. the agent config is updated underneath it — a new version 2.
+    await store.updateAgentConfig(agent, {
       network: { type: "allowlist", domains: ["example.com"] },
       packages: { npm: ["zod"] },
     });
 
     // 3. session 1's sandbox dies; the next claim must replace it. The
-    //    replacement is provisioned from the snapshot, not the new recipe.
+    //    replacement is provisioned from version 1, not the new one.
     kill(first.sandboxId);
     const replaced = await provision(s1, provider);
     expect(replaced.sandboxId).not.toBe(first.sandboxId); // really a new sandbox
     expect(created[1]?.network).toEqual({ type: "none" });
-    expect((await store.getSession(s1))?.envConfigSnapshot).toEqual({
-      network: { type: "none" },
-      packages: { pip: ["numpy"] },
-    });
+    expect((await store.getSession(s1))?.agentConfigVersion).toBe(1);
 
-    // 4. session 2, created after the update, gets the new recipe.
+    // 4. session 2, created after the update, pins version 2.
     const s2 = await newSession();
     const second = await provision(s2, provider);
     expect(second.network).toEqual({ type: "allowlist", domains: ["example.com"] });
     expect(created[2]?.network).toEqual({ type: "allowlist", domains: ["example.com"] });
-    expect((await store.getSession(s2))?.envConfigSnapshot).toEqual({
-      network: { type: "allowlist", domains: ["example.com"] },
-      packages: { npm: ["zod"] },
-    });
 
-    // Reconnecting a live sandbox provisions nothing at all — three
-    // creates across the whole scenario, never a fourth.
+    // 5. a session may still ask for the old version explicitly.
+    const s3 = await newSession(1);
+    expect((await provision(s3, provider)).network).toEqual({ type: "none" });
+
+    // Reconnecting a live sandbox provisions nothing at all — four creates
+    // across the whole scenario, never a fifth.
     await provision(s1, provider);
-    expect(created).toHaveLength(3);
+    expect(created).toHaveLength(4);
   });
 });

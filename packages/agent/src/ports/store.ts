@@ -110,18 +110,15 @@ export interface Store {
    * An archived config is read-only: a mutation throws ArchivedError. An
    * empty request remains a read and returns the archived row unchanged.
    *
-   * In place means exactly that: there is no version history, and this
-   * reaches no existing session. Sessions carry their own copy of the
-   * recipe (createSession), so an update changes only what sessions
-   * created after it will provision from.
+   * In place means exactly that: there is no version history. No session
+   * references an env config, so an update reaches none.
    */
   updateEnvConfig(ref: EnvConfigRef, req: UpdateEnvConfigRequest): Promise<EnvConfig | undefined>;
   /**
-   * Archive one namespace's environment config. The row stays readable and
-   * sessions that already copied its recipe keep running; future writes and
-   * references from new sessions are refused. Archiving does not edit the
-   * recipe, so updatedAt is preserved. There is no unarchive, making repeat
-   * calls idempotent: they return the original archivedAt.
+   * Archive one namespace's environment config. The row stays readable;
+   * future writes are refused. Archiving does not edit the recipe, so
+   * updatedAt is preserved. There is no unarchive, making repeat calls
+   * idempotent: they return the original archivedAt.
    */
   archiveEnvConfig(ref: EnvConfigRef): Promise<EnvConfig | undefined>;
   /** One namespace's env configs, newest first — see ListEnvConfigsRequest. */
@@ -129,19 +126,14 @@ export interface Store {
 
   // --- sessions ---
 
-  /** Create a session, making both configs durable against later edits:
-   *  PINS the requested agent version (or the latest when omitted), and
-   *  COPIES the env config's resolved recipe onto the row as
-   *  envConfigSnapshot — env configs update in place, so there is no
-   *  version to pin, and an implementation that stored only the reference
-   *  would let an edit reshape a running session's world. Namespace must
-   *  be specified. Rejects unknown configs or versions with
-   *  namespace-scoped checks, so foreign ids remain indistinguishable from
-   *  nonexistent ones, and either archived config with ArchivedError.
-   *  Archiving and creating are serialized on each config row: a session
-   *  either commits before an archive or sees it — never lands after one.
-   *  The env config row is read under the same discipline, so the copy is
-   *  always of a committed, active state. */
+  /** Create a session, making its config durable against later edits:
+   *  PINS the requested agent version (or the latest when omitted), which
+   *  carries both the behavior and the sandbox. Namespace must be
+   *  specified. Rejects an unknown config or version with namespace-scoped
+   *  checks, so foreign ids remain indistinguishable from nonexistent
+   *  ones, and an archived config with ArchivedError. Archiving and
+   *  creating are serialized on the config row: a session either commits
+   *  before an archive or sees it — never lands after one. */
   createSession(req: CreateSessionRequest): Promise<SessionRef>;
   getSession(ref: SessionRef): Promise<Session | undefined>;
   /**
@@ -291,10 +283,10 @@ const ARCHIVED_LABEL: Record<ArchivedResourceKind, string> = {
  * ever succeed.
  *
  * The thrower names the kind — the factories, never a shape test on the
- * ref. A Session row is structurally a SessionRef AND carries both config
- * ids, so inferring the kind would misread the whole-row-as-ref calls the
- * api makes (store.intake(session, …)); every throw site already knows
- * which resource it read.
+ * ref. A Session row is structurally a SessionRef AND carries its agent
+ * config id, so inferring the kind would misread the whole-row-as-ref
+ * calls the api makes (store.intake(session, …)); every throw site
+ * already knows which resource it read.
  */
 export class ArchivedError extends Error {
   readonly namespace: string;

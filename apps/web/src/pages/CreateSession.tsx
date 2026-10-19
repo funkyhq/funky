@@ -1,5 +1,5 @@
 // apps/web/src/pages/CreateSession.tsx
-// The Start Session dialog: the two configs a session is made of, and the
+// The Start Session dialog: the agent config a session is made of, and the
 // first thing to say to it.
 //
 // Two calls, not one. The api creates a session and takes messages through
@@ -21,7 +21,7 @@
 //    be sent at all, and points at the conversation, where the log shows
 //    whether it arrived and the composer can send it if it didn't.
 //
-// The pickers offer ACTIVE configs only. An archived one is readable and
+// The picker offers ACTIVE configs only. An archived one is readable and
 // keeps its running sessions, but nothing new may name it — the api answers
 // 409 — so offering it would be offering a refusal.
 import { type FormEvent, type RefObject, useEffect, useState } from "react";
@@ -29,19 +29,17 @@ import {
   type AgentConfig,
   ApiError,
   DEFAULT_NAMESPACE,
-  type EnvConfig,
   type NetworkPolicy,
   type Session,
   createSession,
   listAgentConfigs,
-  listEnvConfigs,
   sendMessage,
 } from "../lib/api";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
 
 /**
- * How deep the pickers read. One page each, at the api's ceiling: a picker
+ * How deep the picker reads. One page, at the api's ceiling: a picker
  * is a choice, not an inventory, and a namespace with more than this many
  * configs is one where picking from a list has stopped being the way to
  * start a session anyway. The sections themselves page properly.
@@ -56,8 +54,7 @@ const active = (config: { archivedAt?: string }) => config.archivedAt === undefi
  *  shows every id it was made from in full. */
 const short = (id: string) => id.slice(0, 8);
 
-/** What a recipe does to the network, which is the whole of what an env
- *  config currently decides. */
+/** What a config's sandbox does to the network. */
 function networkLabel(network: NetworkPolicy): string {
   return network.type === "allowlist"
     ? `allowlist of ${network.domains.length}`
@@ -69,17 +66,11 @@ function networkLabel(network: NetworkPolicy): string {
 const agentOptions = (configs: AgentConfig[]): FieldOption[] =>
   configs.map((config) => ({
     id: config.id,
-    label: `${config.inference.model} · v${config.version} · ${short(config.id)}`,
+    label: `${config.inference.model} · v${config.version} · ${networkLabel(config.network)} · ${short(config.id)}`,
   }));
 
-const envOptions = (configs: EnvConfig[]): FieldOption[] =>
-  configs.map((config) => ({
-    id: config.id,
-    label: `${networkLabel(config.network)} · ${short(config.id)}`,
-  }));
-
-/** The active configs a session can be made from, once both lists land. */
-type Choices = { agents: AgentConfig[]; envs: EnvConfig[] };
+/** The active configs a session can be made from, once the list lands. */
+type Choices = { agents: AgentConfig[] };
 
 export function CreateSession({
   onCreated,
@@ -116,29 +107,24 @@ export function CreateSession({
     kind: "refused" | "unconfirmed";
   }>();
   const [agentConfigId, setAgentConfigId] = useState("");
-  const [envConfigId, setEnvConfigId] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   // The session, once it exists. Set before the message is sent, so a
   // failure after this point knows there is a row to answer for.
   const [created, setCreated] = useState<Session>();
-  // The api's refusal — from either call, or from the reads that fill the
-  // pickers.
+  // The api's refusal — from either call, or from the read that fills the
+  // picker.
   const [failure, setFailure] = useState<string>();
 
   useEffect(() => {
     const abort = new AbortController();
-    Promise.all([
-      listAgentConfigs({ limit: PICKER_LIMIT, signal: abort.signal }),
-      listEnvConfigs({ limit: PICKER_LIMIT, signal: abort.signal }),
-    ]).then(
-      ([agents, envs]) => {
-        const usable = { agents: agents.data.filter(active), envs: envs.data.filter(active) };
+    listAgentConfigs({ limit: PICKER_LIMIT, signal: abort.signal }).then(
+      (agents) => {
+        const usable = { agents: agents.data.filter(active) };
         setChoices(usable);
-        // The newest of each, which is what the lists lead with — the
-        // likeliest choice, and never an empty select showing nothing.
+        // The newest, which is what the list leads with — the likeliest
+        // choice, and never an empty select showing nothing.
         setAgentConfigId(usable.agents[0]?.id ?? "");
-        setEnvConfigId(usable.envs[0]?.id ?? "");
       },
       (err: unknown) => {
         if (abort.signal.aborted) return;
@@ -149,25 +135,15 @@ export function CreateSession({
   }, []);
 
   const message = text.trim();
-  const ready =
-    choices !== undefined && agentConfigId !== "" && envConfigId !== "" && message !== "";
+  const ready = choices !== undefined && agentConfigId !== "" && message !== "";
   /** Whether trying again is something this dialog may offer at all —
    *  false for either half once a request has gone unanswered. */
   const resendable = outcome?.kind !== "unconfirmed";
   /** The create is the half with nothing to fall back to. */
   const strandedCreate = outcome?.stage === "create" && outcome.kind === "unconfirmed";
-  // What the pickers can't offer, said once: a session needs one of each,
-  // and neither section is reachable from inside a dialog.
-  const missing =
-    choices === undefined
-      ? undefined
-      : choices.agents.length === 0 && choices.envs.length === 0
-        ? "an agent config and an env config"
-        : choices.agents.length === 0
-          ? "an agent config"
-          : choices.envs.length === 0
-            ? "an env config"
-            : undefined;
+  // What the picker can't offer, said once: a session needs a config, and
+  // its section isn't reachable from inside a dialog.
+  const missing = choices !== undefined && choices.agents.length === 0;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -186,7 +162,7 @@ export function CreateSession({
         // No abort signal: a create in flight is a row that may well exist,
         // so the dialog refuses to close rather than walk away from an
         // answer it would have to guess at.
-        session = await createSession({ agentConfigId, envConfigId });
+        session = await createSession({ agentConfigId });
       } catch (err) {
         // Only the api refusing the REQUEST proves nothing was written. No
         // answer at all, a body that stopped arriving mid-json, a 5xx
@@ -223,7 +199,7 @@ export function CreateSession({
       title="Start session"
       description={
         <>
-          One agent config, one env config, and the message that sets it going. Lands in the{" "}
+          An agent config and the message that sets it going. Lands in the{" "}
           <code>{DEFAULT_NAMESPACE}</code> namespace.
         </>
       }
@@ -248,12 +224,12 @@ export function CreateSession({
                 : "but the api never answered its first message — it may or may not have been sent. Open the session to see, and send it there if it wasn't."}
             </p>
           )}
-          {missing === undefined ? null : (
+          {missing ? (
             <p className="note">
-              There is no active {missing} to start a session with. Make one in its own section
+              There is no active agent config to start a session with. Make one in its own section
               first — an archived config keeps its sessions but can&rsquo;t take a new one.
             </p>
-          )}
+          ) : null}
 
           <Field
             label="Agent config"
@@ -271,21 +247,6 @@ export function CreateSession({
               created !== undefined ||
               choices === undefined ||
               choices.agents.length === 0
-            }
-            required
-          />
-          <Field
-            label="Env config"
-            name="envConfigId"
-            value={envConfigId}
-            onChange={setEnvConfigId}
-            options={envOptions(choices?.envs ?? [])}
-            disabled={
-              busy ||
-              !resendable ||
-              created !== undefined ||
-              choices === undefined ||
-              choices.envs.length === 0
             }
             required
           />

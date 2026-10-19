@@ -1,17 +1,17 @@
 // apps/web/src/pages/QuickStart.tsx
-// The whole quickstart as one walk: the agent config, the env config, and
-// the session that pairs them — the three things a running agent is made
-// of, in the order the api makes them, without visiting three sections.
+// The whole quickstart as one walk: the agent config and the session that
+// runs it — the two things a running agent is made of, in the order the api
+// makes them, without visiting two sections.
 //
-// NOTHING IS WRITTEN UNTIL THE LAST STEP. The api has three create routes
-// and this page uses all of them, but not until "Start session" is pressed,
+// NOTHING IS WRITTEN UNTIL THE LAST STEP. The api has two create routes
+// and this page uses both, but not until "Start session" is pressed,
 // which is what makes walking backwards free: a step you return to is still
 // a form, because the config it describes does not exist yet. That is the
 // whole reason the numbers above are clickable at all.
 //
 // The one exception is a submit that got PART WAY, and it is the only place
-// this page is complicated. Four calls run in order — agent config, env
-// config, session, first message — and none of them takes an idempotency
+// this page is complicated. Three calls run in order — agent config,
+// session, first message — and none of them takes an idempotency
 // key, so what has already landed must be kept and skipped on the next
 // press. Two consequences follow, both visible:
 //
@@ -29,10 +29,8 @@ import {
   type AgentConfig,
   ApiError,
   DEFAULT_NAMESPACE,
-  type EnvConfig,
   type Session,
   createAgentConfig,
-  createEnvConfig,
   createSession,
   sendMessage,
 } from "../lib/api";
@@ -42,43 +40,38 @@ import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { Field } from "../components/Field";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { ProviderKeys } from "../components/ProviderKeys";
-import { AgentIcon, EnvironmentIcon, SessionIcon } from "../components/Icons";
+import { AgentIcon, SessionIcon } from "../components/Icons";
 import "./QuickStart.css";
 
 /** Where a started session is opened. */
 const SECTION = "#/session";
 
-/** The three steps, in the order the api makes them. The index IS the step
+/** The two steps, in the order the api makes them. The index IS the step
  *  number, and the dots above the card are these. */
 const STEPS = [
   {
     label: "Agent",
     Icon: AgentIcon,
     title: "Create the agent config",
-    blurb: "The model a session thinks with, and the prompt it starts from.",
-  },
-  {
-    label: "Environment",
-    Icon: EnvironmentIcon,
-    title: "Create the env config",
-    blurb: "The sandbox recipe its commands run inside. Only the network is set here.",
+    blurb:
+      "The model a session thinks with, the prompt it starts from, and the network its commands can reach.",
   },
   {
     label: "Session",
     Icon: SessionIcon,
     title: "Start the session",
-    blurb: "The two configs above, and the message that sets the agent going.",
+    blurb: "The config above, and the message that sets the agent going.",
   },
 ];
 
 /** Which call the submit is making — for the button to name, and for a
  *  failure to say what it was doing when it stopped. */
-type Stage = "agent" | "env" | "session" | "message";
+type Stage = "agent" | "session" | "message";
 
 /** What the submit has actually created. Empty until "Start session" is
  *  pressed, and only ever added to: a submit that stopped part way keeps
  *  what landed, so pressing again resumes rather than duplicating. */
-type Made = { agent?: AgentConfig; env?: EnvConfig; session?: Session };
+type Made = { agent?: AgentConfig; session?: Session };
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -89,8 +82,8 @@ const messageOf = (err: unknown) => (err instanceof Error ? err.message : String
 const refusal = (err: unknown) =>
   err instanceof ApiError && err.status !== undefined && err.status < 500;
 
-/** One line of what a set of fields will make, for the step that shows the
- *  two configs rather than offering them. */
+/** One line of what the network fields will make, for the step that shows
+ *  the config rather than offering it. */
 function policyLine(fields: NetworkFields): string {
   const label = POLICIES.find((policy) => policy.id === fields.type)?.label ?? fields.type;
   const network = toPolicy(fields);
@@ -100,9 +93,11 @@ function policyLine(fields: NetworkFields): string {
 export function QuickStart() {
   const [step, setStep] = useState(0);
   const [agent, setAgent] = useState<AgentFields>(initialFields);
-  // The api's own default is where the form starts: an unrestricted recipe
-  // is what posting an empty body would have made.
-  const [env, setEnv] = useState<NetworkFields>({ type: "unrestricted", domains: "" });
+  // The policy starts open: reach anything.
+  const [networkFields, setNetworkFields] = useState<NetworkFields>({
+    type: "unrestricted",
+    domains: "",
+  });
   const [text, setText] = useState("");
   /** Which call is out, when one is. Absent between presses. */
   const [doing, setDoing] = useState<Stage>();
@@ -117,8 +112,8 @@ export function QuickStart() {
   // Whether this page is still the one on screen. Nothing aborts the chain
   // when it goes away — a sidebar link or the Back button unmounts this
   // while a create is still out — and the calls are worth finishing: the
-  // press authorized all four, and stopping half way leaves configs with no
-  // session where finishing leaves a session the list can show. What must
+  // press authorized all three, and stopping half way leaves a config with
+  // no session where finishing leaves a session the list can show. What must
   // NOT survive the unmount is the navigation, which would pull someone
   // into a conversation they have already walked away from.
   const live = useRef(true);
@@ -151,17 +146,15 @@ export function QuickStart() {
   const provider = byId(agent.provider);
   // Absent while the allowlist has no domain on it — the one state of the
   // network form that isn't a policy yet (see toPolicy).
-  const network = toPolicy(env);
+  const network = toPolicy(networkFields);
   const message = text.trim();
   const last = STEPS.length - 1;
 
   /** Whether the step on screen has what it needs to be left. */
   const ready =
     step === 0
-      ? provider !== undefined
-      : step === 1
-        ? network !== undefined
-        : message !== "" && network !== undefined && provider !== undefined;
+      ? provider !== undefined && network !== undefined
+      : message !== "" && network !== undefined && provider !== undefined;
 
   /** Back to a step already passed. Not forward: every step is left through
    *  its own button, which is what checks it has what it needs. */
@@ -200,16 +193,9 @@ export function QuickStart() {
         }));
       setMade((prev) => ({ ...prev, agent: agentConfig }));
 
-      stage = "env";
-      setDoing("env");
-      const envConfig = made.env ?? (await createEnvConfig({ network }));
-      setMade((prev) => ({ ...prev, env: envConfig }));
-
       stage = "session";
       setDoing("session");
-      const session =
-        made.session ??
-        (await createSession({ agentConfigId: agentConfig.id, envConfigId: envConfig.id }));
+      const session = made.session ?? (await createSession({ agentConfigId: agentConfig.id }));
       setMade((prev) => ({ ...prev, session }));
 
       stage = "message";
@@ -253,7 +239,7 @@ export function QuickStart() {
       <header className="qs-head">
         <h1 className="qs-title">Quick Start</h1>
         <p className="qs-lede">
-          An agent config, an env config, and a session that pairs them — made together, in the{" "}
+          An agent config and a session that runs it — made together, in the{" "}
           <code>{DEFAULT_NAMESPACE}</code> namespace. Nothing is created until the last step.
         </p>
       </header>
@@ -323,28 +309,20 @@ export function QuickStart() {
                     onChange={setAgent}
                     disabled={busy || made.agent !== undefined}
                   />
+                  <NetworkFieldset
+                    fields={networkFields}
+                    onChange={setNetworkFields}
+                    disabled={busy || made.agent !== undefined}
+                    autoFocus={false}
+                  />
                 </>
               )
-            ) : step === 1 ? (
-              <>
-                {made.env === undefined ? null : (
-                  <p className="note">
-                    Already created by the attempt that stopped, so these fields are settled:{" "}
-                    <code>{made.env.id}</code>. Starting again picks up from what is still missing.
-                  </p>
-                )}
-                <NetworkFieldset
-                  fields={env}
-                  onChange={setEnv}
-                  disabled={busy || made.env !== undefined}
-                />
-              </>
             ) : (
               <>
-                {/* What the press will make, not what it has: these two
-                    carry no id until they exist. The one exception is a
-                    submit that already made them, and then the id is what
-                    is worth showing. */}
+                {/* What the press will make, not what it has: the config
+                    carries no id until it exists. The one exception is a
+                    submit that already made it, and then the id is what is
+                    worth showing. */}
                 <ul className="qs-plan">
                   <li>
                     <span className="qs-plan-key">Agent config</span>
@@ -361,25 +339,15 @@ export function QuickStart() {
                         ? "No system prompt"
                         : agent.systemPrompt.trim()}
                     </span>
+                    <span className="qs-plan-note">Network: {policyLine(networkFields)}</span>
+                    <span className="qs-plan-note">
+                      No packages — the console doesn&rsquo;t set those yet.
+                    </span>
                     <span className="qs-plan-state">
                       {made.agent === undefined ? (
                         "created when you start"
                       ) : (
                         <code>{made.agent.id}</code>
-                      )}
-                    </span>
-                  </li>
-                  <li>
-                    <span className="qs-plan-key">Env config</span>
-                    <span className="qs-plan-value">{policyLine(env)}</span>
-                    <span className="qs-plan-note">
-                      No packages — the console doesn&rsquo;t set those yet.
-                    </span>
-                    <span className="qs-plan-state">
-                      {made.env === undefined ? (
-                        "created when you start"
-                      ) : (
-                        <code>{made.env.id}</code>
                       )}
                     </span>
                   </li>
@@ -465,15 +433,13 @@ export function QuickStart() {
                 <button className="btn btn-primary" type="submit" disabled={busy || !ready}>
                   {doing === "agent"
                     ? "Creating the agent config…"
-                    : doing === "env"
-                      ? "Creating the env config…"
-                      : doing === "session"
-                        ? "Creating the session…"
-                        : doing === "message"
-                          ? "Sending the first message…"
-                          : made.session === undefined
-                            ? "Start session"
-                            : "Try again"}
+                    : doing === "session"
+                      ? "Creating the session…"
+                      : doing === "message"
+                        ? "Sending the first message…"
+                        : made.session === undefined
+                          ? "Start session"
+                          : "Try again"}
                 </button>
               )}
             </>

@@ -25,7 +25,6 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type {
-  EnvConfigSnapshot,
   InferenceConfig,
   JsonValue,
   NetworkPolicy,
@@ -96,8 +95,7 @@ export const envConfigs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     // Latest recipe edit; archive is a lifecycle mark, not a recipe edit.
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-    // The terminal state, set once: null = active. Existing sessions use
-    // their snapshot, while this mark closes the recipe to new sessions.
+    // The terminal state, set once: null = active.
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [primaryKey({ columns: [t.namespace, t.id] })],
@@ -110,12 +108,9 @@ export const sessions = pgTable(
     id: text("id").notNull(),
     agentConfigId: text("agent_config_id").notNull(),
     // Resolved from the agent's latest version at session creation. The
-    // composite FK below makes every session's behavior snapshot durable.
+    // composite FK below makes every session's behavior and sandbox
+    // snapshot durable.
     agentConfigVersion: integer("agent_config_version").notNull(),
-    envConfigId: text("env_config_id").notNull(),
-    // The env recipe resolved at create (core/store.ts EnvConfigSnapshot).
-    // Provisioning reads this, never the mutable env_configs row.
-    envConfigSnapshot: jsonb("env_config_snapshot").$type<EnvConfigSnapshot>().notNull(),
     // The session's one workspace; null until bindSandbox registers it.
     sandboxId: text("sandbox_id"),
     metadata: jsonb("metadata").$type<WrappedJson>(),
@@ -126,8 +121,8 @@ export const sessions = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.namespace, t.id] }),
-    // Same-namespace, structural, on both references: the pinned version
-    // and the env recipe must live in the session's own namespace.
+    // Same-namespace, structural: the pinned version must live in the
+    // session's own namespace.
     foreignKey({
       columns: [t.namespace, t.agentConfigId, t.agentConfigVersion],
       foreignColumns: [
@@ -135,10 +130,6 @@ export const sessions = pgTable(
         agentConfigVersions.agentConfigId,
         agentConfigVersions.version,
       ],
-    }),
-    foreignKey({
-      columns: [t.namespace, t.envConfigId],
-      foreignColumns: [envConfigs.namespace, envConfigs.id],
     }),
     // The list scan's index (pg.ts listSessions). The PK's second column
     // is a random id, so it cannot order by time: without this, a page

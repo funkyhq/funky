@@ -51,9 +51,8 @@ export type NetworkPolicy =
 export type Packages = Record<string, string[]>;
 
 /**
- * One env config: the sandbox recipe a session's commands run inside.
- * Unlike an agent config it is updated IN PLACE — there is no version to
- * pin, which is why a session copies the recipe instead of referencing it.
+ * One env config: a standalone sandbox recipe, updated IN PLACE. No session
+ * references one — a session's sandbox comes from its pinned agent config.
  */
 export type EnvConfig = {
   id: string;
@@ -300,8 +299,8 @@ export function createEnvConfig(
 
 /**
  * One page of the namespace's env configs, newest first. Archived recipes
- * are listed beside live ones — they stay readable, and the sessions that
- * copied them keep running — so a row's status is worth a column.
+ * are listed beside live ones — they stay readable — so a row's status is
+ * worth a column.
  */
 export function listEnvConfigs(
   opts: { after?: string; limit?: number; signal?: AbortSignal } = {},
@@ -358,10 +357,8 @@ export function updateEnvConfig(
 
 /**
  * Archives a recipe and returns it carrying the mark. Terminal, and the api
- * has no route back: the row stays readable and the sessions that already
- * COPIED it keep running — a session provisions from its own copy rather
- * than through the id — but it takes no further update and no new session
- * can name it. Idempotent by consequence: a second call answers with the
+ * has no route back: the row stays readable, but it takes no further
+ * update. Idempotent by consequence: a second call answers with the
  * first one's archivedAt rather than failing.
  *
  * It retires the recipe without EDITING it, so updatedAt does not move. That
@@ -385,19 +382,8 @@ export function archiveEnvConfig(
 }
 
 /**
- * The env recipe as it read when a session was created. A session COPIES
- * the recipe rather than pointing at it — env configs update in place, so
- * there is no version to pin — which is what keeps a run's world fixed
- * once it has started.
- */
-export type EnvConfigSnapshot = {
-  network: NetworkPolicy;
-  packages: Packages;
-};
-
-/**
- * One session: an agent config at one pinned version, a copy of an env
- * recipe, and the durable append-only entry log the two run against.
+ * One session: an agent config at one pinned version — its behavior and its
+ * sandbox — and the durable append-only entry log it runs against.
  *
  * There is no state field here, and its absence is the point: funky
  * derives whether a session is running from its work items and its log
@@ -411,9 +397,6 @@ export type Session = {
   /** Pinned at creation, so a later update to the config cannot reshape a
    *  run already under way. */
   agentConfigVersion: number;
-  /** Provenance for the snapshot beside it; nothing resolves through it. */
-  envConfigId: string;
-  envConfigSnapshot: EnvConfigSnapshot;
   /** The session's one workspace, registered when a worker first runs tools
    *  for it. Absent until then. */
   sandboxId?: string;
@@ -473,15 +456,14 @@ export function getSession(id: string, opts: { signal?: AbortSignal } = {}): Pro
 export type CreateSessionInput = {
   agentConfigId: string;
   agentConfigVersion?: number;
-  envConfigId: string;
   metadata?: unknown;
 };
 
 /**
- * Creates a session and returns it materialized: the agent version pinned
- * and the env recipe copied, so the answer is the world the run will have
- * rather than the request that asked for it. The namespace rides in the
- * body here, as it does for both config creates.
+ * Creates a session and returns it materialized: the agent version pinned,
+ * so the answer is the world the run will have rather than the request that
+ * asked for it. The namespace rides in the body here, as it does for both
+ * config creates.
  *
  * An archived config answers 409 and an unknown one 400 — the api's words
  * either way, which is why the dialog shows only active configs.
