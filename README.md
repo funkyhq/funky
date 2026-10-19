@@ -64,7 +64,8 @@ replace; omitted fields are preserved. Responses include a monotonic `version`: 
 current value in an update for optimistic concurrency (a stale value returns 409), or omit it
 for an unconditional last-write-wins update. A session pins the version current when it was
 created — behavior and sandbox together — so an update reaches only sessions created after it.
-`packages` is stored on the config but not yet installed in the sandbox.
+`packages` are installed into the sandbox before the agent's first tool call; see
+[Packages](#packages).
 
 The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
 run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
@@ -113,6 +114,21 @@ the session's config names, so one stack runs sessions on different vendors side
 
 Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
 port.
+
+### Packages
+
+`packages` maps a package manager to specs in its own syntax:
+
+```json
+"packages": { "apt": ["graphviz"], "pip": ["pandas==2.2.0"], "npm": ["express@4.18.0"] }
+```
+
+Supported on E2B: `apt`, `pip`, `npm`. Each package set is built once into an E2B template
+and shared by every session that uses it, so packages work under any `network` policy.
+
+- The first session on a new set waits for the build.
+- Unpinned specs resolve once, at the first build. Pin versions to control them.
+- A spec that fails to install ends the run as `"error"`, with the reason in the tool result.
 
 ## Why Funky?
 

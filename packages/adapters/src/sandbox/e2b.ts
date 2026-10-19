@@ -15,19 +15,24 @@
 //
 // E2B enforces every NetworkPolicy variant (allowOut takes hostnames;
 // allowInternetAccess: false is deny-all), so the port's reject-when-
-// unenforceable clause never triggers for the network. It does for
-// packages: installing them is not built yet, so any asked-for package
-// rejects create() before anything is provisioned.
+// unenforceable clause never triggers for the network. Packages are
+// installed by building a template per package set (e2b-packages.ts);
+// the clause triggers there for a manager the recipe has no installer
+// for, and for a build whose install command fails. The common case
+// costs nothing extra: the create goes straight to the package
+// template, and only its 404 — the template has no ready build yet —
+// takes the build path.
 
 import {
   CommandExitError,
   Sandbox as E2bSandbox,
+  SandboxError,
   SandboxNotFoundError as E2bSandboxNotFoundError,
   TimeoutError,
 } from "e2b";
 import type { SandboxInfo as E2bSandboxInfo, SandboxOpts } from "e2b";
 import type { NetworkPolicy } from "@funky/core";
-import { SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
+import { SandboxNotFoundError } from "@funky/agent";
 import type {
   CommandResult,
   CreateSandboxOptions,
@@ -36,6 +41,15 @@ import type {
   SandboxInfo,
   SandboxProvider,
 } from "@funky/agent";
+import {
+  assertInstallable,
+  canonicalPackages,
+  e2bTemplateBuilds,
+  ensureTemplate,
+  installCommands,
+  NPM_GLOBAL_ROOT,
+  templateName,
+} from "./e2b-packages";
 
 export interface E2bProviderOptions {
   /** Defaults to the E2B_API_KEY environment variable. */
@@ -44,26 +58,37 @@ export interface E2bProviderOptions {
 
 export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider {
   const connection = { apiKey: options?.apiKey };
+  const builds = e2bTemplateBuilds(connection);
 
   return {
     async create(opts?: CreateSandboxOptions): Promise<Sandbox> {
-      const managers = Object.entries(opts?.packages ?? {})
-        .filter(([, specs]) => specs.length > 0)
-        .map(([manager]) => manager);
-      if (managers.length > 0) {
-        throw new SandboxProvisionError(
-          `installing packages is not supported by the E2B sandbox provider yet ` +
-            `(asked for: ${managers.sort().join(", ")})`,
-        );
-      }
-      const sandbox = await E2bSandbox.create({
+      const canonical = canonicalPackages(opts?.packages ?? {});
+      assertInstallable(canonical);
+      const sandboxOpts: SandboxOpts = {
         ...connection,
         timeoutMs: opts?.timeoutMs,
         lifecycle: { onTimeout: opts?.lifecycle ?? "pause" },
         metadata: opts?.metadata,
         ...toNetworkOpts(opts?.network),
-      });
-      return wrap(sandbox, connection);
+        // Global npm installs resolve through NODE_PATH; set here because
+        // a template's envs never reach runtime commands. Sandbox-level,
+        // so it survives connect and pause/resume.
+        ...(canonical.some(([manager]) => manager === "npm")
+          ? { envs: { NODE_PATH: NPM_GLOBAL_ROOT } }
+          : {}),
+      };
+      if (canonical.length === 0) {
+        return wrap(await E2bSandbox.create(sandboxOpts), connection);
+      }
+
+      const template = templateName(canonical);
+      try {
+        return wrap(await E2bSandbox.create(template, sandboxOpts), connection);
+      } catch (error) {
+        if (!isUnbuilt(error)) throw error;
+      }
+      await ensureTemplate(builds, template, installCommands(canonical));
+      return wrap(await E2bSandbox.create(template, sandboxOpts), connection);
     },
 
     async connect(sandboxId: string): Promise<Sandbox> {
@@ -176,6 +201,14 @@ function toResult(result: { stdout: string; stderr: string; exitCode: number }):
 
 function toInfo(info: E2bSandboxInfo): SandboxInfo {
   return { sandboxId: info.sandboxId, state: info.state, metadata: info.metadata };
+}
+
+/** A create's 404 on a package template: never built ("template … not
+ *  found"), or no ready build yet ("tag 'default' does not exist" — a
+ *  build is running, or the last one failed). The SDK types it only as
+ *  a SandboxError with the status leading the message. */
+function isUnbuilt(error: unknown): boolean {
+  return error instanceof SandboxError && error.message.startsWith("404:");
 }
 
 function toNetworkOpts(policy?: NetworkPolicy): Partial<SandboxOpts> {

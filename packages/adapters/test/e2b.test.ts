@@ -1,6 +1,7 @@
 // The e2b adapter's translation layer, pinned against a mocked SDK: the
 // explicit lifecycle default (the SDK's own is "kill"), the NetworkPolicy
-// mapping, the not-yet-supported packages rejection, exit/timeout errors settling as results, the one-reconnect
+// mapping, the package-template path (its build state machine has its own
+// suite, e2b-packages.test.ts), exit/timeout errors settling as results, the one-reconnect
 // recovery, and the Uint8Array → ArrayBuffer copy. The real SDK is
 // exercised by the key-gated live suite in e2b-live.test.ts.
 
@@ -20,10 +21,13 @@ const mocks = vi.hoisted(() => {
   }
   class TimeoutError extends Error {}
   class SandboxNotFoundError extends Error {}
+  class SandboxError extends Error {}
   return {
     CommandExitError,
     TimeoutError,
     SandboxNotFoundError,
+    SandboxError,
+    ensureTemplate: vi.fn(),
     create: vi.fn(),
     connect: vi.fn(),
     getInfo: vi.fn(),
@@ -35,12 +39,20 @@ vi.mock("e2b", () => ({
   CommandExitError: mocks.CommandExitError,
   TimeoutError: mocks.TimeoutError,
   SandboxNotFoundError: mocks.SandboxNotFoundError,
+  SandboxError: mocks.SandboxError,
   Sandbox: class {
     static create = mocks.create;
     static connect = mocks.connect;
     static getInfo = mocks.getInfo;
     static list = mocks.list;
   },
+}));
+
+// The package helpers stay real; only the build itself is stubbed.
+vi.mock("../src/sandbox/e2b-packages", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/sandbox/e2b-packages")>()),
+  e2bTemplateBuilds: () => ({ fake: "builds" }),
+  ensureTemplate: mocks.ensureTemplate,
 }));
 
 function fakeSandbox(overrides?: { run?: ReturnType<typeof vi.fn> }) {
@@ -94,19 +106,79 @@ describe("createE2bProvider", () => {
     });
   });
 
-  test("create rejects asked-for packages before provisioning anything — installing is not built yet", async () => {
+  test("create with no packages starts from the default template", async () => {
     mocks.create.mockResolvedValue(fakeSandbox());
     const provider = createE2bProvider();
 
-    const rejected = provider.create({ packages: { pip: ["numpy"], apt: ["graphviz"], npm: [] } });
-    await expect(rejected).rejects.toBeInstanceOf(SandboxProvisionError);
-    await expect(rejected).rejects.toThrow("(asked for: apt, pip)");
-    expect(mocks.create).not.toHaveBeenCalled();
-
-    // Nothing asked for is nothing to install.
     await provider.create({ packages: {} });
     await provider.create({ packages: { pip: [] } });
+    for (const call of mocks.create.mock.calls) {
+      expect(call).toHaveLength(1); // opts only — no template name
+      expect(call[0]).not.toHaveProperty("envs");
+    }
+  });
+
+  test("create goes straight to a built package template — no build lookups", async () => {
+    mocks.create.mockResolvedValue(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: { pip: ["pandas==2.2.0", "numpy"] }, metadata: { s: "1" } });
+    // Same set, written differently: the same template.
+    await provider.create({ packages: { pip: ["numpy", "pandas==2.2.0", "numpy"] } });
+    const [first, second] = mocks.create.mock.calls;
+    expect(first?.[0]).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
+    expect(second?.[0]).toBe(first?.[0]);
+    expect(first?.[1]).toMatchObject({ metadata: { s: "1" } });
+    expect(first?.[1]).not.toHaveProperty("envs"); // no npm, no NODE_PATH
+    expect(mocks.ensureTemplate).not.toHaveBeenCalled();
+  });
+
+  test("create sets NODE_PATH when npm packages are asked for", async () => {
+    mocks.create.mockResolvedValue(fakeSandbox());
+    await createE2bProvider().create({ packages: { npm: ["zod@4"] } });
+    expect(mocks.create.mock.lastCall?.[1]).toMatchObject({
+      envs: { NODE_PATH: "/usr/local/lib/node_modules" },
+    });
+  });
+
+  test("create builds an unbuilt template, then creates from it", async () => {
+    mocks.create
+      .mockRejectedValueOnce(new mocks.SandboxError("404: tag 'default' does not exist"))
+      .mockResolvedValueOnce(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: { pip: ["it's>=1"], apt: ["graphviz"] } });
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith(
+      { fake: "builds" },
+      mocks.create.mock.calls[0]?.[0],
+      [
+        "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'graphviz'",
+        "pip install 'it'\\''s>=1'",
+      ],
+    );
     expect(mocks.create).toHaveBeenCalledTimes(2);
+  });
+
+  test("create rejects what it cannot install, and lets other failures through", async () => {
+    const provider = createE2bProvider();
+
+    const cargo = provider.create({ packages: { cargo: ["ripgrep"], pip: ["numpy"] } });
+    await expect(cargo).rejects.toBeInstanceOf(SandboxProvisionError);
+    await expect(cargo).rejects.toThrow("cannot install cargo packages");
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    mocks.ensureTemplate.mockRejectedValueOnce(new SandboxProvisionError("package install failed"));
+    mocks.create.mockRejectedValueOnce(new mocks.SandboxError("404: template not found"));
+    await expect(provider.create({ packages: { pip: ["nope==99"] } })).rejects.toBeInstanceOf(
+      SandboxProvisionError,
+    );
+
+    // Not a 404: no build, the error propagates untyped (transient).
+    mocks.create.mockRejectedValueOnce(new mocks.SandboxError("500: internal"));
+    await expect(provider.create({ packages: { pip: ["numpy"] } })).rejects.toThrow(
+      "500: internal",
+    );
+    expect(mocks.ensureTemplate).toHaveBeenCalledTimes(1);
   });
 
   test("connect rides e2b's auto-resuming connect — no state check first", async () => {
