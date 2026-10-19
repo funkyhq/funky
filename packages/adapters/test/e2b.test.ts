@@ -1,7 +1,8 @@
 // The e2b adapter's translation layer, pinned against a mocked SDK: the
 // explicit lifecycle default (the SDK's own is "kill"), the NetworkPolicy
 // mapping, the package-template path (its build state machine has its own
-// suite, e2b-packages.test.ts), exit/timeout errors settling as results, the one-reconnect
+// suite, e2b-packages.test.ts), a refused create typed as a provision error,
+// exit/timeout errors settling as results, the one-reconnect
 // recovery, and the Uint8Array → ArrayBuffer copy. The real SDK is
 // exercised by the key-gated live suite in e2b-live.test.ts.
 
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("e2b", () => ({
+  ALL_TRAFFIC: "0.0.0.0/0",
   CommandExitError: mocks.CommandExitError,
   TimeoutError: mocks.TimeoutError,
   SandboxNotFoundError: mocks.SandboxNotFoundError,
@@ -100,9 +102,18 @@ describe("createE2bProvider", () => {
     await provider.create({ network: { type: "none" } });
     expect(mocks.create.mock.lastCall?.[0]).toMatchObject({ allowInternetAccess: false });
 
+    // The domains over a deny-all: E2B's egress is open unless denied, so
+    // allowOut alone fences nothing, and E2B refuses it (400).
     await provider.create({ network: { type: "allowlist", domains: ["api.example.com"] } });
     expect(mocks.create.mock.lastCall?.[0]).toMatchObject({
-      network: { allowOut: ["api.example.com"] },
+      network: { allowOut: ["api.example.com"], denyOut: ["0.0.0.0/0"] },
+    });
+    expect(mocks.create.mock.lastCall?.[0]).not.toHaveProperty("allowInternetAccess");
+
+    // An allowlist of nothing reaches nothing.
+    await provider.create({ network: { type: "allowlist", domains: [] } });
+    expect(mocks.create.mock.lastCall?.[0]).toMatchObject({
+      network: { allowOut: [], denyOut: ["0.0.0.0/0"] },
     });
   });
 
@@ -179,6 +190,41 @@ describe("createE2bProvider", () => {
       "500: internal",
     );
     expect(mocks.ensureTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  test("create types E2B's refusal (400) as a provision error, on every create", async () => {
+    const provider = createE2bProvider();
+    const refusal = () => new mocks.SandboxError("400: Timeout cannot be greater than 1 hours");
+
+    // From the default template.
+    mocks.create.mockRejectedValueOnce(refusal());
+    const plain = provider.create({ timeoutMs: 30 * 24 * 3_600_000 });
+    await expect(plain).rejects.toBeInstanceOf(SandboxProvisionError);
+    await expect(plain).rejects.toThrow(
+      "E2B refused the sandbox: 400: Timeout cannot be greater than 1 hours",
+    );
+
+    // From a package template: refused is not unbuilt, so nothing is built.
+    mocks.create.mockRejectedValueOnce(refusal());
+    await expect(provider.create({ packages: { pip: ["numpy"] } })).rejects.toBeInstanceOf(
+      SandboxProvisionError,
+    );
+    expect(mocks.ensureTemplate).not.toHaveBeenCalled();
+
+    // From a package template, once it is built.
+    mocks.create
+      .mockRejectedValueOnce(new mocks.SandboxError("404: tag 'default' does not exist"))
+      .mockRejectedValueOnce(refusal());
+    await expect(provider.create({ packages: { pip: ["numpy"] } })).rejects.toBeInstanceOf(
+      SandboxProvisionError,
+    );
+    expect(mocks.ensureTemplate).toHaveBeenCalledTimes(1);
+
+    // Anything else stays untyped: an outage is not the session's trouble.
+    mocks.create.mockRejectedValueOnce(new mocks.SandboxError("500: internal"));
+    const outage = provider.create();
+    await expect(outage).rejects.toThrow("500: internal");
+    await expect(outage).rejects.not.toBeInstanceOf(SandboxProvisionError);
   });
 
   test("connect rides e2b's auto-resuming connect — no state check first", async () => {

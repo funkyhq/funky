@@ -1,11 +1,14 @@
 // The SandboxProvider port over E2B — every method a thin veneer on the
 // SDK call it names. `connect` needs no translation at all: e2b's
 // `Sandbox.connect` already has the port's contract — reattach, reviving
-// a paused sandbox in place, with the TTL only extended. Two spots do
+// a paused sandbox in place, with the TTL only extended. Three spots do
 // translate:
 //
 // - The SDK's own `lifecycle.onTimeout` default is "kill", the port's is
 //   "pause", so create always passes the action explicitly.
+// - `Sandbox.create` throws a plain SandboxError when E2B refuses the
+//   request itself (a 400). The same request is refused every time, so
+//   the port wants SandboxProvisionError (see rethrowRefusal).
 // - `commands.run` throws CommandExitError on a non-zero exit; the port
 //   wants a result. The catch converts. A command-deadline TimeoutError
 //   also settles as a result (see settledResult for the discrimination).
@@ -13,8 +16,9 @@
 //   transparent reconnect (which revives a TTL-paused sandbox) and
 //   retry, then the error propagates.
 //
-// E2B enforces every NetworkPolicy variant (allowOut takes hostnames;
-// allowInternetAccess: false is deny-all), so the port's reject-when-
+// E2B enforces every NetworkPolicy variant: allowInternetAccess: false
+// is deny-all, and an allowlist is its domains in allowOut over a
+// deny-all denyOut (see toNetworkOpts). So the port's reject-when-
 // unenforceable clause never triggers for the network. Packages are
 // installed by building a template per package set (e2b-packages.ts);
 // the clause triggers there for a manager the recipe has no installer
@@ -24,6 +28,7 @@
 // takes the build path.
 
 import {
+  ALL_TRAFFIC,
   CommandExitError,
   Sandbox as E2bSandbox,
   SandboxError,
@@ -32,7 +37,7 @@ import {
 } from "e2b";
 import type { SandboxInfo as E2bSandboxInfo, SandboxOpts } from "e2b";
 import type { NetworkPolicy } from "@funky/core";
-import { SandboxNotFoundError } from "@funky/agent";
+import { SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
 import type {
   CommandResult,
   CreateSandboxOptions,
@@ -78,17 +83,20 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
           : {}),
       };
       if (canonical.length === 0) {
-        return wrap(await E2bSandbox.create(sandboxOpts), connection);
+        return wrap(await E2bSandbox.create(sandboxOpts).catch(rethrowRefusal), connection);
       }
 
       const template = templateName(canonical);
       try {
-        return wrap(await E2bSandbox.create(template, sandboxOpts), connection);
+        return wrap(
+          await E2bSandbox.create(template, sandboxOpts).catch(rethrowRefusal),
+          connection,
+        );
       } catch (error) {
         if (!isUnbuilt(error)) throw error;
       }
       await ensureTemplate(builds, template, installCommands(canonical));
-      return wrap(await E2bSandbox.create(template, sandboxOpts), connection);
+      return wrap(await E2bSandbox.create(template, sandboxOpts).catch(rethrowRefusal), connection);
     },
 
     async connect(sandboxId: string): Promise<Sandbox> {
@@ -211,10 +219,31 @@ function isUnbuilt(error: unknown): boolean {
   return error instanceof SandboxError && error.message.startsWith("404:");
 }
 
+/** A create's catch. E2B refusing the request itself — its 400: a
+ *  timeout over the plan's cap, say — refuses the same request every
+ *  time, so it is the port's SandboxProvisionError, and the driver ends
+ *  the run with E2B's reason. Rethrown untyped it would take the bind's
+ *  crash path: the worker exits, and again on each of the session's
+ *  tool batches. Only Sandbox.create's 400 means this (a template
+ *  build's 400 is a collision that waiting serves, e2b-packages.ts),
+ *  and, as with isUnbuilt, the SDK types it only by the status leading
+ *  the message. Anything else is rethrown as is. */
+function rethrowRefusal(error: unknown): never {
+  if (error instanceof SandboxError && error.message.startsWith("400:")) {
+    throw new SandboxProvisionError(`E2B refused the sandbox: ${error.message}`);
+  }
+  throw error;
+}
+
 function toNetworkOpts(policy?: NetworkPolicy): Partial<SandboxOpts> {
   if (policy === undefined || policy.type === "unrestricted") return {};
   if (policy.type === "none") return { allowInternetAccess: false };
-  return { network: { allowOut: policy.domains } };
+  // E2B's egress is open unless denied, and allowOut only carves
+  // exceptions out of denyOut, so the allowlist is its domains over a
+  // deny-all. allowOut alone would fence nothing; E2B refuses domains
+  // without the deny-all (a 400) rather than run them open. Domains
+  // match on HTTP Host and TLS SNI; anything else stays denied.
+  return { network: { allowOut: policy.domains, denyOut: [ALL_TRAFFIC] } };
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
