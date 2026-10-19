@@ -184,12 +184,6 @@ over HTTP — is gated on `E2E_DATABASE_URL` (a scratch database), `ANTHROPIC_AP
 E2E_DATABASE_URL=postgres://... pnpm -F worker test   # with the keys in the environment
 ```
 
-The E2B live suites need only `E2B_API_KEY`:
-
-```bash
-E2B_API_KEY=... pnpm -F @funky/adapters test e2b-live e2b-packages-live
-```
-
 ## Contributing
 
 Early-stage. The best contribution right now is feedback on the interfaces — open an issue
