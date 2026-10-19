@@ -24,10 +24,11 @@ import {
   createAgentConfig,
   type CreateAgentConfigInput,
   DEFAULT_NAMESPACE,
+  type Packages,
 } from "../lib/api";
 import { type AgentFields, initialFields, toInference } from "../lib/agent";
 import { type NetworkFields, toPolicy } from "../lib/network";
-import { readPackages } from "../lib/packages";
+import { compact } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
@@ -108,28 +109,25 @@ function Form({
     type: "unrestricted",
     domains: "",
   });
-  const [packagesText, setPackagesText] = useState("");
+  const [packages, setPackages] = useState<Packages>({});
   const [busy, setBusy] = useState(false);
-  // The api's refusal — a 400, or an api that isn't there. What the fields
-  // themselves refuse is an allowlist with no domain on it, and a packages
-  // line that isn't one.
+  // The api's refusal — a 400, or an api that isn't there. The one thing
+  // the fields themselves refuse is an allowlist with no domain on it.
   const [failure, setFailure] = useState<string>();
 
-  // Absent while the allowlist has no domain on it — not a request yet
-  // (see toPolicy). The packages likewise, while a line doesn't read.
+  // Absent while the allowlist has no domain on it — the one state of this
+  // form that isn't a request yet (see toPolicy).
   const network = toPolicy(networkFields);
-  const read = readPackages(packagesText);
-  const packages = "packages" in read ? read.packages : undefined;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || network === undefined || packages === undefined) return;
+    if (busy || network === undefined) return;
 
     const input: CreateAgentConfigInput = {
       inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
       network,
-      packages,
+      packages: compact(packages),
     };
 
     setFailure(undefined);
@@ -167,11 +165,7 @@ function Form({
               dropped from. */}
           <AgentFieldset fields={fields} onChange={setFields} />
           <NetworkFieldset fields={networkFields} onChange={setNetworkFields} autoFocus={false} />
-          <PackagesFields
-            text={packagesText}
-            onChange={setPackagesText}
-            error={"error" in read ? read.error : undefined}
-          />
+          <PackagesFields packages={packages} onChange={setPackages} />
         </div>
 
         <footer className="modal-foot">
@@ -186,7 +180,7 @@ function Form({
           <button
             className="btn btn-primary"
             type="submit"
-            disabled={busy || network === undefined || packages === undefined}
+            disabled={busy || network === undefined}
           >
             {busy ? "Creating…" : "Create"}
           </button>

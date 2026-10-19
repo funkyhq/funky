@@ -38,7 +38,7 @@ import {
   samePolicy,
   toPolicy,
 } from "../lib/network";
-import { readPackages, samePackages, textOf } from "../lib/packages";
+import { compact, samePackages } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
@@ -157,7 +157,7 @@ function EditForm({
   const [networkFields, setNetworkFields] = useState<NetworkFields>(() =>
     networkFieldsOf(config.network),
   );
-  const [packagesText, setPackagesText] = useState(() => textOf(config.packages));
+  const [packages, setPackages] = useState(config.packages);
   const [failure, setFailure] = useState<string>();
   // WHICH write is in flight, not merely whether one is. The two paths out
   // of this dialog are mutually exclusive and every control is disabled by
@@ -191,13 +191,7 @@ function EditForm({
   // nothing to save (see toPolicy).
   const network = toPolicy(networkFields);
   const networkChanged = network !== undefined && !samePolicy(network, config.network);
-  // Read only once touched: packages the api took but this console can't
-  // offer (a manager it doesn't list) must not block saving the rest.
-  const packagesTouched = packagesText !== textOf(config.packages);
-  const read = readPackages(packagesText);
-  const packagesError = packagesTouched && "error" in read ? read.error : undefined;
-  const packages = packagesTouched && "packages" in read ? read.packages : undefined;
-  const packagesChanged = packages !== undefined && !samePackages(packages, config.packages);
+  const packagesChanged = !samePackages(packages, config.packages);
   const changed = inferenceChanged || promptChanged || networkChanged || packagesChanged;
 
   // The offered provider, when it is one; otherwise the config's own, whose
@@ -225,7 +219,7 @@ function EditForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || archived || network === undefined || packagesError !== undefined) return;
+    if (busy || archived || network === undefined) return;
     // Nothing to send is nothing to version. Closing IS the save.
     if (!changed) {
       onClose();
@@ -240,7 +234,7 @@ function EditForm({
         : undefined,
       systemPrompt: promptChanged ? fields.systemPrompt : undefined,
       network: networkChanged ? network : undefined,
-      packages: packagesChanged ? packages : undefined,
+      packages: packagesChanged ? compact(packages) : undefined,
       version: config.version,
     };
 
@@ -341,12 +335,7 @@ function EditForm({
             autoFocus={false}
           />
 
-          <PackagesFields
-            text={packagesText}
-            onChange={setPackagesText}
-            error={packagesError}
-            disabled={archived || busy}
-          />
+          <PackagesFields packages={packages} onChange={setPackages} disabled={archived || busy} />
         </div>
 
         {/* Archive sits away from the two buttons that answer the form:
@@ -370,7 +359,7 @@ function EditForm({
             <button
               className="btn btn-primary"
               type="submit"
-              disabled={busy || network === undefined || packagesError !== undefined || !changed}
+              disabled={busy || network === undefined || !changed}
             >
               {pending === "saving" ? "Saving…" : `Save as version ${config.version + 1}`}
             </button>

@@ -29,6 +29,7 @@ import {
   type AgentConfig,
   ApiError,
   DEFAULT_NAMESPACE,
+  type Packages,
   type Session,
   createAgentConfig,
   createSession,
@@ -36,7 +37,7 @@ import {
 } from "../lib/api";
 import { type AgentFields, byId, initialFields, toInference } from "../lib/agent";
 import { type NetworkFields, POLICIES, toPolicy } from "../lib/network";
-import { packagesLine, readPackages } from "../lib/packages";
+import { compact, packagesLine } from "../lib/packages";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { Field } from "../components/Field";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
@@ -100,7 +101,7 @@ export function QuickStart() {
     type: "unrestricted",
     domains: "",
   });
-  const [packagesText, setPackagesText] = useState("");
+  const [packages, setPackages] = useState<Packages>({});
   const [text, setText] = useState("");
   /** Which call is out, when one is. Absent between presses. */
   const [doing, setDoing] = useState<Stage>();
@@ -150,18 +151,15 @@ export function QuickStart() {
   // Absent while the allowlist has no domain on it — the one state of the
   // network form that isn't a policy yet (see toPolicy).
   const network = toPolicy(networkFields);
-  // Likewise absent while a packages line doesn't read (see readPackages).
-  const read = readPackages(packagesText);
-  const packages = "packages" in read ? read.packages : undefined;
-  const packagesSummary = packages === undefined ? "none" : packagesLine(packages);
+  const packagesSummary = packagesLine(packages);
   const message = text.trim();
   const last = STEPS.length - 1;
 
   /** Whether the step on screen has what it needs to be left. */
   const ready =
     step === 0
-      ? provider !== undefined && network !== undefined && packages !== undefined
-      : message !== "" && network !== undefined && packages !== undefined && provider !== undefined;
+      ? provider !== undefined && network !== undefined
+      : message !== "" && network !== undefined && provider !== undefined;
 
   /** Back to a step already passed. Not forward: every step is left through
    *  its own button, which is what checks it has what it needs. */
@@ -178,8 +176,7 @@ export function QuickStart() {
    * is missing is ever sent.
    */
   async function start() {
-    if (busy || !ready || stranded !== undefined || network === undefined || packages === undefined)
-      return;
+    if (busy || !ready || stranded !== undefined || network === undefined) return;
     setFailure(undefined);
 
     // Which call is out. Kept here rather than read back from state so the
@@ -197,7 +194,7 @@ export function QuickStart() {
           inference: toInference(agent),
           systemPrompt: agent.systemPrompt,
           network,
-          packages,
+          packages: compact(packages),
         }));
       setMade((prev) => ({ ...prev, agent: agentConfig }));
 
@@ -324,9 +321,8 @@ export function QuickStart() {
                     autoFocus={false}
                   />
                   <PackagesFields
-                    text={packagesText}
-                    onChange={setPackagesText}
-                    error={"error" in read ? read.error : undefined}
+                    packages={packages}
+                    onChange={setPackages}
                     disabled={busy || made.agent !== undefined}
                   />
                 </>

@@ -1,52 +1,51 @@
 // apps/web/src/lib/packages.ts
-// The packages as a form: one package per line, the manager first and the
-// spec after it — "pip pandas==2.2.0". Shared by the agent config dialogs
-// and the quickstart, which write the same field of the same config and must
-// not drift apart in how they read it (the arrangement lib/network.ts has).
+// The packages as a form: a group of specs per package manager. Shared by
+// the agent config dialogs and the quickstart, which write the same field of
+// the same config and must not drift apart in how they read it (the
+// arrangement lib/network.ts has).
 import type { Packages } from "./api";
 
-/** The managers the stack's sandbox provider installs. The api stores any
- *  manager, but a session on one the provider can't install ends in an
- *  error, so the form refuses it up front instead. */
-export const MANAGERS = ["apt", "npm", "pip"];
+/** The managers the stack's sandbox provider installs, in the order the
+ *  form offers them. The api stores any manager, but a session on one the
+ *  provider can't install ends in an error, so the form offers only these. */
+export const MANAGERS = [
+  {
+    id: "pip",
+    label: "Python packages",
+    short: "Python",
+    registry: "PyPI",
+    example: "pandas==2.2.0",
+  },
+  {
+    id: "npm",
+    label: "Node.js packages",
+    short: "Node.js",
+    registry: "npm",
+    example: "express@4.18.0",
+  },
+  { id: "apt", label: "System packages", short: "System", registry: "apt", example: "graphviz" },
+];
 
-/** What reading the text came to: the packages, or the first line that
- *  isn't one — which a form shows and refuses to submit. */
-export type ReadPackages = { packages: Packages } | { error: string };
+export const managerOf = (id: string) => MANAGERS.find((manager) => manager.id === id);
 
 /**
- * The text as packages. Blank lines are skipped and a repeated spec is kept
- * once; everything after the manager is the spec, as typed, so each
- * ecosystem's own syntax ("express@4.18.0", "pandas>=2") passes untouched.
+ * The specs typed into a group's input, added to it. Whitespace or commas
+ * separate specs (none of the three managers' syntaxes contains either), and
+ * a spec the group already holds is not added twice.
  */
-export function readPackages(text: string): ReadPackages {
-  const packages: Record<string, Set<string>> = {};
-  const lines = text.split("\n");
-  for (const [index, raw] of lines.entries()) {
-    const line = raw.trim();
-    if (line === "") continue;
-    const [manager = "", ...rest] = line.split(/\s+/);
-    const spec = rest.join(" ");
-    if (!MANAGERS.includes(manager)) {
-      return {
-        error: `Line ${index + 1}: “${manager}” isn’t a package manager here — use ${MANAGERS.join(", ")}.`,
-      };
-    }
-    if (spec === "") return { error: `Line ${index + 1}: name a package after “${manager}”.` };
-    (packages[manager] ??= new Set()).add(spec);
-  }
-  return {
-    packages: Object.fromEntries(
-      Object.entries(packages).map(([manager, specs]) => [manager, [...specs]]),
-    ),
-  };
+export function addSpecs(packages: Packages, manager: string, typed: string): Packages {
+  const specs = new Set(packages[manager] ?? []);
+  for (const spec of typed.split(/[\s,]+/)) if (spec !== "") specs.add(spec);
+  return { ...packages, [manager]: [...specs] };
 }
 
-/** Stored packages as text, for a form that starts from them. */
-export function textOf(packages: Packages): string {
-  return Object.entries(packages)
-    .flatMap(([manager, specs]) => specs.map((spec) => `${manager} ${spec}`))
-    .join("\n");
+export function removeSpec(packages: Packages, manager: string, spec: string): Packages {
+  return { ...packages, [manager]: (packages[manager] ?? []).filter((s) => s !== spec) };
+}
+
+/** The packages as the api should store them: groups left empty dropped. */
+export function compact(packages: Packages): Packages {
+  return Object.fromEntries(Object.entries(packages).filter(([, specs]) => specs.length > 0));
 }
 
 /** Whether two package sets install the same thing: order and repeats
@@ -55,9 +54,8 @@ export function textOf(packages: Packages): string {
 export function samePackages(a: Packages, b: Packages): boolean {
   const canonical = (packages: Packages) =>
     JSON.stringify(
-      Object.entries(packages)
+      Object.entries(compact(packages))
         .map(([manager, specs]) => [manager, [...new Set(specs)].sort()] as const)
-        .filter(([, specs]) => specs.length > 0)
         .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
     );
   return canonical(a) === canonical(b);
@@ -66,7 +64,7 @@ export function samePackages(a: Packages, b: Packages): boolean {
 /** One line of what the packages will install, for the step that shows the
  *  config rather than offering it. */
 export function packagesLine(packages: Packages): string {
-  const entries = Object.entries(packages).filter(([, specs]) => specs.length > 0);
+  const entries = Object.entries(compact(packages));
   if (entries.length === 0) return "none";
   return entries.map(([manager, specs]) => `${manager}: ${specs.join(", ")}`).join(" · ");
 }
