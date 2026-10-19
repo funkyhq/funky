@@ -21,10 +21,12 @@ What lives here is what neither the engine nor a host may own:
 
 - **Leases.** The heartbeat keeper extends the claim every `leaseMs / 3`,
   from the sandbox bind through the commit, so a bind slower than the
-  lease (a template build) is not re-claimed out from under it; a lost
-  — or merely unreachable — lease aborts the step. Like the drain
-  deadline below, it bounds a zombie's side effects and spend, never
-  correctness.
+  lease (a template build) is not re-claimed out from under it. The bind
+  gets `bindTimeoutMs` (default 10 minutes), past which the claim is
+  released like a drained one, so a hung bind cannot hold its session
+  forever. A lost — or merely unreachable — lease aborts the step.
+  Like the drain deadline below, it bounds a zombie's side effects and
+  spend, never correctness.
 - **The crash rule.** An interrupted step is never committed. A dying
   worker commits nothing mid-step; the lease expires and the next
   claimer resumes from the unchanged log — re-running an inference

@@ -31,6 +31,9 @@ const EnvSchema = z.object({
   // send SIGKILL 10s after SIGTERM; the default leaves 3s for the
   // release's round trip and the exit.
   FUNKY_DRAIN_MS: intKnob(0, 7_000),
+  // How long a sandbox bind (create, or a package template build) may
+  // take before the claim is handed back for a re-claim.
+  FUNKY_BIND_TIMEOUT_MS: intKnob(1_000, 10 * 60_000),
   // Idle TTL before a session's sandbox auto-pauses (revived on the next connect).
   FUNKY_SANDBOX_TIMEOUT_MS: intKnob(10_000, 30 * 60_000),
   // Drivers this worker hosts — claim loops run side by side in one
@@ -51,6 +54,7 @@ export type Config = {
   leaseMs: number;
   idlePollMs: number;
   drainMs: number;
+  bindTimeoutMs: number;
   sandboxTimeoutMs: number;
   /** Drivers main.ts hosts, each one claim loop. At least 1. */
   concurrency: number;
@@ -88,6 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     leaseMs: e.FUNKY_LEASE_MS,
     idlePollMs: e.FUNKY_IDLE_POLL_MS,
     drainMs: e.FUNKY_DRAIN_MS,
+    bindTimeoutMs: e.FUNKY_BIND_TIMEOUT_MS,
     sandboxTimeoutMs: e.FUNKY_SANDBOX_TIMEOUT_MS,
     concurrency: e.FUNKY_CONCURRENCY,
     dbPoolMax: e.DB_POOL_MAX,
