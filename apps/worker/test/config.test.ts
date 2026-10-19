@@ -32,6 +32,7 @@ describe("loadConfig — valid input", () => {
       leaseMs: 60_000,
       idlePollMs: 1_000,
       drainMs: 7_000,
+      bindTimeoutMs: 10 * 60_000,
       sandboxTimeoutMs: 30 * 60_000,
       concurrency: 1,
       dbPoolMax: 10,
@@ -44,6 +45,7 @@ describe("loadConfig — valid input", () => {
       FUNKY_LEASE_MS: "3000",
       FUNKY_IDLE_POLL_MS: "100",
       FUNKY_DRAIN_MS: "500",
+      FUNKY_BIND_TIMEOUT_MS: "120000",
       FUNKY_SANDBOX_TIMEOUT_MS: "300000",
       FUNKY_CONCURRENCY: "4",
       DB_POOL_MAX: "2",
@@ -51,6 +53,7 @@ describe("loadConfig — valid input", () => {
     expect(cfg.leaseMs).toBe(3_000);
     expect(cfg.idlePollMs).toBe(100);
     expect(cfg.drainMs).toBe(500);
+    expect(cfg.bindTimeoutMs).toBe(120_000);
     expect(cfg.sandboxTimeoutMs).toBe(300_000);
     expect(cfg.concurrency).toBe(4);
     expect(cfg.dbPoolMax).toBe(2);

@@ -114,6 +114,11 @@ export interface DriverOptions {
    *  Default 7s: inside Cloud Run's fixed 10s SIGTERM→SIGKILL window,
    *  with room for the release's round trip and the exit. */
   drainMs?: number;
+  /** How long the sandbox bind may take before the claim is handed
+   *  back, as the drain hands one back: released, so the re-claim
+   *  interrupts the batch and the model decides whether to call again.
+   *  Default 10 minutes — room for a package template build. */
+  bindTimeoutMs?: number;
 }
 
 /**
@@ -125,11 +130,12 @@ export interface DriverOptions {
 export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Promise<void> {
   const leaseMs = opts.leaseMs ?? 60_000;
   const idlePollMs = opts.idlePollMs ?? 1_000;
+  const bindTimeoutMs = opts.bindTimeoutMs ?? 10 * 60_000;
   const drain = watchDrain(opts.drain, opts.drainMs ?? 7_000);
   try {
     while (!drain.fired) {
       const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
-      if (claim) await runOrRelease(deps, claim, leaseMs, drain);
+      if (claim) await runOrRelease(deps, claim, leaseMs, bindTimeoutMs, drain);
       else await sleep(idlePollMs, opts.drain);
     }
   } finally {
@@ -150,10 +156,11 @@ async function runOrRelease(
   deps: DriverDeps,
   claim: Claim,
   leaseMs: number,
+  bindTimeoutMs: number,
   drain: DrainWatch,
 ): Promise<void> {
   const abort = new AbortController();
-  const step = runClaim(deps, claim, leaseMs, abort.signal);
+  const step = runClaim(deps, claim, leaseMs, bindTimeoutMs, abort.signal);
   step.catch(() => {}); // if abandoned below, a late failure has no one to report to
   if ((await stepOrDeadline(step, drain.expired)) === "stepped") return;
   abort.abort();
@@ -194,16 +201,24 @@ async function runClaim(
   deps: DriverDeps,
   claim: Claim,
   leaseMs: number,
+  bindTimeoutMs: number,
   abort: AbortSignal,
 ): Promise<void> {
   // Ensure-on-claim: only an execute_tools item that will actually
   // execute pays for a sandbox — a re-claim (attempt > 1) synthesizes
   // interrupted results and needs none.
-  const tools =
-    claim.item.type === "execute_tools" && claim.item.attempt === 1
-      ? await bindHeld(deps, claim, leaseMs)
-      : undefined;
-  if (abort.aborted) return; // drained during the bind: the claim is being released
+  let tools: Map<string, Tool> | undefined;
+  if (claim.item.type === "execute_tools" && claim.item.attempt === 1) {
+    tools = await bindHeld(deps, claim, leaseMs, bindTimeoutMs);
+    if (abort.aborted) return; // drained during the bind: the claim is being released
+    if (tools === undefined) {
+      // Past the bind deadline: hand the item back, as the drain does.
+      // A release the store cannot serve is swallowed — the lease then
+      // expires on its own, the same re-claim later.
+      await deps.store.releaseItem(claim.item, claim.token).catch(() => {});
+      return;
+    }
+  }
   await runStep(deps, claim, leaseMs, tools, abort);
 }
 
@@ -215,16 +230,31 @@ async function runClaim(
  * settles. A lost lease is not acted on here — the bind takes no signal
  * — but runStep's first, awaited beat revalidates, so the step still
  * drops before executing a single tool.
+ *
+ * Beating forever would let a hung bind hold its session forever, so
+ * the bind gets `bindTimeoutMs`; past it the keeper stops and this
+ * returns undefined — the caller releases the claim. The bind itself
+ * cannot be cancelled and runs on, abandoned: a late sandbox still goes
+ * through ensureSandbox's CAS — registered if it is first, so the next
+ * call reuses it, killed if a later bind beat it — and a late failure
+ * is already handled: the race subscribed to it.
  */
 async function bindHeld(
   deps: DriverDeps,
   claim: Claim,
   leaseMs: number,
-): Promise<Map<string, Tool>> {
+  bindTimeoutMs: number,
+): Promise<Map<string, Tool> | undefined> {
   const heartbeat = startHeartbeat(deps.store, claim.item, claim.token, leaseMs, () => {});
+  const bind = deps.bindTools(claim.item);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), bindTimeoutMs);
+  });
   try {
-    return await deps.bindTools(claim.item);
+    return await Promise.race([bind, deadline]);
   } finally {
+    clearTimeout(timer);
     heartbeat.stop();
   }
 }

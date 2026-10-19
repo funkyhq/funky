@@ -677,6 +677,56 @@ describe("runDriver drains", () => {
     expect(log[2]).toMatchObject({ isError: false, content: [{ type: "text", text: "hi" }] });
   });
 
+  it("hands back a bind past its deadline: the re-claim interrupts the batch, and a late failure is swallowed", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi"), sayText("gave up")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    let binds = 0;
+    const failed = deferred();
+    const deps: DriverDeps = {
+      ...stepDeps,
+      // A sandbox create that outlives the deadline, then fails.
+      bindTools: () => {
+        binds += 1;
+        return new Promise((_resolve, reject) =>
+          setTimeout(() => {
+            reject(new Error("late create failure"));
+            failed.resolve();
+          }, 500),
+        );
+      },
+    };
+    const drain = new AbortController();
+    // On a 60s lease, the item comes back this fast only by release.
+    const running = runDriver(deps, {
+      leaseMs: 60_000,
+      bindTimeoutMs: 100,
+      idlePollMs: 10,
+      session: sessionRef,
+      drain: drain.signal,
+      drainMs: 5_000,
+    });
+    await until(async () => messages(await store.readEntries(sessionRef)).length === 4);
+    await failed.promise; // the abandoned bind rejects; nothing crashes
+    drain.abort();
+    await running;
+
+    const log = messages(await store.readEntries(sessionRef));
+    expect(log.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+    expect(log[2]).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: "Tool execution was interrupted." }],
+    });
+    expect(binds).toBe(1); // the re-claim (attempt 2) never binds
+  });
+
   it("waits for the release even when the aborted step settles first", async () => {
     const sessionRef = await newSession();
     await store.intake(sessionRef, user("go"));

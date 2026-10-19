@@ -72,7 +72,7 @@ process.once("SIGTERM", () => {
 console.log(
   `worker: claiming (providers=${[...providers.keys()].join(",")} ` +
     `concurrency=${cfg.concurrency} lease=${cfg.leaseMs}ms ` +
-    `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms)`,
+    `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms bindTimeout=${cfg.bindTimeoutMs}ms)`,
 );
 // N drivers over one store and one drain signal: each counts the drain
 // budget down on its own from the shared signal and awaits its own
@@ -86,6 +86,7 @@ await Promise.all(
       idlePollMs: cfg.idlePollMs,
       drain: drain.signal,
       drainMs: cfg.drainMs,
+      bindTimeoutMs: cfg.bindTimeoutMs,
     }),
   ),
 );
