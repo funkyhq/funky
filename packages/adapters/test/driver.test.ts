@@ -41,10 +41,12 @@ let client: PGlite;
 let store: Store;
 let clock: { advance: (ms: number) => void };
 
+// Booting PGlite can outlast the 10s default when crash-resume's
+// subprocesses share the CPU.
 beforeAll(async () => {
   client = new PGlite();
   await client.exec(storeDdl);
-});
+}, 60_000);
 
 afterAll(async () => {
   await client.close();

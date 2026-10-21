@@ -23,11 +23,13 @@ import { storeDdl } from "./store-ddl";
 let client: PGlite;
 let store: Store;
 
+// Booting PGlite can outlast the 10s default when crash-resume's
+// subprocesses share the CPU.
 beforeAll(async () => {
   client = new PGlite();
   await client.exec(storeDdl);
   store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-});
+}, 60_000);
 
 afterAll(async () => {
   await client.close();
