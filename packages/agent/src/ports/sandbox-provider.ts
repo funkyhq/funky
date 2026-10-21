@@ -45,11 +45,11 @@ export class SandboxNotFoundError extends Error {}
 /**
  * create()'s "never, as asked" rejection: the sandbox this request
  * describes cannot be provisioned — a package that does not install, a
- * package manager the adapter cannot serve — so the same request fails
- * the same way every time. The driver ends the run on it, so adapters
- * MUST NOT throw it for a transient failure (an outage, a rate limit, a
- * build superseded by another): that would end runs a retry would have
- * served.
+ * package manager the adapter cannot serve, a request the provider
+ * refuses outright — so the same request fails the same way every time.
+ * The driver ends the run on it, so adapters MUST NOT throw it for a
+ * transient failure (an outage, a rate limit, a build superseded by
+ * another): that would end runs a retry would have served.
  */
 export class SandboxProvisionError extends Error {}
 

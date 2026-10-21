@@ -1,17 +1,24 @@
 // The e2b adapter against real sandboxes — the behavior a mock can only
 // assert by fiat: exit codes settling as results, byte round-trips,
-// in-sandbox timeouts, metadata listing, and the pause → connect-revives
-// → filesystem-survives cycle. Runs only when E2B_API_KEY is set
+// in-sandbox timeouts, metadata listing, the pause → connect-revives
+// → filesystem-survives cycle, an allowlist fencing egress, and E2B's
+// refusal of a create arriving typed. Runs only when E2B_API_KEY is set
 // (deliberate opt-in — every run creates a real sandbox):
 //
 //   E2B_API_KEY=... pnpm --filter @funky/adapters test e2b-live
 //
-// One sandbox serves the whole suite, serially; its TTL is lifecycle
-// "kill" so an aborted run leaves no orphan behind.
+// One sandbox serves the whole suite, serially (only the allowlist test
+// makes its own, fenced one), and every TTL is lifecycle "kill" so an
+// aborted run leaves no orphan behind.
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
-import { type Sandbox, SandboxNotFoundError, type SandboxProvider } from "@funky/agent";
+import {
+  type Sandbox,
+  SandboxNotFoundError,
+  type SandboxProvider,
+  SandboxProvisionError,
+} from "@funky/agent";
 import { createE2bProvider } from "../src/sandbox/e2b";
 
 const apiKey = process.env.E2B_API_KEY;
@@ -111,6 +118,33 @@ if (!apiKey) {
       await expect(provider.connect(sandbox.sandboxId)).rejects.toBeInstanceOf(
         SandboxNotFoundError,
       );
+    }, 60_000);
+
+    test("an allowlist reaches its domains and nothing else", async () => {
+      const fenced = await provider.create({
+        timeoutMs: 120_000,
+        lifecycle: "kill",
+        network: { type: "allowlist", domains: ["example.com"] },
+      });
+      try {
+        // A response, not a connect: E2B's firewall accepts a blocked TCP
+        // connection before it decides, so only an HTTP status proves reach.
+        const status = async (url: string) =>
+          (await fenced.run(`curl -s -m 10 -o /dev/null -w '%{http_code}' ${url}`)).stdout;
+        expect(await status("https://example.com")).toBe("200");
+        expect(await status("https://example.org")).toBe("000");
+      } finally {
+        await fenced.kill().catch(() => {});
+      }
+    }, 120_000);
+
+    test("a create E2B refuses rejects as a provision error", async () => {
+      // A TTL over every plan's cap (1h Hobby, 24h Pro): E2B's 400, and no
+      // sandbox is made. Should one ever be, it must not outlive the test.
+      const refused = provider.create({ timeoutMs: 30 * 24 * 3_600_000, lifecycle: "kill" });
+      refused.then((made) => made.kill()).catch(() => {});
+      await expect(refused).rejects.toBeInstanceOf(SandboxProvisionError);
+      await expect(refused).rejects.toThrow("E2B refused the sandbox: 400:");
     }, 60_000);
   });
 }
