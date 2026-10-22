@@ -130,6 +130,30 @@ and shared by every session that uses it, so packages work under any `network` p
 - Unpinned specs resolve once, at the first build. Pin versions to control them.
 - A spec that fails to install ends the run as `"error"`, with the reason in the tool result.
 
+### Secrets
+
+Most setups skip this. It's only for storing API keys in Funky by name (`/v1/secrets`), which
+keeps them in [Infisical](https://infisical.com) rather than Postgres. Without it, those routes
+answer 404 "no secret store configured".
+
+1. In [Infisical Cloud](https://app.infisical.com) (the free plan is enough), create a project,
+   and under its **Access Control → Machine Identities** create an identity with the **Member**
+   role.
+2. On the identity's page, copy the **Client ID** under **Universal Auth** (not the Identity ID),
+   and add a client secret.
+3. Put them in `.env` with the project's ID (**Project Settings → Copy Project ID**), and run
+   `docker compose up -d` again:
+
+   ```bash
+   INFISICAL_CLIENT_ID=...
+   INFISICAL_CLIENT_SECRET=...
+   INFISICAL_PROJECT_ID=...
+   INFISICAL_ENVIRONMENT=dev
+   ```
+
+`PUT /v1/secrets/stripe-live` with `{"value": "sk_live_…"}` stores a key, `GET /v1/secrets` lists
+the names (never the values), and `DELETE /v1/secrets/stripe-live` removes one.
+
 ## Why Funky?
 
 Most runtimes keep the agent's loop, memory, and state in one process; when it dies,
@@ -161,7 +185,7 @@ in-flight work dies with it. Funky decouples them:
 | `packages/core`     | The vocabulary: zod schemas for messages, entries, configs, and tool specs                             |
 | `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports       |
 | `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes, Infisical secrets |
-| `apps/api`          | The HTTP surface (Hono): configs, sessions, intake, cancel, inspection, the SSE stream                 |
+| `apps/api`          | The HTTP surface (Hono): configs, secrets, sessions, intake, cancel, inspection, the SSE stream        |
 | `apps/worker`       | The runDriver host — the process a container runs                                                      |
 | `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                          |
 

@@ -7,7 +7,7 @@
 import { serve } from "@hono/node-server";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import { createPgStore, type StoreDb } from "@funky/adapters";
+import { createInfisicalSecretProvider, createPgStore, type StoreDb } from "@funky/adapters";
 import { buildApp } from "./app";
 import { loadConfig } from "./config";
 
@@ -15,14 +15,20 @@ const cfg = loadConfig();
 
 const pool = new Pool({ connectionString: cfg.databaseUrl, max: cfg.dbPoolMax });
 const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb);
+// Secret values go to Infisical, never to Postgres.
+const secrets = cfg.infisical ? createInfisicalSecretProvider(cfg.infisical) : null;
 
 const app = buildApp({
   store,
+  secrets,
   authToken: cfg.authToken,
   ping: () => pool.query("SELECT 1"),
   stream: { pollMs: cfg.streamPollMs, heartbeatMs: cfg.streamHeartbeatMs },
 });
 
 serve({ fetch: app.fetch, port: cfg.port }, (info) => {
-  console.log(`api: listening on :${info.port} (auth ${cfg.authToken ? "enabled" : "DISABLED"})`);
+  console.log(
+    `api: listening on :${info.port} (auth ${cfg.authToken ? "enabled" : "DISABLED"}, ` +
+      `secret store ${secrets ? "Infisical" : "off"})`,
+  );
 });

@@ -8,7 +8,7 @@ import { type ZodType, z } from "zod";
 import { DEFAULT_NAMESPACE } from "@funky/core";
 import { errorResponse } from "../http";
 
-export const validate = <T extends ZodType>(target: "json" | "query", schema: T) =>
+export const validate = <T extends ZodType>(target: "json" | "query" | "param", schema: T) =>
   zValidator(target, schema, (result, c) => {
     if (!result.success) {
       const msg = result.error.issues

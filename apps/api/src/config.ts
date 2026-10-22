@@ -2,8 +2,24 @@
 // The single place env is parsed (main.ts is the only caller): zod,
 // fail-fast via process.exit(1) — never boot half-configured. Auth is
 // required by default; disabling it is an explicit, loudly-warned dev
-// override, never an omission.
+// override, never an omission. The secret store is optional, and whole
+// or absent: an Infisical identity is all of its variables or none.
 import { z } from "zod";
+
+/** Blank reads as unset: compose forwards an unset variable as "". */
+const unsetIfBlank = <T extends z.ZodType>(schema: T) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    schema.optional(),
+  );
+
+/** The secret store's identity: set together, or not at all. */
+const INFISICAL_IDENTITY = [
+  "INFISICAL_CLIENT_ID",
+  "INFISICAL_CLIENT_SECRET",
+  "INFISICAL_PROJECT_ID",
+  "INFISICAL_ENVIRONMENT",
+] as const;
 
 const EnvSchema = z
   .object({
@@ -16,6 +32,12 @@ const EnvSchema = z
      *  and how long a quiet stream goes before a keep-alive comment. */
     FUNKY_STREAM_POLL_MS: z.coerce.number().int().min(1).default(1000),
     FUNKY_STREAM_HEARTBEAT_MS: z.coerce.number().int().min(1).default(15_000),
+    /** The secret store behind /v1/secrets (README "Secrets"): an
+     *  Infisical Cloud machine identity. */
+    INFISICAL_CLIENT_ID: unsetIfBlank(z.string()),
+    INFISICAL_CLIENT_SECRET: unsetIfBlank(z.string()),
+    INFISICAL_PROJECT_ID: unsetIfBlank(z.string()),
+    INFISICAL_ENVIRONMENT: unsetIfBlank(z.string()),
   })
   .refine((e) => e.FUNKY_AUTH === "disabled" || e.FUNKY_AUTH_TOKEN !== undefined, {
     message:
@@ -28,7 +50,28 @@ const EnvSchema = z
   .refine((e) => e.FUNKY_STREAM_POLL_MS <= e.FUNKY_STREAM_HEARTBEAT_MS, {
     path: ["FUNKY_STREAM_POLL_MS"],
     message: "FUNKY_STREAM_POLL_MS must not exceed FUNKY_STREAM_HEARTBEAT_MS",
+  })
+  // Part of an identity is a mistake, not a choice: refuse to boot
+  // rather than run with secrets quietly off.
+  .superRefine((e, ctx) => {
+    const missing = INFISICAL_IDENTITY.filter((key) => e[key] === undefined);
+    if (missing.length === INFISICAL_IDENTITY.length) return;
+    for (const key of missing) {
+      ctx.addIssue({
+        code: "custom",
+        path: [key],
+        message: `required with the rest of the Infisical identity (${INFISICAL_IDENTITY.join(", ")})`,
+      });
+    }
   });
+
+/** An Infisical Cloud machine identity, signed in with Universal Auth. */
+export type InfisicalConfig = {
+  clientId: string;
+  clientSecret: string;
+  projectId: string;
+  environment: string;
+};
 
 export type Config = {
   databaseUrl: string;
@@ -38,6 +81,8 @@ export type Config = {
   authToken: string | null;
   streamPollMs: number;
   streamHeartbeatMs: number;
+  /** null = no secret store configured; /v1/secrets says so */
+  infisical: InfisicalConfig | null;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -60,5 +105,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authToken: e.FUNKY_AUTH === "disabled" ? null : e.FUNKY_AUTH_TOKEN!,
     streamPollMs: e.FUNKY_STREAM_POLL_MS,
     streamHeartbeatMs: e.FUNKY_STREAM_HEARTBEAT_MS,
+    infisical:
+      e.INFISICAL_CLIENT_ID === undefined
+        ? null
+        : {
+            clientId: e.INFISICAL_CLIENT_ID,
+            clientSecret: e.INFISICAL_CLIENT_SECRET!,
+            projectId: e.INFISICAL_PROJECT_ID!,
+            environment: e.INFISICAL_ENVIRONMENT!,
+          },
   };
 }

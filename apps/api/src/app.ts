@@ -1,16 +1,19 @@
 // apps/api/src/app.ts
 // The whole application, network-free. Tests: buildApp(deps) + app.request().
 import { Hono } from "hono";
-import type { Store } from "@funky/agent";
+import type { SecretProvider, Store } from "@funky/agent";
 import { errorHandler, errorResponse } from "./http";
 import { auth } from "./middleware/auth";
 import { requestId } from "./middleware/request-id";
 import { agentConfigRoutes } from "./routes/agent-configs";
+import { secretRoutes } from "./routes/secrets";
 import { sessionRoutes, type StreamPacing } from "./routes/sessions";
 
 export type AppDeps = {
   /** the harness Store — each route narrows it to the slice it needs */
   store: Store;
+  /** where /v1/secrets keeps values; null = no secret store configured */
+  secrets: SecretProvider | null;
   /** null = auth explicitly disabled (dev only) */
   authToken: string | null;
   /** liveness of the DB, e.g. () => pool.query("SELECT 1") */
@@ -34,6 +37,7 @@ export function buildApp(deps: AppDeps) {
 
   app.use("/v1/*", auth(deps.authToken));
   app.route("/v1/agent-configs", agentConfigRoutes(deps.store));
+  app.route("/v1/secrets", secretRoutes(deps.secrets));
   app.route("/v1/sessions", sessionRoutes(deps.store, deps.stream));
 
   app.notFound((c) => errorResponse(c, 404, "not_found_error", "unknown route"));
