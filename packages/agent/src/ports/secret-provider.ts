@@ -13,13 +13,22 @@
 // from the outside.
 //
 // Contract for implementations:
-// - Addressing is by namespace-scoped name (SecretRef): the namespace is
-//   part of the address, not a filter. A name stored under another
-//   namespace is unknown — resolve rejects it, list omits it, delete
-//   reports it absent — exactly like a name never stored, so one
-//   tenant's reference can never reach another's value.
-// - put creates or replaces, last write wins; a replace keeps the name's
-//   createdAt. Values are opaque and stored verbatim.
+// - Addressing is by namespace-scoped name (SecretRef), matched exactly,
+//   case included: the namespace is part of the address, not a filter.
+//   A name stored under another namespace is unknown — resolve rejects
+//   it, list omits it, delete reports it absent — exactly like a name
+//   never stored, so one tenant's reference can never reach another's
+//   value.
+// - put creates or replaces, last write wins: concurrent puts of one name
+//   all succeed, and one value stands. A replace keeps the name's
+//   createdAt.
+// - Values are opaque and stored verbatim, within two rules a value
+//   keeps (secretValueProblem): no whitespace at either end, and no
+//   `${`. Managers alter what breaks them — Infisical trims a value, and
+//   reads `${…}` in one as a reference to another secret, which in a
+//   manager shared by tenants can be another tenant's. Handed such a
+//   value anyway, an adapter stores it verbatim or refuses it; it never
+//   stores it altered.
 // - resolve is all-or-nothing: every name asked for, or SecretNotFoundError
 //   naming each missing one. A transient failure (the manager unreachable,
 //   a rate limit) MUST NOT surface as SecretNotFoundError — callers end
@@ -44,6 +53,17 @@ export class SecretNotFoundError extends Error {
     this.namespace = namespace;
     this.names = names;
   }
+}
+
+/**
+ * The value rule a value breaks, or undefined when it keeps both: for a
+ * caller to check before put, and for an adapter to name what it
+ * refuses.
+ */
+export function secretValueProblem(value: string): string | undefined {
+  if (value !== value.trim()) return "has whitespace at an end";
+  if (value.includes("${")) return "contains ${";
+  return undefined;
 }
 
 export interface SecretProvider {

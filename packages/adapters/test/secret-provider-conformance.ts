@@ -71,6 +71,20 @@ export function describeSecretProviderConformance(
       expect(await secrets.list(ns)).toEqual([second]);
     });
 
+    it("lets concurrent puts of one new name all succeed, one value standing", async () => {
+      // Each put may find the name absent and create it; a backend whose
+      // create refuses a name made meanwhile fails all but one. Raced in a
+      // fresh namespace, then in the same one once it is in use.
+      const values = ["one", "two", "three"];
+      for (const name of ["first", "second"]) {
+        const ref = { namespace: ns, name };
+        const infos = await Promise.all(values.map((value) => secrets.put(ref, value)));
+        expect(infos.map((info) => info.name)).toEqual([name, name, name]);
+        expect(values).toContain((await secrets.resolve(ns, [name])).get(name));
+      }
+      expect((await secrets.list(ns)).map((s) => s.name)).toEqual(["first", "second"]);
+    });
+
     it("rejects a resolve naming every missing name, and only those", async () => {
       await secrets.put({ namespace: ns, name: "present" }, "v");
 
@@ -151,12 +165,33 @@ export function describeSecretProviderConformance(
       }
     });
 
-    it("stores values verbatim", async () => {
+    it("keeps names and namespaces that differ only in case apart", async () => {
+      // A backend that folds case would make one secret of each pair.
+      const upper = ns.toUpperCase();
+      used.add(upper);
+      await secrets.put({ namespace: ns, name: "key" }, "lower");
+      await secrets.put({ namespace: ns, name: "KEY" }, "upper");
+      await secrets.put({ namespace: upper, name: "key" }, "other namespace");
+
+      await expect(secrets.resolve(ns, ["key", "KEY"])).resolves.toEqual(
+        new Map([
+          ["key", "lower"],
+          ["KEY", "upper"],
+        ]),
+      );
+      await expect(secrets.resolve(upper, ["key"])).resolves.toEqual(
+        new Map([["key", "other namespace"]]),
+      );
+      expect((await secrets.list(ns)).map((s) => s.name)).toEqual(["KEY", "key"]);
+    });
+
+    it("stores values that keep the value rules verbatim", async () => {
       const values = {
-        spaced: "  Bearer sk-ünïcödé/+=_-.~:@ ✓  ",
+        spaced: "Bearer sk-ünïcödé /+=_-.~:@ ✓",
+        multiline: "-----BEGIN KEY-----\nAAAA\n-----END KEY-----",
         long: "x".repeat(4096),
         // A backend that templates values would fill these in from OTHER.
-        templated: "prefix ${OTHER} $OTHER suffix",
+        templated: "prefix $OTHER {{OTHER}} suffix",
         OTHER: "expanded",
       };
       for (const [name, value] of Object.entries(values)) {
@@ -166,6 +201,27 @@ export function describeSecretProviderConformance(
       await expect(secrets.resolve(ns, Object.keys(values))).resolves.toEqual(
         new Map(Object.entries(values)),
       );
+    });
+
+    it("stores a value that breaks the value rules verbatim or refuses it, never altered", async () => {
+      // What a manager would trim, or read as a reference to OTHER.
+      const values = {
+        padded: "  sk_live_1  ",
+        pem: "-----BEGIN KEY-----\nAAAA\n-----END KEY-----\n",
+        tabbed: "\tsk_live_1",
+        referencing: "prefix ${OTHER} suffix",
+      };
+      await secrets.put({ namespace: ns, name: "OTHER" }, "expanded");
+
+      for (const [name, value] of Object.entries(values)) {
+        const stored = await secrets.put({ namespace: ns, name }, value).then(
+          () => true,
+          () => false,
+        );
+        const resolved = secrets.resolve(ns, [name]);
+        if (stored) await expect(resolved).resolves.toEqual(new Map([[name, value]]));
+        else await expect(resolved).rejects.toBeInstanceOf(SecretNotFoundError);
+      }
     });
   });
 }
