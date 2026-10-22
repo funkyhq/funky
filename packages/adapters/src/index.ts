@@ -2,6 +2,8 @@ export { createAiSdkProvider } from "./inference/aisdk";
 export type { AiSdkProviderOptions } from "./inference/aisdk";
 export { createE2bProvider } from "./sandbox/e2b";
 export type { E2bProviderOptions } from "./sandbox/e2b";
+export { createInfisicalSecretProvider } from "./secrets/infisical";
+export type { InfisicalSecretProviderOptions } from "./secrets/infisical";
 export { createMemorySecretProvider } from "./secrets/memory";
 export type { MemorySecretProviderOptions } from "./secrets/memory";
 export { createPgStore } from "./store/pg";
