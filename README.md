@@ -156,14 +156,14 @@ in-flight work dies with it. Funky decouples them:
 
 ## Layout
 
-| Path                | What it is                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------ |
-| `packages/core`     | The vocabulary: zod schemas for messages, entries, configs, and tool specs                       |
-| `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports |
-| `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes              |
-| `apps/api`          | The HTTP surface (Hono): configs, sessions, intake, cancel, inspection, the SSE stream           |
-| `apps/worker`       | The runDriver host — the process a container runs                                                |
-| `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                    |
+| Path                | What it is                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| `packages/core`     | The vocabulary: zod schemas for messages, entries, configs, and tool specs                             |
+| `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports       |
+| `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes, Infisical secrets |
+| `apps/api`          | The HTTP surface (Hono): configs, sessions, intake, cancel, inspection, the SSE stream                 |
+| `apps/worker`       | The runDriver host — the process a container runs                                                      |
+| `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                          |
 
 ## Development
 
