@@ -11,9 +11,13 @@
 // INFISICAL_SITE_URL defaults to Infisical Cloud (US). A self-hosted one
 // from Infisical's docker compose works as well. Everything the run
 // writes goes under a folder of its own, force-deleted at the end.
+//
+// Infisical Cloud's free plan allows an IP 120 secrets requests a minute,
+// and the suite sends about 160, so the run holds itself to 100 a minute:
+// about two minutes against Cloud.
 
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, it } from "vitest";
+import { afterAll, describe, it, vi } from "vitest";
 import { createInfisicalSecretProvider } from "../src/secrets/infisical";
 import { describeSecretProviderConformance } from "./secret-provider-conformance";
 
@@ -24,6 +28,8 @@ if (!clientId) {
     it("skipped — set INFISICAL_CLIENT_ID to run", () => {});
   });
 } else {
+  // A test may wait out the minute's budget.
+  vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
   const siteUrl = process.env.INFISICAL_SITE_URL || "https://app.infisical.com";
   const options = {
     siteUrl,
@@ -32,6 +38,7 @@ if (!clientId) {
     projectId: required("INFISICAL_PROJECT_ID"),
     environment: required("INFISICAL_ENVIRONMENT"),
     path: `/funky-live-${randomUUID()}`,
+    fetch: paced(100),
   };
 
   describeSecretProviderConformance("infisical (live)", async () =>
@@ -62,4 +69,19 @@ function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set with INFISICAL_CLIENT_ID`);
   return value;
+}
+
+/** fetch, sending at most `perMinute` requests in any 60 seconds. */
+function paced(perMinute: number): typeof fetch {
+  const sent: number[] = [];
+  return async (input, init) => {
+    for (;;) {
+      const now = Date.now();
+      while (sent.length > 0 && sent[0]! <= now - 60_000) sent.shift();
+      if (sent.length < perMinute) break;
+      await new Promise((resolve) => setTimeout(resolve, sent[0]! + 60_000 - now));
+    }
+    sent.push(Date.now());
+    return fetch(input, init);
+  };
 }
