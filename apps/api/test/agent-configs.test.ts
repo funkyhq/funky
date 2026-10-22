@@ -33,6 +33,7 @@ beforeAll(async () => {
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   app = buildApp({
     store,
+    secrets: null,
     authToken: null,
     ping: async () => ({}),
     stream: { pollMs: 1000, heartbeatMs: 15_000 },

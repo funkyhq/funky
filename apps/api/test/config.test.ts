@@ -8,6 +8,13 @@ const BASE = {
   FUNKY_AUTH_TOKEN: "0123456789abcdef",
 };
 
+const INFISICAL = {
+  INFISICAL_CLIENT_ID: "5c4f1d3e-0000-4000-8000-000000000001",
+  INFISICAL_CLIENT_SECRET: "fake-client-secret",
+  INFISICAL_PROJECT_ID: "5c4f1d3e-0000-4000-8000-000000000002",
+  INFISICAL_ENVIRONMENT: "dev",
+};
+
 let exitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
@@ -31,7 +38,32 @@ describe("loadConfig — valid input", () => {
       authToken: BASE.FUNKY_AUTH_TOKEN,
       streamPollMs: 1000,
       streamHeartbeatMs: 15_000,
+      infisical: null,
     });
+  });
+
+  it("reads an Infisical identity as the secret store", () => {
+    expect(loadConfig({ ...BASE, ...INFISICAL }).infisical).toEqual({
+      siteUrl: undefined,
+      clientId: INFISICAL.INFISICAL_CLIENT_ID,
+      clientSecret: INFISICAL.INFISICAL_CLIENT_SECRET,
+      projectId: INFISICAL.INFISICAL_PROJECT_ID,
+      environment: INFISICAL.INFISICAL_ENVIRONMENT,
+    });
+  });
+
+  it("takes INFISICAL_SITE_URL for another region or a self-hosted Infisical", () => {
+    const cfg = loadConfig({
+      ...BASE,
+      ...INFISICAL,
+      INFISICAL_SITE_URL: "https://eu.infisical.com",
+    });
+    expect(cfg.infisical?.siteUrl).toBe("https://eu.infisical.com");
+  });
+
+  it("reads blank Infisical variables as unset, the way compose forwards unset ones", () => {
+    const blank = Object.fromEntries(Object.keys(INFISICAL).map((key) => [key, ""]));
+    expect(loadConfig({ ...BASE, ...blank, INFISICAL_SITE_URL: "" }).infisical).toBeNull();
   });
 
   it("coerces the stream pacing overrides", () => {
@@ -73,6 +105,28 @@ describe("loadConfig — invalid input", () => {
         FUNKY_STREAM_POLL_MS: "60000",
         FUNKY_STREAM_HEARTBEAT_MS: "15000",
       }),
+    ).toThrow("process.exit(1)");
+  });
+
+  it("exits on part of an Infisical identity, naming each missing variable", () => {
+    const { INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET } = INFISICAL;
+    expect(() => loadConfig({ ...BASE, INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET })).toThrow(
+      "process.exit(1)",
+    );
+    const printed = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(printed).toContain(
+      "INFISICAL_PROJECT_ID: required with the rest of the Infisical identity",
+    );
+    expect(printed).toContain(
+      "INFISICAL_ENVIRONMENT: required with the rest of the Infisical identity",
+    );
+    expect(printed).not.toContain("INFISICAL_CLIENT_ID:");
+    expect(printed).not.toContain(INFISICAL_CLIENT_SECRET);
+  });
+
+  it("exits on an INFISICAL_SITE_URL that isn't a URL", () => {
+    expect(() =>
+      loadConfig({ ...BASE, ...INFISICAL, INFISICAL_SITE_URL: "app.infisical.com" }),
     ).toThrow("process.exit(1)");
   });
 });

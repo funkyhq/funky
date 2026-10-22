@@ -1,14 +1,18 @@
 // Request helpers — the app is exercised network-free via buildApp(deps)
 // + app.request(), exactly as app.ts advertises.
-import type { Store } from "@funky/agent";
+import type { SecretProvider, Store } from "@funky/agent";
 import { buildApp } from "../src/app";
 
 export type App = ReturnType<typeof buildApp>;
 
-/** An app whose store is never reached — for envelope/auth/health tests. */
-export function makeApp(opts: { authToken?: string | null } = {}): App {
+/** An app whose store is never reached — for envelope/auth/health and
+ *  secrets tests. No secret store unless one is given. */
+export function makeApp(
+  opts: { authToken?: string | null; secrets?: SecretProvider | null } = {},
+): App {
   return buildApp({
     store: {} as unknown as Store,
+    secrets: opts.secrets ?? null,
     authToken: opts.authToken ?? null,
     ping: async () => ({}),
     stream: { pollMs: 1000, heartbeatMs: 15_000 },
@@ -20,8 +24,26 @@ export function get(app: App, path: string, headers: Record<string, string> = {}
 }
 
 export function post(app: App, path: string, body?: unknown, headers: Record<string, string> = {}) {
+  return send(app, "POST", path, body, headers);
+}
+
+export function put(app: App, path: string, body?: unknown, headers: Record<string, string> = {}) {
+  return send(app, "PUT", path, body, headers);
+}
+
+export function del(app: App, path: string, headers: Record<string, string> = {}) {
+  return app.request(path, { method: "DELETE", headers });
+}
+
+function send(
+  app: App,
+  method: string,
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+) {
   return app.request(path, {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json", ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });

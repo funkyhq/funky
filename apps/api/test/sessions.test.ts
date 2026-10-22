@@ -23,7 +23,7 @@ beforeAll(async () => {
   client = new PGlite();
   await client.exec(storeDdl);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
-  const base = { store, authToken: null, ping: async () => ({}) };
+  const base = { store, secrets: null, authToken: null, ping: async () => ({}) };
   app = buildApp({ ...base, stream: PACING });
   heartbeatApp = buildApp({ ...base, stream: { pollMs: 10, heartbeatMs: 25 } });
 });
