@@ -46,7 +46,6 @@ services:
       # Optional: the secret store behind /v1/secrets (README "Secrets").
       # Forwarded as-is: unset arrives empty, which the api reads as unset,
       # and with none of them set the secret routes say so.
-      INFISICAL_SITE_URL: ${INFISICAL_SITE_URL:-}
       INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
       INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
       INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID:-}

@@ -44,7 +44,6 @@ describe("loadConfig — valid input", () => {
 
   it("reads an Infisical identity as the secret store", () => {
     expect(loadConfig({ ...BASE, ...INFISICAL }).infisical).toEqual({
-      siteUrl: undefined,
       clientId: INFISICAL.INFISICAL_CLIENT_ID,
       clientSecret: INFISICAL.INFISICAL_CLIENT_SECRET,
       projectId: INFISICAL.INFISICAL_PROJECT_ID,
@@ -52,18 +51,9 @@ describe("loadConfig — valid input", () => {
     });
   });
 
-  it("takes INFISICAL_SITE_URL for another region or a self-hosted Infisical", () => {
-    const cfg = loadConfig({
-      ...BASE,
-      ...INFISICAL,
-      INFISICAL_SITE_URL: "https://eu.infisical.com",
-    });
-    expect(cfg.infisical?.siteUrl).toBe("https://eu.infisical.com");
-  });
-
   it("reads blank Infisical variables as unset, the way compose forwards unset ones", () => {
     const blank = Object.fromEntries(Object.keys(INFISICAL).map((key) => [key, ""]));
-    expect(loadConfig({ ...BASE, ...blank, INFISICAL_SITE_URL: "" }).infisical).toBeNull();
+    expect(loadConfig({ ...BASE, ...blank }).infisical).toBeNull();
   });
 
   it("coerces the stream pacing overrides", () => {
@@ -122,11 +112,5 @@ describe("loadConfig — invalid input", () => {
     );
     expect(printed).not.toContain("INFISICAL_CLIENT_ID:");
     expect(printed).not.toContain(INFISICAL_CLIENT_SECRET);
-  });
-
-  it("exits on an INFISICAL_SITE_URL that isn't a URL", () => {
-    expect(() =>
-      loadConfig({ ...BASE, ...INFISICAL, INFISICAL_SITE_URL: "app.infisical.com" }),
-    ).toThrow("process.exit(1)");
   });
 });

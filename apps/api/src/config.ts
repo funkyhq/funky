@@ -33,9 +33,7 @@ const EnvSchema = z
     FUNKY_STREAM_POLL_MS: z.coerce.number().int().min(1).default(1000),
     FUNKY_STREAM_HEARTBEAT_MS: z.coerce.number().int().min(1).default(15_000),
     /** The secret store behind /v1/secrets (README "Secrets"): an
-     *  Infisical machine identity. The site defaults to Infisical Cloud's
-     *  US region. */
-    INFISICAL_SITE_URL: unsetIfBlank(z.url()),
+     *  Infisical Cloud machine identity. */
     INFISICAL_CLIENT_ID: unsetIfBlank(z.string()),
     INFISICAL_CLIENT_SECRET: unsetIfBlank(z.string()),
     INFISICAL_PROJECT_ID: unsetIfBlank(z.string()),
@@ -67,9 +65,8 @@ const EnvSchema = z
     }
   });
 
-/** An Infisical machine identity, signed in with Universal Auth. */
+/** An Infisical Cloud machine identity, signed in with Universal Auth. */
 export type InfisicalConfig = {
-  siteUrl: string | undefined;
   clientId: string;
   clientSecret: string;
   projectId: string;
@@ -112,7 +109,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       e.INFISICAL_CLIENT_ID === undefined
         ? null
         : {
-            siteUrl: e.INFISICAL_SITE_URL,
             clientId: e.INFISICAL_CLIENT_ID,
             clientSecret: e.INFISICAL_CLIENT_SECRET!,
             projectId: e.INFISICAL_PROJECT_ID!,
