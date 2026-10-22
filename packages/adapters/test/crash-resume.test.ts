@@ -336,6 +336,7 @@ beforeAll(async () => {
       systemPrompt: "be brief",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
     });
     sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,

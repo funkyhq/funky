@@ -195,6 +195,7 @@ export function QuickStart() {
           systemPrompt: agent.systemPrompt,
           network,
           packages: compact(packages),
+          credentials: [],
         }));
       setMade((prev) => ({ ...prev, agent: agentConfig }));
 

@@ -118,6 +118,7 @@ if (!url || !anthropicKey || !e2bKey) {
         "the execution was interrupted, issue that call again.",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
     });
     const sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,

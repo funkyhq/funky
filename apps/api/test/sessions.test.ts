@@ -45,6 +45,7 @@ async function seedConfigs(
       systemPrompt: "s",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
     })
   ).json();
   return { agentConfigId: agent.id };

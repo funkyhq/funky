@@ -20,6 +20,24 @@ const RECIPE = {
   systemPrompt: "You are a data analyst.",
   network: { type: "unrestricted" },
   packages: {},
+  credentials: [],
+};
+
+const STRIPE = {
+  type: "injected",
+  env: "STRIPE_API_KEY",
+  secret: "stripe-live",
+  domains: ["api.stripe.com"],
+  header: "Authorization",
+  value: "Bearer {secret}",
+};
+const GITHUB = {
+  type: "injected",
+  env: "GH_TOKEN",
+  secret: "github",
+  domains: ["api.github.com"],
+  header: "Authorization",
+  value: "Bearer {secret}",
 };
 
 const recipeFor = (namespace: string) => ({ ...RECIPE, namespace });
@@ -84,6 +102,7 @@ describe("POST /v1/agent-configs", () => {
       systemPrompt: RECIPE.systemPrompt,
       network: RECIPE.network,
       packages: RECIPE.packages,
+      credentials: RECIPE.credentials,
     });
     expect(res.status).toBe(201);
     expect((await res.json()).namespace).toBe("default");
@@ -110,21 +129,24 @@ describe("POST /v1/agent-configs", () => {
   it("stores a provided environment verbatim", async () => {
     const res = await post(app, "/v1/agent-configs", {
       ...RECIPE,
-      network: { type: "allowlist", domains: ["pypi.org"] },
+      network: { type: "allowlist", domains: ["pypi.org", "api.stripe.com", "api.github.com"] },
       packages: { pip: ["pandas==2.2.0"] },
+      credentials: [STRIPE, GITHUB],
     });
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({
-      network: { type: "allowlist", domains: ["pypi.org"] },
+      network: { type: "allowlist", domains: ["pypi.org", "api.stripe.com", "api.github.com"] },
       packages: { pip: ["pandas==2.2.0"] },
+      credentials: [STRIPE, GITHUB],
     });
   });
 
-  it("rejects a create without network or packages, 400", async () => {
-    const { network, packages, ...bare } = RECIPE;
+  it("rejects a create without network, packages or credentials, 400", async () => {
+    const { network, packages, credentials, ...bare } = RECIPE;
     for (const body of [
-      { ...bare, packages },
-      { ...bare, network },
+      { ...bare, packages, credentials },
+      { ...bare, network, credentials },
+      { ...bare, network, packages },
     ]) {
       const res = await post(app, "/v1/agent-configs", body);
       expect(res.status).toBe(400);
@@ -138,6 +160,18 @@ describe("POST /v1/agent-configs", () => {
       expect(res.status).toBe(400);
       expect((await res.json()).error.type).toBe("invalid_request_error");
     }
+  });
+
+  it("rejects malformed credentials, 400, naming the credential (the rules: core)", async () => {
+    const res = await post(app, "/v1/agent-configs", {
+      ...RECIPE,
+      credentials: [STRIPE, { ...GITHUB, env: "STRIPE_API_KEY" }],
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toEqual({
+      type: "invalid_request_error",
+      message: "credentials.1.env: STRIPE_API_KEY is already set by credentials.0",
+    });
   });
 });
 
@@ -294,6 +328,17 @@ describe("POST /v1/agent-configs/:id", () => {
     });
   });
 
+  it("replaces credentials on update, and carries them forward when an update omits them", async () => {
+    const created = await (
+      await post(app, "/v1/agent-configs", { ...RECIPE, credentials: [STRIPE] })
+    ).json();
+    const replaced = await post(app, `/v1/agent-configs/${created.id}`, { credentials: [GITHUB] });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ credentials: [GITHUB], version: 2 });
+    const carried = await post(app, `/v1/agent-configs/${created.id}`, { systemPrompt: "next" });
+    expect(await carried.json()).toMatchObject({ credentials: [GITHUB], version: 3 });
+  });
+
   it("accepts an empty update as a no-op", async () => {
     const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
     const res = await post(app, `/v1/agent-configs/${created.id}`, {});
@@ -308,6 +353,7 @@ describe("POST /v1/agent-configs/:id", () => {
       { inference: "model-only" },
       { network: { type: "vpn" } },
       { packages: ["numpy"] },
+      { credentials: [{ ...GITHUB, type: "unsafe" }] },
     ]) {
       const res = await post(app, `/v1/agent-configs/${created.id}`, body);
       expect(res.status).toBe(400);

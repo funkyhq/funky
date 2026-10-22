@@ -84,6 +84,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       systemPrompt: "s",
       network: { type: "none" },
       packages: { pip: ["numpy"] },
+      credentials: [],
     });
     const newSession = (agentConfigVersion?: number) =>
       store.createSession({

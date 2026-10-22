@@ -3,7 +3,8 @@
 //
 // The form is the request's REQUIRED shape: provider, model, system prompt,
 // network, packages — no packages typed is {}, install nothing, said
-// explicitly. The body's optional parts — maxTokens, temperature, metadata —
+// explicitly. Credentials have no fields yet, so the body says [], no keys.
+// The body's optional parts — maxTokens, temperature, metadata —
 // are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
@@ -128,6 +129,7 @@ function Form({
       systemPrompt: fields.systemPrompt,
       network,
       packages: compact(packages),
+      credentials: [],
     };
 
     setFailure(undefined);
