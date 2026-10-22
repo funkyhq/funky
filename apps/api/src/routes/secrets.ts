@@ -11,15 +11,14 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { type SecretProvider, secretValueProblem } from "@funky/agent";
+import { SecretName } from "@funky/core";
 import { errorResponse } from "../http";
 import { NamespaceQuery, validate } from "./common";
 
 type Env = { Variables: { requestId: string } };
 
-/** A name takes what a namespace takes (common.ts NamespaceQuery). */
-const SecretParam = z.object({
-  name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "1-64 characters: letters, digits, _ and -"),
-});
+/** The name credentials refer to the key by (core SecretName). */
+const SecretParam = z.object({ name: SecretName });
 
 /** GCP Secret Manager's payload cap, so a later adapter can hold
  *  whatever this route accepts. Infisical holds it. */
