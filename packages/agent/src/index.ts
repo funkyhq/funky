@@ -26,6 +26,8 @@ export type {
   SandboxInfo,
   SandboxProvider,
 } from "./ports/sandbox-provider";
+export { SecretNotFoundError } from "./ports/secret-provider";
+export type { SecretInfo, SecretProvider, SecretRef } from "./ports/secret-provider";
 export {
   ArchivedError,
   FencedError,

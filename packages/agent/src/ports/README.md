@@ -5,10 +5,12 @@ in `../driver`) consume. Implementations live downstream in
 `packages/adapters`; this directory defines what they must be, never
 what they are.
 
-| port                | one line                                                |
-| ------------------- | ------------------------------------------------------- |
-| `InferenceProvider` | one request in, one live stream of increments out       |
-| `Store`             | the single source of truth: 18 methods, two write paths |
+| port                | one line                                                           |
+| ------------------- | ------------------------------------------------------------------ |
+| `InferenceProvider` | one request in, one live stream of increments out                  |
+| `SandboxProvider`   | sandboxes by id: create, reattach, list; commands and files in one |
+| `SecretProvider`    | a namespace's keys: the api writes them, the worker reads them     |
+| `Store`             | the single source of truth: 18 methods, two write paths            |
 
 Why the ports live here and not elsewhere:
 
@@ -28,6 +30,6 @@ Why the ports live here and not elsewhere:
   for free from here.
 
 Adapters are held to these contracts behaviorally, not just structurally:
-the Store conformance suite (in `packages/adapters`) runs against every
-implementation on every binding. If a port's jsdoc promises it, the
-suite pins it.
+the Store and SecretProvider conformance suites (in `packages/adapters`)
+run against every implementation on every binding. If a port's jsdoc
+promises it, the suite pins it.
