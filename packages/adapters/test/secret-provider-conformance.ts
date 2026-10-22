@@ -131,10 +131,33 @@ export function describeSecretProviderConformance(
       );
     });
 
+    it("keeps every (namespace, name) pair apart, even pairs whose joins coincide", async () => {
+      // A backend keyed by one flat string tempts `namespace + sep + name`,
+      // which maps each pair below to a single key. The port addresses the
+      // pair, so they stay two secrets whatever the separator.
+      for (const sep of ["-", "_", "--", "__"]) {
+        const outer = `${ns}${sep}a`;
+        used.add(outer);
+        await secrets.put({ namespace: outer, name: "b" }, `outer ${sep}`);
+        await secrets.put({ namespace: ns, name: `a${sep}b` }, `inner ${sep}`);
+
+        await expect(secrets.resolve(outer, ["b"])).resolves.toEqual(
+          new Map([["b", `outer ${sep}`]]),
+        );
+        await expect(secrets.resolve(ns, [`a${sep}b`])).resolves.toEqual(
+          new Map([[`a${sep}b`, `inner ${sep}`]]),
+        );
+        expect((await secrets.list(outer)).map((s) => s.name)).toEqual(["b"]);
+      }
+    });
+
     it("stores values verbatim", async () => {
       const values = {
         spaced: "  Bearer sk-ünïcödé/+=_-.~:@ ✓  ",
         long: "x".repeat(4096),
+        // A backend that templates values would fill these in from OTHER.
+        templated: "prefix ${OTHER} $OTHER suffix",
+        OTHER: "expanded",
       };
       for (const [name, value] of Object.entries(values)) {
         await secrets.put({ namespace: ns, name }, value);
