@@ -49,31 +49,26 @@ const Domain = z
 
 // Keys a session's sandbox gets from the namespace's secret store, by
 // name: the value is fetched when the sandbox is created and never rides
-// in the config. `type` says how it arrives, and has no default, so a key
-// is never exposed by omission:
-// - injected: `env` holds a placeholder, and on requests to `domains` the
-//   provider sets `header` to `value`, with `{secret}` replaced by the
-//   key, outside the sandbox. The agent can use the key, never read it.
-// - unsafe: `env` holds the key itself, readable by anything in the
-//   sandbox, the model included.
+// in the config. Injected, the one type, keeps the key out of the
+// sandbox: `env` holds a placeholder, and on requests to `domains` the
+// provider sets `header` to `value`, with `{secret}` replaced by the key.
+// The agent can use the key, never read it. `type` is required all the
+// same, so another way to deliver a key can join later without changing
+// what an existing config means.
 //
-// Strict: a field the type doesn't take is refused, not dropped. Domains
-// on an unsafe key would otherwise vanish while their writer believes the
-// key confined to them.
-export const Credential = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("injected"),
-    env: EnvName,
-    secret: SecretName,
-    domains: z.array(Domain).min(1),
-    header: z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "an HTTP header name"),
-    value: z
-      .string()
-      .regex(/^[\x20-\x7e]*$/, "printable ASCII, with no line breaks")
-      .refine((value) => value.includes("{secret}"), "must contain {secret}"),
-  }),
-  z.strictObject({ type: z.literal("unsafe"), env: EnvName, secret: SecretName }),
-]);
+// Strict: a field the type doesn't take is refused, not dropped, so a key
+// pasted into the config is an error rather than silently discarded.
+export const Credential = z.strictObject({
+  type: z.literal("injected"),
+  env: EnvName,
+  secret: SecretName,
+  domains: z.array(Domain).min(1),
+  header: z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "an HTTP header name"),
+  value: z
+    .string()
+    .regex(/^[\x20-\x7e]*$/, "printable ASCII, with no line breaks")
+    .refine((value) => value.includes("{secret}"), "must contain {secret}"),
+});
 export type Credential = z.infer<typeof Credential>;
 
 // One credential per env var, and one per header on a domain: of two
@@ -92,7 +87,6 @@ export const Credentials = z.array(Credential).superRefine((credentials, ctx) =>
         message: `${credential.env} is already set by credentials.${holder}`,
       });
     }
-    if (credential.type !== "injected") return;
     for (const domain of credential.domains) {
       const slot = `${domain} ${credential.header.toLowerCase()}`;
       const setter = headers.get(slot);

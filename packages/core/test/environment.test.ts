@@ -9,7 +9,14 @@ const STRIPE = {
   header: "Authorization",
   value: "Bearer {secret}",
 };
-const PG = { type: "unsafe", env: "PGPASSWORD", secret: "pg-password" };
+const GITHUB = {
+  type: "injected",
+  env: "GH_TOKEN",
+  secret: "github",
+  domains: ["api.github.com"],
+  header: "Authorization",
+  value: "Bearer {secret}",
+};
 
 /** The issues a list draws, each as "path: message". */
 const problems = (credentials: unknown[]) => {
@@ -20,37 +27,34 @@ const problems = (credentials: unknown[]) => {
 };
 
 describe("credentials", () => {
-  it("accepts both types, by name only — no value rides in the config", () => {
-    expect(problems([STRIPE, PG])).toEqual([]);
+  it("accepts injected keys, by name only — no value rides in the config", () => {
+    expect(problems([STRIPE, GITHUB])).toEqual([]);
     expect(problems([])).toEqual([]);
   });
 
-  it("requires the type: a key is never exposed by omission", () => {
-    const { type: _, ...untyped } = PG;
-    expect(problems([untyped])).toEqual([
-      "0.type: Invalid discriminator value. Expected 'injected' | 'unsafe'",
+  it("requires the type, and injected is the only one", () => {
+    const { type: _, ...untyped } = STRIPE;
+    expect(problems([untyped])).toEqual(['0.type: Invalid input: expected "injected"']);
+    expect(problems([{ ...STRIPE, type: "unsafe" }])).toEqual([
+      '0.type: Invalid input: expected "injected"',
     ]);
-    expect(problems([{ ...PG, type: "exposed" }])).toHaveLength(1);
   });
 
-  it("refuses a field its type doesn't take, rather than drop it", () => {
-    expect(problems([{ ...PG, domains: ["db.example.com"] }])).toEqual([
-      '0: Unrecognized key: "domains"',
-    ]);
+  it("refuses a field the type doesn't take, rather than drop it", () => {
     expect(problems([{ ...STRIPE, secretValue: "sk_live_1" }])).toEqual([
       '0: Unrecognized key: "secretValue"',
     ]);
   });
 
   it("takes env names a shell can set, and secret names the secret store takes", () => {
-    expect(problems([{ ...PG, env: "_PG_PASSWORD2" }])).toEqual([]);
-    for (const env of ["2FA_CODE", "PG-PASSWORD", "PG PASSWORD", ""]) {
-      expect(problems([{ ...PG, env }])).toEqual([
+    expect(problems([{ ...STRIPE, env: "_STRIPE_KEY2" }])).toEqual([]);
+    for (const env of ["2FA_CODE", "STRIPE-KEY", "STRIPE KEY", ""]) {
+      expect(problems([{ ...STRIPE, env }])).toEqual([
         "0.env: letters, digits and _, not starting with a digit",
       ]);
     }
     for (const secret of ["has.dot", "a".repeat(65), ""]) {
-      expect(problems([{ ...PG, secret }])).toEqual([
+      expect(problems([{ ...STRIPE, secret }])).toEqual([
         "0.secret: 1-64 characters: letters, digits, _ and -",
       ]);
     }
@@ -89,11 +93,9 @@ describe("credentials", () => {
   });
 
   it("gives each env var one credential", () => {
-    expect(problems([STRIPE, { ...PG, env: "STRIPE_API_KEY" }])).toEqual([
+    expect(problems([STRIPE, { ...GITHUB, env: "STRIPE_API_KEY" }])).toEqual([
       "1.env: STRIPE_API_KEY is already set by credentials.0",
     ]);
-    // One stored key under two names is fine.
-    expect(problems([PG, { ...PG, env: "PGPASS" }])).toEqual([]);
   });
 
   it("gives each header on a domain one credential, whatever the header's case", () => {
@@ -103,6 +105,7 @@ describe("credentials", () => {
     expect(problems([{ ...STRIPE, domains: ["api.stripe.com", "api.stripe.com"] }])).toEqual([
       "0.domains: Authorization on api.stripe.com is already set by credentials.0",
     ]);
+    // One stored key under a second env name, for another domain or header.
     expect(
       problems([STRIPE, { ...STRIPE, env: "FILES_KEY", domains: ["files.stripe.com"] }]),
     ).toEqual([]);
