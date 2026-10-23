@@ -32,6 +32,24 @@ describe("configs", () => {
       systemPrompt: "You are helpful.",
       network: { type: "allowlist", domains: ["pypi.org"] },
       packages: { pip: ["pandas==2.2.0"] },
+      credentials: [
+        {
+          type: "injected",
+          env: "STRIPE_API_KEY",
+          secret: "stripe-live",
+          domains: ["api.stripe.com"],
+          header: "Authorization",
+          value: "Bearer {secret}",
+        },
+        {
+          type: "injected",
+          env: "GH_TOKEN",
+          secret: "github",
+          domains: ["api.github.com"],
+          header: "Authorization",
+          value: "Bearer {secret}",
+        },
+      ],
       namespace: "tenant-a",
       metadata: { team: "growth" },
       version: 3,
@@ -48,6 +66,7 @@ describe("configs", () => {
       systemPrompt: "s",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
     });
     expect(result.success).toBe(true);
   });
@@ -95,6 +114,7 @@ describe("configs", () => {
       systemPrompt: "s",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",
@@ -148,6 +168,10 @@ describe("configs", () => {
     expect(AgentConfig.safeParse({ ...config, network: { type: "none" } }).success).toBe(false);
     expect(
       AgentConfig.safeParse({ ...config, network: { type: "none" }, packages: {} }).success,
+    ).toBe(false);
+    expect(
+      AgentConfig.safeParse({ ...config, network: { type: "none" }, packages: {}, credentials: [] })
+        .success,
     ).toBe(true);
   });
 
@@ -158,11 +182,29 @@ describe("configs", () => {
       systemPrompt: "s",
       network: { type: "allowlist", domains: ["pypi.org"] },
       packages: { pip: ["numpy"] },
+      credentials: [
+        {
+          type: "injected",
+          env: "GH_TOKEN",
+          secret: "github",
+          domains: ["api.github.com"],
+          header: "Authorization",
+          value: "Bearer {secret}",
+        },
+      ],
     };
     expect(CreateAgentConfigRequest.safeParse(create).success).toBe(true);
-    const { network, packages, ...bare } = create;
-    expect(CreateAgentConfigRequest.safeParse({ ...bare, packages }).success).toBe(false);
-    expect(CreateAgentConfigRequest.safeParse({ ...bare, network }).success).toBe(false);
+    const { network, packages, credentials, ...bare } = create;
+    expect(CreateAgentConfigRequest.safeParse({ ...bare, packages, credentials }).success).toBe(
+      false,
+    );
+    expect(CreateAgentConfigRequest.safeParse({ ...bare, network, credentials }).success).toBe(
+      false,
+    );
+    expect(CreateAgentConfigRequest.safeParse({ ...bare, network, packages }).success).toBe(false);
+    expect(
+      CreateAgentConfigRequest.safeParse({ ...create, credentials: [{ env: "GH_TOKEN" }] }).success,
+    ).toBe(false);
     expect(
       CreateAgentConfigRequest.safeParse({ ...create, network: { type: "vpn" } }).success,
     ).toBe(false);
@@ -170,7 +212,9 @@ describe("configs", () => {
       false,
     );
     expect(UpdateAgentConfigRequest.safeParse({ network: { type: "none" } }).success).toBe(true);
+    expect(UpdateAgentConfigRequest.safeParse({ credentials: [] }).success).toBe(true);
     expect(UpdateAgentConfigRequest.safeParse({ packages: ["numpy"] }).success).toBe(false);
+    expect(UpdateAgentConfigRequest.safeParse({ credentials: {} }).success).toBe(false);
   });
 
   it("round-trips an archived agent config — the mark is a timestamp, not a flag", () => {
@@ -180,6 +224,7 @@ describe("configs", () => {
       systemPrompt: "s",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
       namespace: "default",
       version: 2,
       createdAt: "2026-08-11T12:00:00Z",
@@ -196,11 +241,13 @@ describe("configs", () => {
       systemPrompt: "s",
       network: { type: "unrestricted" },
       packages: {},
+      credentials: [],
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",
       updatedAt: "2026-08-11T12:00:00Z",
     };
+    expect(AgentConfig.safeParse(config).success).toBe(true);
     expect(AgentConfig.safeParse({ ...config, archivedAt: null }).success).toBe(false);
     expect(AgentConfig.safeParse({ ...config, archivedAt: true }).success).toBe(false);
   });

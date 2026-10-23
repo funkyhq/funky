@@ -102,6 +102,7 @@ const agentConfigColumns = {
   systemPrompt: agentConfigVersions.systemPrompt,
   network: agentConfigVersions.network,
   packages: agentConfigVersions.packages,
+  credentials: agentConfigVersions.credentials,
   metadata: agentConfigVersions.metadata,
   updatedAt: agentConfigVersions.updatedAt,
   id: agentConfigs.id,
@@ -123,6 +124,7 @@ const toAgentConfig = (row: AgentConfigRow): AgentConfig =>
     systemPrompt: row.systemPrompt,
     network: row.network,
     packages: row.packages,
+    credentials: row.credentials,
     namespace: row.namespace,
     ...unwrapped(row.metadata),
     version: row.version,
@@ -230,6 +232,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           systemPrompt: parsed.systemPrompt,
           network: parsed.network,
           packages: parsed.packages,
+          credentials: parsed.credentials,
           metadata: wrap(parsed.metadata),
           updatedAt: timestamp,
         });
@@ -281,6 +284,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         parsed.systemPrompt !== undefined ||
         parsed.network !== undefined ||
         parsed.packages !== undefined ||
+        parsed.credentials !== undefined ||
         parsed.metadata !== undefined;
 
       return db.transaction(async (tx) => {
@@ -307,6 +311,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
                 systemPrompt: agentConfigVersions.systemPrompt,
                 network: agentConfigVersions.network,
                 packages: agentConfigVersions.packages,
+                credentials: agentConfigVersions.credentials,
                 metadata: agentConfigVersions.metadata,
               })
               .from(agentConfigVersions)
@@ -329,6 +334,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               systemPrompt: parsed.systemPrompt ?? previous.systemPrompt,
               network: parsed.network ?? previous.network,
               packages: parsed.packages ?? previous.packages,
+              credentials: parsed.credentials ?? previous.credentials,
               metadata: parsed.metadata === undefined ? previous.metadata : wrap(parsed.metadata),
               updatedAt: now(),
             };

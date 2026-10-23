@@ -151,6 +151,7 @@ async function newSession(inference = inferenceConfig): Promise<SessionRef> {
     systemPrompt: "be brief",
     network: { type: "unrestricted" },
     packages: {},
+    credentials: [],
   });
   return store.createSession({
     namespace: DEFAULT_NAMESPACE,

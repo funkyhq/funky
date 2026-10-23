@@ -25,6 +25,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type {
+  Credentials,
   InferenceConfig,
   JsonValue,
   NetworkPolicy,
@@ -71,6 +72,7 @@ export const agentConfigVersions = pgTable(
     // Required at create and carried forward by every update.
     network: jsonb("network").$type<NetworkPolicy>().notNull(),
     packages: jsonb("packages").$type<Packages>().notNull(),
+    credentials: jsonb("credentials").$type<Credentials>().notNull(),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },

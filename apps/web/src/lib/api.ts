@@ -32,6 +32,7 @@ export type AgentConfig = {
    *  a version pins this too. */
   network: NetworkPolicy;
   packages: Packages;
+  credentials: Credential[];
   /** Monotonic; an update lands as the next version rather than a rewrite. */
   version: number;
   createdAt: string;
@@ -49,6 +50,19 @@ export type NetworkPolicy =
 /** Specs keyed by package manager ("pip", "npm", "apt", …), each spec left
  *  in its own ecosystem's syntax — the key names the interpreter. */
 export type Packages = Record<string, string[]>;
+
+/** A key the sandbox gets from the secret store, by name — never its value.
+ *  It stays outside the sandbox: `env` holds a placeholder, and the
+ *  provider sets `header` on requests to `domains`. */
+export type Credential = {
+  type: "injected";
+  env: string;
+  secret: string;
+  domains: string[];
+  header: string;
+  /** The header's value, with `{secret}` where the key goes. */
+  value: string;
+};
 
 /** The envelope every collection route returns (api routes/common.ts). */
 export type Page<T> = {
@@ -159,13 +173,14 @@ export function listAgentConfigs(
 }
 
 /** The create body, minus the namespace this console pins for every call.
- *  Network and packages are required: the request says what the sandbox
- *  is, rather than leaving it to an api default. */
+ *  Network, packages and credentials are required: the request says what
+ *  the sandbox is, rather than leaving it to an api default. */
 export type CreateAgentConfigInput = {
   inference: InferenceConfig;
   systemPrompt: string;
   network: NetworkPolicy;
   packages: Packages;
+  credentials: Credential[];
   metadata?: unknown;
 };
 
@@ -210,6 +225,7 @@ export type UpdateAgentConfigInput = {
   systemPrompt?: string;
   network?: NetworkPolicy;
   packages?: Packages;
+  credentials?: Credential[];
   /** Optimistic concurrency: the version this edit was made against. The
    *  api answers 409 if it is no longer the current one. */
   version?: number;

@@ -11,6 +11,7 @@ import {
   type AgentConfigRef,
   type AssistantMessage,
   type CreateAgentConfigRequest,
+  type Credential,
   type CreateSessionRequest,
   DEFAULT_NAMESPACE,
   type SessionRef,
@@ -25,6 +26,23 @@ import {
   type Store,
   VersionConflictError,
 } from "@funky/agent";
+
+const STRIPE: Credential = {
+  type: "injected",
+  env: "STRIPE_API_KEY",
+  secret: "stripe-live",
+  domains: ["api.stripe.com"],
+  header: "Authorization",
+  value: "Bearer {secret}",
+};
+const GITHUB: Credential = {
+  type: "injected",
+  env: "GH_TOKEN",
+  secret: "github",
+  domains: ["api.github.com"],
+  header: "Authorization",
+  value: "Bearer {secret}",
+};
 
 export interface StoreHarness {
   store: Store;
@@ -64,6 +82,7 @@ export function describeStoreConformance(
         systemPrompt: "s",
         network: { type: "unrestricted" },
         packages: {},
+        credentials: [],
         ...overrides,
       });
     }
@@ -111,6 +130,7 @@ export function describeStoreConformance(
           systemPrompt: "You are helpful.",
           network: { type: "unrestricted" },
           packages: {},
+          credentials: [],
           metadata: { team: "growth" },
         });
         const config = await store.getAgentConfig(ref);
@@ -152,6 +172,7 @@ export function describeStoreConformance(
             systemPrompt: "s",
             network: { type: "unrestricted" },
             packages: {},
+            credentials: [],
           }),
         ).rejects.toThrow();
       });
@@ -301,15 +322,16 @@ export function describeStoreConformance(
         ).rejects.toThrow();
       });
 
-      it("requires network and packages at agent config create — no default to resolve", async () => {
+      it("requires network, packages and credentials at agent config create — no default to resolve", async () => {
         const base = {
           namespace: DEFAULT_NAMESPACE,
           inference: { provider: "fake", model: "m" },
           systemPrompt: "s",
         };
         for (const req of [
-          { ...base, packages: {} },
-          { ...base, network: { type: "unrestricted" } },
+          { ...base, packages: {}, credentials: [] },
+          { ...base, network: { type: "unrestricted" }, credentials: [] },
+          { ...base, network: { type: "unrestricted" }, packages: {} },
         ]) {
           // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
           await expect(store.createAgentConfig(req as any)).rejects.toThrow();
@@ -323,10 +345,12 @@ export function describeStoreConformance(
         const ref = await newAgent({
           network: { type: "allowlist", domains: ["pypi.org"] },
           packages: { pip: ["pandas==2.2.0"] },
+          credentials: [STRIPE, GITHUB],
         });
         expect(await store.getAgentConfig(ref)).toMatchObject({
           network: { type: "allowlist", domains: ["pypi.org"] },
           packages: { pip: ["pandas==2.2.0"] },
+          credentials: [STRIPE, GITHUB],
         });
       });
 
@@ -356,12 +380,24 @@ export function describeStoreConformance(
         expect(v4).toMatchObject({
           network: { type: "none" },
           packages: { npm: ["zod@4"] },
+          credentials: [],
           version: 4,
         });
+
+        const v5 = await store.updateAgentConfig(ref, { credentials: [GITHUB] });
+        expect(v5).toMatchObject({
+          network: { type: "none" },
+          packages: { npm: ["zod@4"] },
+          credentials: [GITHUB],
+          version: 5,
+        });
+        const v6 = await store.updateAgentConfig(ref, { systemPrompt: "behavior again" });
+        expect(v6).toMatchObject({ credentials: [GITHUB], version: 6 });
 
         // Every snapshot is whole: a pinned version keeps the world it had.
         expect(await store.getAgentConfig({ ...ref, version: 1 })).toEqual(v1);
         expect(await store.getAgentConfig({ ...ref, version: 2 })).toEqual(v2);
+        expect(await store.getAgentConfig({ ...ref, version: 4 })).toEqual(v4);
       });
 
       it("rejects an invalid agent environment at the boundary", async () => {
@@ -369,10 +405,17 @@ export function describeStoreConformance(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
           newAgent({ network: { type: "vpn" } as any }),
         ).rejects.toThrow();
+        await expect(
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+          newAgent({ credentials: [{ ...GITHUB, type: "unsafe" }] as any }),
+        ).rejects.toThrow();
         const ref = await newAgent();
         await expect(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
           store.updateAgentConfig(ref, { packages: ["numpy"] } as any),
+        ).rejects.toThrow();
+        await expect(
+          store.updateAgentConfig(ref, { credentials: [STRIPE, { ...GITHUB, env: STRIPE.env }] }),
         ).rejects.toThrow();
         expect((await store.getAgentConfig(ref))?.version).toBe(1);
       });
@@ -436,6 +479,7 @@ export function describeStoreConformance(
           { metadata: { note: "after" } },
           { network: { type: "none" } as const },
           { packages: { pip: ["numpy"] } },
+          { credentials: [GITHUB] },
           { systemPrompt: "after", version: 1 },
         ]) {
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
@@ -684,11 +728,13 @@ export function describeStoreConformance(
         const agentConfigRef = await newAgent({
           network: { type: "none" },
           packages: { pip: ["numpy"] },
+          credentials: [GITHUB],
         });
         const before = await newSessionOn(agentConfigRef);
         await store.updateAgentConfig(agentConfigRef, {
           network: { type: "allowlist", domains: ["example.com"] },
           packages: { npm: ["zod"] },
+          credentials: [STRIPE],
         });
         const after = await newSessionOn(agentConfigRef);
 
@@ -698,15 +744,21 @@ export function describeStoreConformance(
             ...agentConfigRef,
             version: session!.agentConfigVersion,
           });
-          return { network: config?.network, packages: config?.packages };
+          return {
+            network: config?.network,
+            packages: config?.packages,
+            credentials: config?.credentials,
+          };
         };
         expect(await environmentOf(before)).toEqual({
           network: { type: "none" },
           packages: { pip: ["numpy"] },
+          credentials: [GITHUB],
         });
         expect(await environmentOf(after)).toEqual({
           network: { type: "allowlist", domains: ["example.com"] },
           packages: { npm: ["zod"] },
+          credentials: [STRIPE],
         });
       });
 
