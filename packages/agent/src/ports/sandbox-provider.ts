@@ -30,7 +30,7 @@
 //   simply never committed, and the fence rejects late work.
 // - `kill` destroys the sandbox including its workspace.
 
-import type { NetworkPolicy, Packages } from "@funky/core";
+import type { Credential, NetworkPolicy, Packages } from "@funky/core";
 
 /**
  * connect()'s "definitively gone" rejection: the sandbox no longer
@@ -47,9 +47,11 @@ export class SandboxNotFoundError extends Error {}
  * describes cannot be provisioned — a package that does not install, a
  * package manager the adapter cannot serve, a request the provider
  * refuses outright — so the same request fails the same way every time.
- * The driver ends the run on it, so adapters MUST NOT throw it for a
- * transient failure (an outage, a rate limit, a build superseded by
- * another): that would end runs a retry would have served.
+ * resolveCredentials throws it too, before any create, for a key the
+ * secret store doesn't have, or a deployment with no store. The driver
+ * ends the run on it, so adapters MUST NOT throw it for a transient
+ * failure (an outage, a rate limit, a build superseded by another): that
+ * would end runs a retry would have served.
  */
 export class SandboxProvisionError extends Error {}
 
@@ -78,8 +80,22 @@ export interface CreateSandboxOptions {
    *  — never hand back a sandbox missing what was asked for. Absent or
    *  empty = nothing beyond the provider's base image. */
   packages?: Packages;
+  /** Keys to deliver, each with its credential (core/environment.ts),
+   *  read from the secret store by resolveCredentials. Adapters MUST
+   *  deliver each as its type says or reject create() with
+   *  SandboxProvisionError, and MUST NOT put a key anywhere the agent
+   *  can read it: the sandbox's env, files or metadata, or an error
+   *  they throw (the driver writes a provision error's message into
+   *  the session). Absent or empty = no keys. */
+  credentials?: ResolvedCredential[];
   /** Opaque labels; the driver stores the session mapping here. */
   metadata?: Record<string, string>;
+}
+
+/** A credential from an agent config, with the key its `secret` names. */
+export interface ResolvedCredential {
+  credential: Credential;
+  key: string;
 }
 
 export interface SandboxInfo {

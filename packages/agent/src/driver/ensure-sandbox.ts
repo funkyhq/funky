@@ -17,9 +17,15 @@
 // level up: create, CAS expecting the dead id, loser kills its
 // duplicate and joins whoever replaced it first.
 //
+// The create options come as a function, called only when a create
+// happens: they can cost a read (resolveCredentials fetches keys from
+// the secret store), and most binds just connect to the sandbox the
+// session already has. A rejection from it propagates before anything
+// is created or bound.
+//
 // The composition root closes the driver's `bindTools` dep over this:
 //   bindTools: (ref) =>
-//     ensureSandbox(store, provider, ref, opts).then(createSandboxTools)
+//     ensureSandbox(store, provider, ref, async () => opts).then(createSandboxTools)
 
 import type { SessionRef } from "@funky/core";
 import {
@@ -34,7 +40,7 @@ export async function ensureSandbox(
   store: Pick<Store, "getSession" | "bindSandbox">,
   provider: SandboxProvider,
   ref: SessionRef,
-  createOpts?: CreateSandboxOptions,
+  createOpts?: () => Promise<CreateSandboxOptions>,
 ): Promise<Sandbox> {
   const session = await store.getSession(ref);
   if (!session) throw new Error(`ensureSandbox: unknown session ${ref.sessionId}`);
@@ -49,9 +55,10 @@ export async function ensureSandbox(
         // Definitively gone — fall through and replace the binding.
       }
     }
+    const opts = await createOpts?.();
     const created = await provider.create({
-      ...createOpts,
-      metadata: { ...createOpts?.metadata, sessionId: ref.sessionId },
+      ...opts,
+      metadata: { ...opts?.metadata, sessionId: ref.sessionId },
     });
     const winner = await store.bindSandbox(ref, created.sandboxId, bound);
     if (winner === created.sandboxId) return created;

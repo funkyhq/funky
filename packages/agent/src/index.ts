@@ -1,6 +1,7 @@
 export { cancelRequested, runDriver, runStep } from "./driver/loop";
 export type { DriverDeps, DriverOptions, StepDeps } from "./driver/loop";
 export { ensureSandbox } from "./driver/ensure-sandbox";
+export { resolveCredentials } from "./driver/resolve-credentials";
 export { buildContext } from "./engine/build-context";
 export { inference } from "./engine/inference";
 export type { InferenceDeps, InferenceRequest } from "./engine/inference";
@@ -21,6 +22,7 @@ export { SandboxNotFoundError, SandboxProvisionError } from "./ports/sandbox-pro
 export type {
   CommandResult,
   CreateSandboxOptions,
+  ResolvedCredential,
   RunOptions,
   Sandbox,
   SandboxInfo,
