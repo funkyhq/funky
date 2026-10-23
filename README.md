@@ -159,7 +159,7 @@ the names (never the values), and `DELETE /v1/secrets/stripe-live` removes one.
 
 ### Credentials
 
-A credential hands the sandbox a stored key without putting it there:
+A credential lets the agent use a stored key it can't read:
 
 ```json
 "credentials": [
@@ -174,23 +174,13 @@ A credential hands the sandbox a stored key without putting it there:
 ]
 ```
 
-When the session's sandbox is created, the worker reads `stripe-live` from the secret store, and
-E2B's egress proxy, outside the sandbox, sets `Authorization: Bearer sk_live_…` on every HTTPS
-request to `api.stripe.com`. Inside, `STRIPE_API_KEY` holds a placeholder (`funky-injected`) for
-tools that need the variable set: the agent can use the key but not read it.
+Outside the sandbox, E2B's egress proxy sets `Authorization: Bearer <the stripe-live key>` on
+HTTPS requests to `api.stripe.com`. Inside, `STRIPE_API_KEY` holds a placeholder, `funky-injected`.
 
-- Keys are read when a sandbox is created, and a session keeps its sandbox: a key you replace or
-  delete reaches new sessions, not ones that already have a sandbox. Deleting a key doesn't
-  revoke it; revoke it with the vendor.
-- A key the store doesn't have ends the run with "secret not found".
+- Keys are read when a sandbox is created, so a changed key misses sessions that already have one.
 - Headers only: a key that belongs in a URL, a body or a signature (AWS) can't be injected.
-- E2B allows 10 domains per session and 20 headers per domain; past that, the run ends with
-  E2B's reason. `*.example.com` covers subdomains, not `example.com`.
-- E2B's proxy re-signs TLS for those domains. The sandbox trusts it through the system store,
-  plus `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` for Node and Python
-  clients that carry their own.
-- The key isn't sealed, only out of reach: a host on `domains` that echoes request headers hands
-  it back, and E2B keeps it with the sandbox, readable by anyone with the deployment's E2B key.
+- Tools that check a key's format, like the Stripe CLI, need a stand-in in that format instead.
+- A host on `domains` that echoes request headers hands the key back to the agent.
 
 ## Why Funky?
 
