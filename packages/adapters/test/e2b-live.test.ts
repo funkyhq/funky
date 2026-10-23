@@ -1,27 +1,45 @@
 // The e2b adapter against real sandboxes — the behavior a mock can only
 // assert by fiat: exit codes settling as results, byte round-trips,
 // in-sandbox timeouts, metadata listing, the pause → connect-revives
-// → filesystem-survives cycle, an allowlist fencing egress, and E2B's
+// → filesystem-survives cycle, an allowlist fencing egress, a
+// credential's key set on requests outside the sandbox, and E2B's
 // refusal of a create arriving typed. Runs only when E2B_API_KEY is set
 // (deliberate opt-in — every run creates a real sandbox):
 //
 //   E2B_API_KEY=... pnpm --filter @funky/adapters test e2b-live
 //
-// One sandbox serves the whole suite, serially (only the allowlist test
-// makes its own, fenced one), and every TTL is lifecycle "kill" so an
-// aborted run leaves no orphan behind.
+// One sandbox serves the whole suite, serially (the allowlist and
+// credential tests make their own), and every TTL is lifecycle "kill" so
+// an aborted run leaves no orphan behind. The credential tests use a
+// made-up key and httpbin.org, which echoes the headers it receives.
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import {
+  type ResolvedCredential,
   type Sandbox,
   SandboxNotFoundError,
   type SandboxProvider,
   SandboxProvisionError,
 } from "@funky/agent";
-import { createE2bProvider } from "../src/sandbox/e2b";
+import { CREDENTIAL_PLACEHOLDER, createE2bProvider } from "../src/sandbox/e2b";
 
 const apiKey = process.env.E2B_API_KEY;
+
+/** A made-up key, sent as X-Api-Key to `domains`. */
+function probeCredential(domains: string[], key: string): ResolvedCredential {
+  return {
+    credential: {
+      type: "injected",
+      env: "PROBE_KEY",
+      secret: "probe",
+      domains,
+      header: "X-Api-Key",
+      value: "Key {secret}",
+    },
+    key,
+  };
+}
 
 if (!apiKey) {
   describe.skip("e2b sandbox provider (live)", () => {
@@ -145,6 +163,92 @@ if (!apiKey) {
       refused.then((made) => made.kill()).catch(() => {});
       await expect(refused).rejects.toBeInstanceOf(SandboxProvisionError);
       await expect(refused).rejects.toThrow("E2B refused the sandbox: 400:");
+    }, 60_000);
+
+    test("a credential's key is set on its domains' requests, never in the sandbox", async () => {
+      const key = `funky-live-${randomUUID()}`;
+      const injecting = await provider.create({
+        timeoutMs: 300_000,
+        lifecycle: "kill",
+        credentials: [probeCredential(["httpbin.org"], key)],
+      });
+      try {
+        const run = (command: string) => injecting.run(command, { timeoutMs: 120_000 });
+        // Its output, or, when it printed nothing, its error: a client
+        // refusing the proxy's TLS fails the assertion with the reason.
+        const out = async (command: string) => {
+          const result = await run(command);
+          return result.stdout.trim() || result.stderr.trim();
+        };
+        expect(await out("echo $PROBE_KEY")).toBe(CREDENTIAL_PLACEHOLDER);
+        expect(await out("env")).not.toContain(key);
+
+        // What the proxy sent, as httpbin.org echoes it — through each
+        // client's own trust of the proxy's TLS: Node with NODE_OPTIONS
+        // replaced (as tools do), and Python's requests and httpx, which
+        // ship their own CA lists.
+        const sent = `Key ${key}`;
+        expect(
+          await out('curl -s -m 20 https://httpbin.org/headers -H "X-Api-Key: Key $PROBE_KEY"'),
+        ).toContain(`"X-Api-Key": "${sent}"`);
+        expect(
+          await out(
+            `NODE_OPTIONS= node -e "fetch('https://httpbin.org/headers').then((r) => r.json()).then((j) => console.log(j.headers['X-Api-Key']))"`,
+          ),
+        ).toBe(sent);
+        expect((await run("pip install -q requests httpx")).exitCode).toBe(0);
+        for (const client of ["requests", "httpx"]) {
+          expect(
+            await out(
+              `python3 -c "import ${client}; print(${client}.get('https://httpbin.org/headers', timeout=20).json()['headers']['X-Api-Key'])"`,
+            ),
+          ).toBe(sent);
+        }
+        // A host without a rule keeps its own certificate.
+        expect(await out("curl -s -m 20 -o /dev/null -w '%{http_code}' https://example.com")).toBe(
+          "200",
+        );
+      } finally {
+        await injecting.kill().catch(() => {});
+      }
+    }, 300_000);
+
+    test("a credential's rule works inside an allowlist, and opens nothing", async () => {
+      const key = `funky-live-${randomUUID()}`;
+      const fenced = await provider.create({
+        timeoutMs: 120_000,
+        lifecycle: "kill",
+        network: { type: "allowlist", domains: ["httpbin.org"] },
+        credentials: [probeCredential(["httpbin.org", "example.org"], key)],
+      });
+      try {
+        const out = async (command: string) => (await fenced.run(command)).stdout.trim();
+        expect(await out("curl -s -m 20 https://httpbin.org/headers")).toContain(
+          `"X-Api-Key": "Key ${key}"`,
+        );
+        // The credential names example.org; the allowlist doesn't.
+        expect(await out("curl -s -m 10 -o /dev/null -w '%{http_code}' https://example.org")).toBe(
+          "000",
+        );
+      } finally {
+        await fenced.kill().catch(() => {});
+      }
+    }, 120_000);
+
+    test("E2B's refusal of a credential arrives typed, without the key", async () => {
+      const key = `funky-live-${randomUUID()}`;
+      const domains = Array.from({ length: 11 }, (_, i) => `d${i}.example.com`);
+      const refused = provider.create({
+        timeoutMs: 60_000,
+        lifecycle: "kill",
+        credentials: [probeCredential(domains, key)],
+      });
+      refused.then((made) => made.kill()).catch(() => {});
+      await expect(refused).rejects.toBeInstanceOf(SandboxProvisionError);
+      await expect(refused).rejects.toThrow(
+        "E2B refused the sandbox: 400: Network rules can have at most 10 domains.",
+      );
+      await expect(refused).rejects.not.toThrow(key);
     }, 60_000);
   });
 }
