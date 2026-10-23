@@ -32,6 +32,7 @@ import {
   type UpdateAgentConfigInput,
   updateAgentConfig,
 } from "../lib/api";
+import { fieldsOf as credentialFieldsOf, sameCredentials, toCredentials } from "../lib/credentials";
 import {
   fieldsOf as networkFieldsOf,
   type NetworkFields,
@@ -40,6 +41,7 @@ import {
 } from "../lib/network";
 import { compact, samePackages } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
+import { CredentialsFields } from "../components/CredentialsFields";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
@@ -158,6 +160,9 @@ function EditForm({
     networkFieldsOf(config.network),
   );
   const [packages, setPackages] = useState(config.packages);
+  const [credentialFields, setCredentialFields] = useState(() =>
+    credentialFieldsOf(config.credentials),
+  );
   const [failure, setFailure] = useState<string>();
   // WHICH write is in flight, not merely whether one is. The two paths out
   // of this dialog are mutually exclusive and every control is disabled by
@@ -192,7 +197,13 @@ function EditForm({
   const network = toPolicy(networkFields);
   const networkChanged = network !== undefined && !samePolicy(network, config.network);
   const packagesChanged = !samePackages(packages, config.packages);
-  const changed = inferenceChanged || promptChanged || networkChanged || packagesChanged;
+  // Absent while a credential has an empty field — not a list yet, so
+  // nothing to save (see toCredentials).
+  const credentials = toCredentials(credentialFields);
+  const credentialsChanged =
+    credentials !== undefined && !sameCredentials(credentials, config.credentials);
+  const changed =
+    inferenceChanged || promptChanged || networkChanged || packagesChanged || credentialsChanged;
 
   // The offered provider, when it is one; otherwise the config's own, whose
   // models this console can't enumerate — so the model it already has is
@@ -219,7 +230,7 @@ function EditForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || archived || network === undefined) return;
+    if (busy || archived || network === undefined || credentials === undefined) return;
     // Nothing to send is nothing to version. Closing IS the save.
     if (!changed) {
       onClose();
@@ -235,6 +246,7 @@ function EditForm({
       systemPrompt: promptChanged ? fields.systemPrompt : undefined,
       network: networkChanged ? network : undefined,
       packages: packagesChanged ? compact(packages) : undefined,
+      credentials: credentialsChanged ? credentials : undefined,
       version: config.version,
     };
 
@@ -336,6 +348,12 @@ function EditForm({
           />
 
           <PackagesFields packages={packages} onChange={setPackages} disabled={archived || busy} />
+
+          <CredentialsFields
+            credentials={credentialFields}
+            onChange={setCredentialFields}
+            disabled={archived || busy}
+          />
         </div>
 
         {/* Archive sits away from the two buttons that answer the form:
@@ -359,7 +377,7 @@ function EditForm({
             <button
               className="btn btn-primary"
               type="submit"
-              disabled={busy || network === undefined || !changed}
+              disabled={busy || network === undefined || credentials === undefined || !changed}
             >
               {pending === "saving" ? "Saving…" : `Save as version ${config.version + 1}`}
             </button>

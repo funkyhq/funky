@@ -41,6 +41,8 @@ export function Field({
   disabled?: boolean;
   autoComplete?: string;
   spellCheck?: boolean;
+  /** The id of a <datalist> whose options an input suggests. */
+  list?: string;
 }) {
   const props = {
     id: name,
