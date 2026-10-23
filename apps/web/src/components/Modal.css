@@ -144,9 +144,9 @@ body:has(dialog.modal[open]) {
   border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
 }
 
-/* Archive is the footer's LEFT-hand action, so the two buttons that answer
-   the form — Cancel and Save — stay together on the right, and the one that
-   ends the config isn't sitting among them.
+/* Archive — or a secret's Delete — is the footer's LEFT-hand action, so the
+   two buttons that answer the form — Cancel and Save — stay together on the
+   right, and the one that ends the thing isn't sitting among them.
 
    Placement only: the red label is .btn-archive's own (index.css), shared
    with the session page, which places the same button for itself. Scoped to

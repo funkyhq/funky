@@ -1,11 +1,12 @@
 // apps/web/src/components/Field.tsx
-// One labelled control, shared by the dialogs that write an agent config —
-// a select when `options`, a textarea when `multiline`, an input otherwise.
+// One labelled control, shared by the dialogs that write an agent config or
+// a secret — a select when `options`, a textarea when `multiline`, an input
+// otherwise.
 //
 // Nothing sits under the control: the label says what the field is, and
-// these forms are short enough to say the rest by being short. What a field
-// can't do is be wrong — every one is either a closed choice or free text
-// the api takes as-is — so there is no error slot here either.
+// these forms are short enough to say the rest by being short. Nor is there
+// an error slot: every field is either a closed choice or free text the api
+// checks itself, and its refusal reads beside the form's actions.
 import type { ChangeEvent } from "react";
 import { ChevronDownIcon } from "./Icons";
 import "./Field.css";
@@ -20,6 +21,7 @@ export function Field({
   options,
   multiline,
   autoFocus,
+  type,
   ...control
 }: {
   label: string;
@@ -31,10 +33,14 @@ export function Field({
   options?: FieldOption[];
   multiline?: boolean;
   autoFocus?: boolean;
+  /** An input's type: "password" for a value that should show as dots. */
+  type?: "text" | "password";
   rows?: number;
   placeholder?: string;
   required?: boolean;
   disabled?: boolean;
+  autoComplete?: string;
+  spellCheck?: boolean;
 }) {
   const props = {
     id: name,
@@ -71,7 +77,7 @@ export function Field({
       ) : multiline ? (
         <textarea {...props} />
       ) : (
-        <input {...props} />
+        <input {...props} type={type} />
       )}
     </div>
   );

@@ -53,6 +53,16 @@ export function SessionIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Secret — a stored key. */
+export function KeyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke {...props}>
+      <circle cx="7.5" cy="15.5" r="4" />
+      <path d="m10.4 12.6 9.6-9.6M16.5 6.5 19 9M14 9l2 2" />
+    </Stroke>
+  );
+}
+
 /** Reload a list. */
 export function RefreshIcon(props: SVGProps<SVGSVGElement>) {
   return (
