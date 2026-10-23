@@ -9,6 +9,13 @@ const BASE = {
   E2B_API_KEY: "test-e2b-key",
 };
 
+const INFISICAL = {
+  INFISICAL_CLIENT_ID: "5c4f1d3e-0000-4000-8000-000000000001",
+  INFISICAL_CLIENT_SECRET: "fake-client-secret",
+  INFISICAL_PROJECT_ID: "5c4f1d3e-0000-4000-8000-000000000002",
+  INFISICAL_ENVIRONMENT: "dev",
+};
+
 let exitSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -36,6 +43,7 @@ describe("loadConfig — valid input", () => {
       sandboxTimeoutMs: 30 * 60_000,
       concurrency: 1,
       dbPoolMax: 10,
+      infisical: null,
     });
   });
 
@@ -110,6 +118,45 @@ describe("loadConfig — model provider keys", () => {
         "ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, TOGETHER_API_KEY, XAI_API_KEY",
       ),
     );
+  });
+});
+
+describe("loadConfig — secret store", () => {
+  it("reads an Infisical identity as the store credentials' keys come from", () => {
+    expect(loadConfig({ ...BASE, ...INFISICAL }).infisical).toEqual({
+      clientId: INFISICAL.INFISICAL_CLIENT_ID,
+      clientSecret: INFISICAL.INFISICAL_CLIENT_SECRET,
+      projectId: INFISICAL.INFISICAL_PROJECT_ID,
+      environment: INFISICAL.INFISICAL_ENVIRONMENT,
+    });
+  });
+
+  it("reads blank Infisical variables as unset, the way compose forwards unset ones", () => {
+    const blank = Object.fromEntries(Object.keys(INFISICAL).map((key) => [key, " "]));
+    expect(loadConfig({ ...BASE, ...blank }).infisical).toBeNull();
+  });
+
+  it("exits on part of an identity, naming each missing variable with the other issues", () => {
+    const { INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET } = INFISICAL;
+    const env: Record<string, string> = {
+      ...BASE,
+      INFISICAL_CLIENT_ID,
+      INFISICAL_CLIENT_SECRET,
+      INFISICAL_ENVIRONMENT: "",
+    };
+    delete env["DATABASE_URL"];
+    expect(() => loadConfig(env)).toThrow("process.exit(1)");
+    const printed = vi.mocked(console.error).mock.calls.flat().join("\n");
+    // One report, so one restart fixes it all.
+    expect(printed).toContain("DATABASE_URL");
+    expect(printed).toContain(
+      "INFISICAL_PROJECT_ID: required with the rest of the Infisical identity",
+    );
+    expect(printed).toContain(
+      "INFISICAL_ENVIRONMENT: required with the rest of the Infisical identity",
+    );
+    expect(printed).not.toContain("INFISICAL_CLIENT_ID:");
+    expect(printed).not.toContain(INFISICAL_CLIENT_SECRET);
   });
 });
 

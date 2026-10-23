@@ -5,6 +5,8 @@
 // run real steps against a real vendor and a real sandbox, and which
 // vendors is the deployment's call — any of the table in providers.ts,
 // at least one. A keyless variant would claim items it cannot serve.
+// The secret store is the exception, optional and whole or absent: an
+// Infisical identity is all of its variables or none, as for the api.
 import { z } from "zod";
 import { VENDORS } from "./providers";
 
@@ -45,6 +47,22 @@ const EnvSchema = z.object({
   DB_POOL_MAX: intKnob(1, 10),
 });
 
+/** An Infisical Cloud machine identity, signed in with Universal Auth. */
+export type InfisicalConfig = {
+  clientId: string;
+  clientSecret: string;
+  projectId: string;
+  environment: string;
+};
+
+/** The identity's variables, by field (README "Secrets"): the api's four. */
+const INFISICAL_IDENTITY = {
+  clientId: "INFISICAL_CLIENT_ID",
+  clientSecret: "INFISICAL_CLIENT_SECRET",
+  projectId: "INFISICAL_PROJECT_ID",
+  environment: "INFISICAL_ENVIRONMENT",
+} satisfies Record<keyof InfisicalConfig, string>;
+
 export type Config = {
   databaseUrl: string;
   /** Model-provider keys by vendor id (providers.ts), the set ones only;
@@ -59,11 +77,17 @@ export type Config = {
   /** Drivers main.ts hosts, each one claim loop. At least 1. */
   concurrency: number;
   dbPoolMax: number;
+  /** Where credentials' keys are read from when a sandbox is created.
+   *  null = no secret store: a config with credentials fails its runs,
+   *  saying so. */
+  infisical: InfisicalConfig | null;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = EnvSchema.safeParse(env);
   const providerKeys = readProviderKeys(env);
+  const infisical = readInfisical(env);
+  const unset = Object.entries(INFISICAL_IDENTITY).filter(([field]) => !(field in infisical));
 
   // Report everything wrong at once, so one restart fixes it all.
   const issues: string[] = [];
@@ -75,6 +99,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (providerKeys.size === 0) {
     const accepted = VENDORS.map((vendor) => vendor.envKey).join(", ");
     issues.push(`env: set a key for at least one model provider (${accepted})`);
+  }
+  // Part of an identity is a mistake, not a choice: refuse to boot rather
+  // than run with credentials failing for want of a store. Checked here,
+  // not in the schema, so it is reported with the rest.
+  if (unset.length > 0 && unset.length < Object.keys(INFISICAL_IDENTITY).length) {
+    const identity = Object.values(INFISICAL_IDENTITY).join(", ");
+    for (const [, key] of unset) {
+      issues.push(`${key}: required with the rest of the Infisical identity (${identity})`);
+    }
   }
   // A non-empty list already implies `!parsed.success` when the schema
   // failed; the check is repeated so `parsed` narrows to its data below.
@@ -96,7 +129,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sandboxTimeoutMs: e.FUNKY_SANDBOX_TIMEOUT_MS,
     concurrency: e.FUNKY_CONCURRENCY,
     dbPoolMax: e.DB_POOL_MAX,
+    // Every field is set when none is unset.
+    infisical: unset.length === 0 ? (infisical as InfisicalConfig) : null,
   };
+}
+
+/** The Infisical identity's variables that are set, by field. Blank
+ *  reads as unset, as for the provider keys. */
+function readInfisical(env: NodeJS.ProcessEnv): Partial<InfisicalConfig> {
+  return Object.fromEntries(
+    Object.entries(INFISICAL_IDENTITY).flatMap(([field, key]) => {
+      const value = env[key];
+      return value?.trim() ? [[field, value]] : [];
+    }),
+  );
 }
 
 /** The vendor keys that are set, by vendor id. Empty or blank reads as
