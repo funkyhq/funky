@@ -112,6 +112,8 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     throw new ApiError(UNREACHABLE);
   }
   if (!res.ok) throw await failure(res);
+  // The one success with no body: a delete has nothing to answer with.
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -151,6 +153,30 @@ function post<T>(
     body: JSON.stringify(body),
     signal,
   });
+}
+
+// The secrets routes address a key by its name, so storing one is a PUT —
+// create or replace in one call — and removing one a DELETE with no body.
+function put<T>(
+  path: string,
+  body: unknown,
+  params: Record<string, string | undefined>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return request<T>(path + search(params), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+function del(
+  path: string,
+  params: Record<string, string | undefined>,
+  signal?: AbortSignal,
+): Promise<void> {
+  return request<void>(path + search(params), { method: "DELETE", signal });
 }
 
 /**
@@ -538,6 +564,68 @@ export function sendMessage(
   return post<IntakeResult>(
     `/v1/sessions/${encodeURIComponent(id)}/messages`,
     { content: text },
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+// --- secrets ---
+//
+// Keys the namespace stores by name, for agent configs' credentials to
+// name. Write-only from here, as from anywhere: no route answers with a
+// value, so the console can store, list and delete a key but never read
+// one back.
+
+/** A stored key: its name and dates, never its value. */
+export type SecretInfo = {
+  name: string;
+  /** The first put. */
+  createdAt: string;
+  /** The latest put — when the value last changed. */
+  updatedAt: string;
+};
+
+/**
+ * Every name the namespace stores, sorted. The whole list rather than a
+ * page: a namespace holds tens of keys, not thousands. A stack with no
+ * secret store answers 404, saying what to set.
+ */
+export async function listSecrets(opts: { signal?: AbortSignal } = {}): Promise<SecretInfo[]> {
+  const body = await get<{ data: SecretInfo[] }>(
+    "/v1/secrets",
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+  return body.data;
+}
+
+/**
+ * Stores the value under the name, replacing any value already there — the
+ * route doesn't tell create from replace, and neither does its answer. A
+ * value with whitespace at either end is refused rather than trimmed, so
+ * what is stored is exactly what was typed.
+ */
+export function putSecret(
+  name: string,
+  value: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<SecretInfo> {
+  return put<SecretInfo>(
+    `/v1/secrets/${encodeURIComponent(name)}`,
+    { value },
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+/**
+ * Removes a key. Configs that name it are left as they are: the next
+ * sandbox one of their sessions creates fails with "secret not found",
+ * while a session that already has a sandbox keeps the key it was handed.
+ */
+export function deleteSecret(name: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
+  return del(
+    `/v1/secrets/${encodeURIComponent(name)}`,
     { namespace: DEFAULT_NAMESPACE },
     opts.signal,
   );

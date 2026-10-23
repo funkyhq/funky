@@ -201,10 +201,11 @@ a {
 /* The destructive weight: red in the label, never in a fill. The filled red
    was tried beside the filled cobalt Save and cut, because it out-shouted
    it and the destructive one is the wrong one to win. The hue is the whole
-   of the warning — every surface that draws this button archives on the
-   click. Where it SITS is that surface's business (.modal-foot puts it at
-   the footer's left, .chat-head at the head's right); what it says about
-   itself is here, so the two cannot drift apart. */
+   of the warning — every surface that draws this button archives, or
+   deletes a secret, on the click. Where it SITS is that surface's business
+   (.modal-foot puts it at the footer's left, .chat-head at the head's
+   right); what it says about itself is here, so the two cannot drift
+   apart. */
 .btn-archive {
   color: var(--bad);
 }

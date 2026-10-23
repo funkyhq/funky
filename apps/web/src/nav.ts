@@ -3,9 +3,10 @@
 // the router resolves a hash against it, so adding a section is one entry.
 // Kept free of JSX so it can hold both the data and the route resolver.
 import type { ReactElement, SVGProps } from "react";
-import { AgentIcon, BoltIcon, SessionIcon } from "./components/Icons";
+import { AgentIcon, BoltIcon, KeyIcon, SessionIcon } from "./components/Icons";
 import { AgentConfigs } from "./pages/AgentConfigs";
 import { QuickStart } from "./pages/QuickStart";
+import { Secrets } from "./pages/Secrets";
 import { Sessions } from "./pages/Sessions";
 
 /** What a page is handed: the part of the route below its own section, so
@@ -61,6 +62,15 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
       "A session is one pinned agent config version plus a durable, append-only entry log — the log a fresh worker resumes from with nothing lost.",
     chip: "/v1/sessions",
     Page: Sessions,
+  },
+  {
+    id: "secret",
+    label: "Secret",
+    Icon: KeyIcon,
+    blurb:
+      "API keys stored once, by name, for agent configs to hand to sandboxes as credentials. A stored value is never shown again.",
+    chip: "/v1/secrets",
+    Page: Secrets,
   },
 ];
 
