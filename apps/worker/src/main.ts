@@ -55,11 +55,11 @@ const deps: DriverDeps = {
       version: session.agentConfigVersion,
     });
     if (!config) throw new Error(`worker: session ${ref.sessionId} has no agent config`);
-    const sandbox = await ensureSandbox(store, sandboxes, ref, {
+    const sandbox = await ensureSandbox(store, sandboxes, ref, async () => ({
       timeoutMs: cfg.sandboxTimeoutMs,
       network: config.network,
       packages: config.packages,
-    });
+    }));
     return createSandboxTools(sandbox);
   },
 };

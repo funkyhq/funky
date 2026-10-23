@@ -55,10 +55,11 @@ What lives here is what neither the engine nor a host may own:
   open item; a consumer with no claim needs the run-liveness derivation
   this deliberately isn't.
 - **v1 policies, explicit and small.** Provider errors commit and end
-  the run as `"error"` (no retry yet), and so does a sandbox the
-  provider reports it can never make (`SandboxProvisionError` — a
-  package that will not install): the calls get error results saying
-  why. Any other bind failure takes the crash path. Idle claiming polls
-  (`idlePollMs`) until a Notifier port exists.
+  the run as `"error"` (no retry yet), and so does a sandbox that can
+  never be made as asked (`SandboxProvisionError` — a package that will
+  not install, or a credential whose key is not in the secret store):
+  the calls get error results saying why. Any other bind failure takes
+  the crash path. Idle claiming polls (`idlePollMs`) until a Notifier
+  port exists.
 
 The engine decides, the store persists, the driver survives.

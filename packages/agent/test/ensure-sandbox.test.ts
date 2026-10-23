@@ -2,6 +2,8 @@
 // the session's sandbox, create-and-register when none exists, kill the
 // duplicate and join the winner when the registration CAS is lost, and
 // replace a binding only when the provider says it is definitively gone.
+// The create options are read only for a create, and a failed read
+// leaves nothing created or bound.
 
 import { describe, expect, test } from "vitest";
 import type { Session, SessionRef } from "@funky/core";
@@ -11,6 +13,7 @@ import {
   type Sandbox,
   SandboxNotFoundError,
   type SandboxProvider,
+  SandboxProvisionError,
 } from "../src/ports/sandbox-provider";
 
 function fakeProvider(opts?: { deadIds?: string[]; connectError?: Error }) {
@@ -85,11 +88,11 @@ describe("ensureSandbox", () => {
     const store = fakeStore();
     const { provider, calls, killed } = fakeProvider();
 
-    const sandbox = await ensureSandbox(store, provider, s1, {
+    const sandbox = await ensureSandbox(store, provider, s1, async () => ({
       timeoutMs: 60_000,
       network: { type: "none" },
       metadata: { tier: "test" },
-    });
+    }));
     expect(sandbox.sandboxId).toBe("sbx_created");
     expect(calls.create).toEqual([
       {
@@ -101,6 +104,39 @@ describe("ensureSandbox", () => {
     expect(store.binds).toEqual([{ candidate: "sbx_created", previous: undefined }]);
     expect(calls.connect).toEqual([]);
     expect(killed()).toBe(0);
+  });
+
+  test("reads its create options only when it creates", async () => {
+    let reads = 0;
+    const createOpts = async (): Promise<CreateSandboxOptions> => {
+      reads++;
+      return { timeoutMs: 60_000 };
+    };
+
+    // A live binding is connected to: nothing to create, nothing to read.
+    const bound = fakeProvider();
+    await ensureSandbox(fakeStore({ sandboxId: "sbx_bound" }), bound.provider, s1, createOpts);
+    expect(reads).toBe(0);
+
+    // A dead one is replaced: one create, one read.
+    const dead = fakeProvider({ deadIds: ["sbx_dead"] });
+    await ensureSandbox(fakeStore({ sandboxId: "sbx_dead" }), dead.provider, s1, createOpts);
+    expect(reads).toBe(1);
+    expect(dead.calls.create).toEqual([{ timeoutMs: 60_000, metadata: { sessionId: "s1" } }]);
+  });
+
+  test("creates and binds nothing when reading its create options fails", async () => {
+    const store = fakeStore();
+    const { provider, calls } = fakeProvider();
+    const missing = new SandboxProvisionError("secret not found: stripe-live");
+
+    await expect(
+      ensureSandbox(store, provider, s1, async () => {
+        throw missing;
+      }),
+    ).rejects.toBe(missing);
+    expect(calls.create).toEqual([]);
+    expect(store.binds).toEqual([]);
   });
 
   test("kills its duplicate and joins the winner when the CAS is lost", async () => {

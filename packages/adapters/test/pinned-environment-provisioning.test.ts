@@ -69,10 +69,10 @@ async function provision(
     version: session.agentConfigVersion,
   });
   if (!config) throw new Error("no agent config");
-  const sandbox = await ensureSandbox(store, provider, ref, {
+  const sandbox = await ensureSandbox(store, provider, ref, async () => ({
     network: config.network,
     packages: config.packages,
-  });
+  }));
   return { sandboxId: sandbox.sandboxId, network: config.network };
 }
 
