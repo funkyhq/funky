@@ -3,21 +3,31 @@
 // asked to enforce. The invariant under test is the whole point of
 // pinning — an agent config edit reaches sessions created after it and
 // nothing else, including across a sandbox replacement, which is the one
-// moment a running session provisions a second time.
+// moment a running session provisions a second time. Credentials' keys
+// are read at that moment too: a new key reaches a replacement sandbox,
+// never one already running.
 
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DEFAULT_NAMESPACE, type NetworkPolicy, type SessionRef } from "@funky/core";
+import {
+  type Credential,
+  DEFAULT_NAMESPACE,
+  type NetworkPolicy,
+  type SessionRef,
+} from "@funky/core";
 import {
   type CreateSandboxOptions,
   ensureSandbox,
+  resolveCredentials,
   type Sandbox,
   SandboxNotFoundError,
   type SandboxProvider,
+  SandboxProvisionError,
+  type SecretProvider,
   type Store,
 } from "@funky/agent";
-import { createPgStore, type StoreDb } from "../src";
+import { createMemorySecretProvider, createPgStore, type StoreDb } from "../src";
 import { storeDdl } from "./store-ddl";
 
 let client: PGlite;
@@ -60,6 +70,7 @@ function fakeProvider() {
 async function provision(
   ref: SessionRef,
   provider: SandboxProvider,
+  secrets: SecretProvider | null = null,
 ): Promise<{ sandboxId: string; network: NetworkPolicy }> {
   const session = await store.getSession(ref);
   if (!session) throw new Error("no session");
@@ -72,6 +83,7 @@ async function provision(
   const sandbox = await ensureSandbox(store, provider, ref, async () => ({
     network: config.network,
     packages: config.packages,
+    credentials: await resolveCredentials(secrets, session.namespace, config.credentials),
   }));
   return { sandboxId: sandbox.sandboxId, network: config.network };
 }
@@ -131,5 +143,55 @@ describe("provisioning from the session's pinned agent config version", () => {
     // across the whole scenario, never a fifth.
     await provision(s1, provider);
     expect(created).toHaveLength(4);
+  });
+
+  it("reads a credential's key when a sandbox is created, and only then", async () => {
+    const STRIPE: Credential = {
+      type: "injected",
+      env: "STRIPE_API_KEY",
+      secret: "stripe-live",
+      domains: ["api.stripe.com"],
+      header: "Authorization",
+      value: "Bearer {secret}",
+    };
+    const secrets = createMemorySecretProvider();
+    const stored = { namespace: DEFAULT_NAMESPACE, name: "stripe-live" };
+    await secrets.put(stored, "sk_1");
+    const agent = await store.createAgentConfig({
+      namespace: DEFAULT_NAMESPACE,
+      inference: { provider: "fake", model: "m" },
+      systemPrompt: "s",
+      network: { type: "unrestricted" },
+      packages: {},
+      credentials: [STRIPE],
+    });
+    const newSession = () =>
+      store.createSession({ namespace: DEFAULT_NAMESPACE, agentConfigId: agent.agentConfigId });
+    const { provider, created, kill } = fakeProvider();
+
+    // 1. session 1's sandbox gets the key as it stands.
+    const s1 = await newSession();
+    const first = await provision(s1, provider, secrets);
+    expect(created[0]?.credentials).toEqual([{ credential: STRIPE, key: "sk_1" }]);
+
+    // 2. a new key doesn't reach the sandbox session 1 has...
+    await secrets.put(stored, "sk_2");
+    await provision(s1, provider, secrets);
+    expect(created).toHaveLength(1);
+
+    // 3. ...only its replacement.
+    kill(first.sandboxId);
+    await provision(s1, provider, secrets);
+    expect(created[1]?.credentials).toEqual([{ credential: STRIPE, key: "sk_2" }]);
+
+    // 4. with the key deleted, a new session's first sandbox is refused,
+    //    and nothing is created or bound.
+    await secrets.delete(stored);
+    const s2 = await newSession();
+    const refused = provision(s2, provider, secrets);
+    await expect(refused).rejects.toBeInstanceOf(SandboxProvisionError);
+    await expect(refused).rejects.toThrow("secret not found: stripe-live");
+    expect(created).toHaveLength(2);
+    expect((await store.getSession(s2))?.sandboxId).toBeUndefined();
   });
 });

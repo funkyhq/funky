@@ -1,20 +1,21 @@
 // apps/worker/src/main.ts — the runDriver host from the ratified P3
 // service split, and the only file that touches process.env or the
 // network. Pure composition: pg store, one AI SDK inference adapter per
-// model-provider key (providers.ts), E2B sandboxes, the four workspace
-// tools — handed to FUNKY_CONCURRENCY drivers run side by side, each
-// returning only on drain. The loop knows nothing of its siblings: what
-// makes N of them safe is the store (one open item per session, SKIP
-// LOCKED claims), so N drivers in one process are N workers sharing a
-// pool. One signal handler, SIGTERM → drain: every driver stops
-// claiming, a held step gets FUNKY_DRAIN_MS to commit, else it is
-// aborted and its lease released, and the process exits once the last
-// has returned. SIGKILL remains the crash story it always was — the
-// drain only makes a planned removal (a scale-down, a deploy) cost one
-// poll instead of a lease — and the handler is installed once, so a
-// second SIGTERM, like anything else, is a crash. Restart policy still
-// belongs to the container. The e2e suite forks this exact file — what
-// it proves is what a container runs.
+// model-provider key (providers.ts), E2B sandboxes, the Infisical
+// secret store when one is configured, the four workspace tools —
+// handed to FUNKY_CONCURRENCY drivers run side by side, each returning
+// only on drain. The loop knows nothing of its siblings: what makes N
+// of them safe is the store (one open item per session, SKIP LOCKED
+// claims), so N drivers in one process are N workers sharing a pool.
+// One signal handler, SIGTERM → drain: every driver stops claiming, a
+// held step gets FUNKY_DRAIN_MS to commit, else it is aborted and its
+// lease released, and the process exits once the last has returned.
+// SIGKILL remains the crash story it always was — the drain only makes
+// a planned removal (a scale-down, a deploy) cost one poll instead of a
+// lease — and the handler is installed once, so a second SIGTERM, like
+// anything else, is a crash. Restart policy still belongs to the
+// container. The e2e suite forks this exact file — what it proves is
+// what a container runs.
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -22,10 +23,16 @@ import {
   createSandboxTools,
   type DriverDeps,
   ensureSandbox,
+  resolveCredentials,
   runDriver,
   sandboxToolSpecs,
 } from "@funky/agent";
-import { createE2bProvider, createPgStore, type StoreDb } from "@funky/adapters";
+import {
+  createE2bProvider,
+  createInfisicalSecretProvider,
+  createPgStore,
+  type StoreDb,
+} from "@funky/adapters";
 import { loadConfig } from "./config";
 import { wireProviders } from "./providers";
 
@@ -34,6 +41,10 @@ const cfg = loadConfig();
 const pool = new Pool({ connectionString: cfg.databaseUrl, max: cfg.dbPoolMax });
 const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb);
 const sandboxes = createE2bProvider({ apiKey: cfg.e2bApiKey });
+// Where credentials' keys come from: the store the api's /v1/secrets
+// writes to. None configured fails only the runs whose config has
+// credentials.
+const secrets = cfg.infisical ? createInfisicalSecretProvider(cfg.infisical) : null;
 // The registry the driver routes each claim's `inference.provider` on:
 // its keys are the providers this worker serves, nothing more.
 const providers = wireProviders(cfg.providerKeys);
@@ -45,7 +56,9 @@ const deps: DriverDeps = {
   // Ensure-on-claim: the loop calls this only for an execute_tools item
   // that will actually execute. The sandbox comes from the agent config
   // version the session pinned at create — immutable, so a later edit
-  // cannot reshape a running session's world.
+  // cannot reshape a running session's world. Its credentials' keys are
+  // read only when a sandbox is created, so a key put or deleted later
+  // reaches the session's next sandbox, not the one it has.
   bindTools: async (ref) => {
     const session = await store.getSession(ref);
     if (!session) throw new Error(`worker: unknown session ${ref.sessionId}`);
@@ -59,6 +72,7 @@ const deps: DriverDeps = {
       timeoutMs: cfg.sandboxTimeoutMs,
       network: config.network,
       packages: config.packages,
+      credentials: await resolveCredentials(secrets, session.namespace, config.credentials),
     }));
     return createSandboxTools(sandbox);
   },
@@ -73,7 +87,8 @@ process.once("SIGTERM", () => {
 console.log(
   `worker: claiming (providers=${[...providers.keys()].join(",")} ` +
     `concurrency=${cfg.concurrency} lease=${cfg.leaseMs}ms ` +
-    `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms bindTimeout=${cfg.bindTimeoutMs}ms)`,
+    `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms bindTimeout=${cfg.bindTimeoutMs}ms ` +
+    `secrets=${secrets ? "infisical" : "off"})`,
 );
 // N drivers over one store and one drain signal: each counts the drain
 // budget down on its own from the shared signal and awaits its own

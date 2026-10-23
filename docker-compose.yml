@@ -93,6 +93,14 @@ services:
       # Claims held at once per worker (default 1). Forwarded as-is like
       # the keys: unset arrives empty, which the worker reads as unset.
       FUNKY_CONCURRENCY: ${FUNKY_CONCURRENCY:-}
+      # Optional: the api's secret store, which credentials' keys are read
+      # from when a sandbox is created (README "Credentials"). Forwarded
+      # as-is, like the api's; with none set, only runs whose config has
+      # credentials fail, saying so.
+      INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
+      INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
+      INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID:-}
+      INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

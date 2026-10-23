@@ -66,7 +66,8 @@ current value in an update for optimistic concurrency (a stale value returns 409
 for an unconditional last-write-wins update. A session pins the version current when it was
 created — behavior and sandbox together — so an update reaches only sessions created after it.
 `packages` are installed into the sandbox before the agent's first tool call; see
-[Packages](#packages).
+[Packages](#packages). `credentials` let the agent use API keys it can't read; see
+[Credentials](#credentials).
 
 The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
 run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
@@ -133,9 +134,10 @@ and shared by every session that uses it, so packages work under any `network` p
 
 ### Secrets
 
-Most setups skip this. It's only for storing API keys in Funky by name (`/v1/secrets`), which
-keeps them in [Infisical](https://infisical.com) rather than Postgres. Without it, those routes
-answer 404 "no secret store configured".
+Most setups skip this. It's only for API keys your agent's tools use, such as a Stripe or
+GitHub key: Funky stores them by name (`/v1/secrets`) in [Infisical](https://infisical.com)
+rather than Postgres, and agent configs hand them to sandboxes as
+[credentials](#credentials). Without it, those routes answer 404 "no secret store configured".
 
 1. In [Infisical Cloud](https://app.infisical.com) (the free plan is enough), create a project,
    and under its **Access Control → Machine Identities** create an identity with the **Member**
@@ -154,6 +156,31 @@ answer 404 "no secret store configured".
 
 `PUT /v1/secrets/stripe-live` with `{"value": "sk_live_…"}` stores a key, `GET /v1/secrets` lists
 the names (never the values), and `DELETE /v1/secrets/stripe-live` removes one.
+
+### Credentials
+
+A credential lets the agent use a stored key it can't read:
+
+```json
+"credentials": [
+  {
+    "type": "injected",
+    "env": "STRIPE_API_KEY",
+    "secret": "stripe-live",
+    "domains": ["api.stripe.com"],
+    "header": "Authorization",
+    "value": "Bearer {secret}"
+  }
+]
+```
+
+Outside the sandbox, E2B's egress proxy sets `Authorization: Bearer <the stripe-live key>` on
+HTTPS requests to `api.stripe.com`. Inside, `STRIPE_API_KEY` holds a placeholder, `funky-injected`.
+
+- Keys are read when a sandbox is created, so a changed key misses sessions that already have one.
+- Headers only: a key that belongs in a URL, a body or a signature (AWS) can't be injected.
+- Tools that check a key's format, like the Stripe CLI, need a stand-in in that format instead.
+- A host on `domains` that echoes request headers hands the key back to the agent.
 
 ## Why Funky?
 
@@ -187,7 +214,7 @@ in-flight work dies with it. Funky decouples them:
 | `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports       |
 | `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes, Infisical secrets |
 | `apps/api`          | The HTTP surface (Hono): configs, secrets, sessions, intake, cancel, inspection, the SSE stream        |
-| `apps/worker`       | The runDriver host — the process a container runs                                                      |
+| `apps/worker`       | The runDriver host — the process a container runs; reads credentials' keys when a sandbox is created   |
 | `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                          |
 
 ## Development
