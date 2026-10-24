@@ -195,6 +195,8 @@ export function QuickStart() {
           systemPrompt: agent.systemPrompt,
           network,
           packages: compact(packages),
+          // None, on purpose: a credential needs a stored key, and the walk
+          // stays the short path. The agent's edit dialog adds them.
           credentials: [],
         }));
       setMade((prev) => ({ ...prev, agent: agentConfig }));

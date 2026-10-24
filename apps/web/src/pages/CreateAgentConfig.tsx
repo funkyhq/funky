@@ -2,9 +2,9 @@
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
 // The form is the request's REQUIRED shape: provider, model, system prompt,
-// network, packages — no packages typed is {}, install nothing, said
-// explicitly. Credentials have no fields yet, so the body says [], no keys.
-// The body's optional parts — maxTokens, temperature, metadata —
+// network, packages, credentials — no packages typed is {}, install nothing,
+// and no credential added is [], no keys, both said explicitly. The body's
+// optional parts — maxTokens, temperature, metadata —
 // are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
@@ -28,10 +28,12 @@ import {
   type Packages,
 } from "../lib/api";
 import { type AgentFields, initialFields, toInference } from "../lib/agent";
+import { type CredentialFields, toCredentials } from "../lib/credentials";
 import { type NetworkFields, toPolicy } from "../lib/network";
 import { compact } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
+import { CredentialsFields } from "../components/CredentialsFields";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { PackagesFields } from "../components/PackagesFields";
 import { Modal } from "../components/Modal";
@@ -111,25 +113,28 @@ function Form({
     domains: "",
   });
   const [packages, setPackages] = useState<Packages>({});
+  const [credentialFields, setCredentialFields] = useState<CredentialFields[]>([]);
   const [busy, setBusy] = useState(false);
-  // The api's refusal — a 400, or an api that isn't there. The one thing
-  // the fields themselves refuse is an allowlist with no domain on it.
+  // The api's refusal — a 400, or an api that isn't there. What the fields
+  // themselves refuse is a request that isn't one yet (below).
   const [failure, setFailure] = useState<string>();
 
-  // Absent while the allowlist has no domain on it — the one state of this
-  // form that isn't a request yet (see toPolicy).
+  // Absent while the allowlist has no domain on it, or a credential has an
+  // empty field — the two states of this form that aren't a request yet
+  // (see toPolicy, toCredentials).
   const network = toPolicy(networkFields);
+  const credentials = toCredentials(credentialFields);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || network === undefined) return;
+    if (busy || network === undefined || credentials === undefined) return;
 
     const input: CreateAgentConfigInput = {
       inference: toInference(fields),
       systemPrompt: fields.systemPrompt,
       network,
       packages: compact(packages),
-      credentials: [],
+      credentials,
     };
 
     setFailure(undefined);
@@ -151,8 +156,8 @@ function Form({
       title="Create agent config"
       description={
         <>
-          The model, system prompt, network and packages a session runs with. Lands as version 1 in
-          the <code>{DEFAULT_NAMESPACE}</code> namespace.
+          The model, system prompt, network, packages and credentials a session runs with. Lands as
+          version 1 in the <code>{DEFAULT_NAMESPACE}</code> namespace.
         </>
       }
       dismissible={!busy}
@@ -168,6 +173,7 @@ function Form({
           <AgentFieldset fields={fields} onChange={setFields} />
           <NetworkFieldset fields={networkFields} onChange={setNetworkFields} autoFocus={false} />
           <PackagesFields packages={packages} onChange={setPackages} />
+          <CredentialsFields credentials={credentialFields} onChange={setCredentialFields} />
         </div>
 
         <footer className="modal-foot">
@@ -182,7 +188,7 @@ function Form({
           <button
             className="btn btn-primary"
             type="submit"
-            disabled={busy || network === undefined}
+            disabled={busy || network === undefined || credentials === undefined}
           >
             {busy ? "Creating…" : "Create"}
           </button>
