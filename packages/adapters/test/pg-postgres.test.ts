@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createPgStore, type StoreDb } from "../src";
-import { storeDdl } from "./store-ddl";
+import { migrateStore } from "./migrate-store";
 import { describeStoreConformance } from "./store-conformance";
 
 const url = process.env.STORE_TEST_DATABASE_URL;
@@ -20,8 +20,10 @@ if (!url) {
   const pool = new Pool({ connectionString: url });
 
   beforeAll(async () => {
-    await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
-    await pool.query(storeDdl);
+    await pool.query(
+      "DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS drizzle CASCADE; CREATE SCHEMA public;",
+    );
+    await migrateStore(pool);
   });
 
   afterAll(async () => {

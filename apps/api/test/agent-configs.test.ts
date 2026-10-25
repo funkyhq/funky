@@ -10,7 +10,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
-import { storeDdl } from "../../../packages/adapters/test/store-ddl";
+import { migrateStore } from "../../../packages/adapters/test/migrate-store";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
@@ -47,7 +47,7 @@ let app: ReturnType<typeof buildApp>;
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(storeDdl);
+  await migrateStore(client);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   app = buildApp({
     store,

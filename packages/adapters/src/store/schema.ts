@@ -1,6 +1,9 @@
 // The pg adapter's physical shape. Drizzle types never leave this package:
 // `core` types are the only currency crossing the Store port.
 //
+// A change here ships with a new migration beside the init, never an edit
+// to a shipped one (migrations/README.md).
+//
 // Two conventions the domain contract imposes on the SQL:
 // - Absence vs JSON null: `metadata` columns store the wrapped form
 //   `{ v: <JsonValue> }`; SQL NULL means the caller stored nothing. The

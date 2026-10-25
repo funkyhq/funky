@@ -8,7 +8,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll } from "vitest";
 import { createPgStore, type StoreDb } from "../src";
-import { storeDdl } from "./store-ddl";
+import { migrateStore } from "./migrate-store";
 import { describeStoreConformance } from "./store-conformance";
 
 let client: PGlite;
@@ -17,7 +17,7 @@ let client: PGlite;
 // subprocesses share the CPU.
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(storeDdl);
+  await migrateStore(client);
 }, 60_000);
 
 afterAll(async () => {

@@ -28,7 +28,7 @@ import {
   type Store,
 } from "@funky/agent";
 import { createMemorySecretProvider, createPgStore, type StoreDb } from "../src";
-import { storeDdl } from "./store-ddl";
+import { migrateStore } from "./migrate-store";
 
 let client: PGlite;
 let store: Store;
@@ -37,7 +37,7 @@ let store: Store;
 // subprocesses share the CPU.
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(storeDdl);
+  await migrateStore(client);
   store = createPgStore(drizzle({ client }) as unknown as StoreDb);
 }, 60_000);
 
