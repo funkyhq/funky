@@ -100,7 +100,8 @@ console.log(
 // N drivers over one store and one drain signal: each counts the drain
 // budget down on its own from the shared signal and awaits its own
 // release, so all of them are back before the exit below. A driver's
-// failure (a store error outside the fence) rejects the whole, and the
+// failure (a store error outside the fence, or a provider refusing this
+// worker's credentials: ProviderConfigError) rejects the whole, and the
 // process exits over its siblings — the crash path, as it was with one.
 await Promise.all(
   Array.from({ length: cfg.concurrency }, () =>

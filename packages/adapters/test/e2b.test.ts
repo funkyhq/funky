@@ -2,13 +2,19 @@
 // explicit lifecycle default (the SDK's own is "kill"), the NetworkPolicy
 // mapping, the package-template path (its build state machine has its own
 // suite, e2b-packages.test.ts), credentials as header rules beside
-// placeholder envs, a refused create typed as a provision error,
+// placeholder envs, a refused create typed as a provision error, a
+// rejected API key typed as a config error,
 // exit/timeout errors settling as results, the one-reconnect
 // recovery, and the Uint8Array → ArrayBuffer copy. The real SDK is
 // exercised by the key-gated live suite in e2b-live.test.ts.
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { type ResolvedCredential, SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
+import {
+  ProviderConfigError,
+  type ResolvedCredential,
+  SandboxNotFoundError,
+  SandboxProvisionError,
+} from "@funky/agent";
 import { CREDENTIAL_PLACEHOLDER, createE2bProvider } from "../src/sandbox/e2b";
 
 const mocks = vi.hoisted(() => {
@@ -24,7 +30,9 @@ const mocks = vi.hoisted(() => {
   class TimeoutError extends Error {}
   class SandboxNotFoundError extends Error {}
   class SandboxError extends Error {}
+  class AuthenticationError extends Error {}
   return {
+    AuthenticationError,
     CommandExitError,
     TimeoutError,
     SandboxNotFoundError,
@@ -39,6 +47,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("e2b", () => ({
   ALL_TRAFFIC: "0.0.0.0/0",
+  AuthenticationError: mocks.AuthenticationError,
   CommandExitError: mocks.CommandExitError,
   TimeoutError: mocks.TimeoutError,
   SandboxNotFoundError: mocks.SandboxNotFoundError,
@@ -246,6 +255,31 @@ describe("createE2bProvider", () => {
     // A transient failure stays untyped — recovery must not fire on it.
     mocks.connect.mockRejectedValue(new Error("fetch failed"));
     await expect(provider.connect("sbx_1")).rejects.toThrow("fetch failed");
+  });
+
+  test("a rejected API key is the port's config error, on create, connect and list", async () => {
+    const provider = createE2bProvider();
+    const unauthorized = () =>
+      new mocks.AuthenticationError("Unauthorized, please check your credentials.");
+
+    // From the default template, and from a package template's build.
+    mocks.create.mockRejectedValueOnce(unauthorized());
+    const plain = provider.create();
+    await expect(plain).rejects.toBeInstanceOf(ProviderConfigError);
+    await expect(plain).rejects.toThrow("E2B rejected the API key: Unauthorized");
+    mocks.create.mockRejectedValueOnce(new mocks.SandboxError("404: template not found"));
+    mocks.ensureTemplate.mockRejectedValueOnce(unauthorized());
+    await expect(provider.create({ packages: { pip: ["numpy"] } })).rejects.toBeInstanceOf(
+      ProviderConfigError,
+    );
+
+    mocks.connect.mockRejectedValueOnce(unauthorized());
+    await expect(provider.connect("sbx_1")).rejects.toBeInstanceOf(ProviderConfigError);
+
+    mocks.list.mockImplementationOnce(() => {
+      throw unauthorized(); // the SDK checks a missing key before any request
+    });
+    await expect(provider.list()).rejects.toBeInstanceOf(ProviderConfigError);
   });
 
   test("list drains every page and maps to the port's info shape", async () => {

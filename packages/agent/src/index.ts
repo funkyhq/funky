@@ -18,6 +18,7 @@ export { toToolSpec } from "./engine/tool";
 export type { Tool, ToolContext, ToolDefinition, ToolOutcome } from "./engine/tool";
 export { createSandboxTools, sandboxToolSpecs } from "./tools/sandbox-tools";
 export type { InferenceProvider, StreamRequest } from "./ports/inference-provider";
+export { ProviderConfigError } from "./ports/provider-config-error";
 export { SandboxNotFoundError, SandboxProvisionError } from "./ports/sandbox-provider";
 export type {
   CommandResult,

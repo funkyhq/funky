@@ -14,7 +14,7 @@
 // breaks them rather than store it altered, and no read expands a
 // reference regardless.
 //
-// Three spots translate:
+// Four spots translate:
 //
 // - put is one upsert. A namespace's folder appears on its first put:
 //   the upsert's 404 creates the folder and the write runs again. Of two
@@ -27,6 +27,11 @@
 //   SecretNotFoundError.
 // - The identity signs in on first use, and again when Infisical rejects
 //   its access token (expired: a 403 TokenError, not a 401).
+// - What only an operator can fix is the port's ProviderConfigError, so
+//   the worker's driver crashes on it rather than retry: the sign-in
+//   refused, a 401 or 403 on a fresh token (the identity without access
+//   to the project or path), a project that doesn't exist or lacks the
+//   environment, values hidden from the identity.
 //
 // The identity needs, under `path`: read (values included), create, edit
 // and delete on secrets, and create on folders. A change policy on the
@@ -35,6 +40,7 @@
 // a deleted secret's included.
 
 import {
+  ProviderConfigError,
   type SecretInfo,
   SecretNotFoundError,
   type SecretProvider,
@@ -116,7 +122,14 @@ export function createInfisicalSecretProvider(
       clientId: options.clientId,
       clientSecret: options.clientSecret,
     })
-      .then((answer) => String(ok(answer).accessToken))
+      .then((answer) => {
+        // Every field of the sign-in is configuration: any refusal but a
+        // rate limit is the operator's to fix.
+        if (answer.status >= 400 && answer.status < 500 && answer.status !== 429) {
+          throw new ProviderConfigError(`Infisical refused the sign-in: ${said(answer)}`);
+        }
+        return String(ok(answer).accessToken);
+      })
       .catch((error: unknown) => {
         token = undefined;
         throw error;
@@ -125,13 +138,19 @@ export function createInfisicalSecretProvider(
   }
 
   /** One request as the identity, signing in again once if Infisical
-   *  rejects the token. */
+   *  rejects the token. A 401 or 403 that a fresh token doesn't cure is
+   *  the identity's access, not its token. */
   async function call(method: string, path: string, body?: unknown): Promise<Answer> {
     const current = accessToken();
-    const answer = await send(method, path, body, await current);
-    if (!rejectsToken(answer)) return answer;
-    if (token === current) token = undefined;
-    return send(method, path, body, await accessToken());
+    let answer = await send(method, path, body, await current);
+    if (rejectsToken(answer)) {
+      if (token === current) token = undefined;
+      answer = await send(method, path, body, await accessToken());
+    }
+    if (answer.status === 401 || answer.status === 403) {
+      throw new ProviderConfigError(`Infisical refused the identity access: ${said(answer)}`);
+    }
+    return answer;
   }
 
   function folder(namespace: string): string {
@@ -165,9 +184,14 @@ export function createInfisicalSecretProvider(
   function checkConfig(): Promise<void> {
     configChecked ??= call("GET", `/api/v1/projects/${encodeURIComponent(projectId)}`)
       .then((answer) => {
+        if (answer.status === 404) {
+          throw new ProviderConfigError(`Infisical has no project ${projectId}`);
+        }
         const project = ok(answer).project as { environments: { slug: string }[] };
         if (!project.environments.some((env) => env.slug === environment)) {
-          throw new Error(`Infisical project ${projectId} has no environment "${environment}"`);
+          throw new ProviderConfigError(
+            `Infisical project ${projectId} has no environment "${environment}"`,
+          );
         }
       })
       .catch((error: unknown) => {
@@ -265,12 +289,17 @@ export function createInfisicalSecretProvider(
 function ok(answer: Answer): Record<string, unknown> {
   const { body } = answer;
   if (answer.status >= 200 && answer.status < 300 && isRecord(body)) return body;
-  const said = isRecord(body) && "message" in body ? body.message : answer.text.slice(0, 200);
-  throw new Error(
-    `Infisical answered ${answer.status} to ${answer.method} ${answer.path.split("?")[0]}: ${
-      typeof said === "string" ? said : JSON.stringify(said)
-    }`,
-  );
+  throw new Error(said(answer));
+}
+
+/** What Infisical answered, for an error to name: never a value, since
+ *  only a success carries one. */
+function said(answer: Answer): string {
+  const { body } = answer;
+  const message = isRecord(body) && "message" in body ? body.message : answer.text.slice(0, 200);
+  return `Infisical answered ${answer.status} to ${answer.method} ${answer.path.split("?")[0]}: ${
+    typeof message === "string" ? message : JSON.stringify(message)
+  }`;
 }
 
 /** A write's result. Under a change policy Infisical answers 200 with an
@@ -296,7 +325,7 @@ function rejectsToken(answer: Answer): boolean {
 
 function valueOf(namespace: string, secret: StoredSecret): string {
   if (secret.secretValueHidden) {
-    throw new Error(
+    throw new ProviderConfigError(
       `Infisical hid the value of ${secret.secretKey} in namespace ${namespace}: the identity can't read secret values`,
     );
   }

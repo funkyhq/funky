@@ -63,6 +63,7 @@ import { inference } from "../engine/inference";
 import { type Action, nextAction } from "../engine/next-action";
 import type { Tool } from "../engine/tool";
 import type { InferenceProvider } from "../ports/inference-provider";
+import { ProviderConfigError } from "../ports/provider-config-error";
 import { SandboxProvisionError } from "../ports/sandbox-provider";
 import {
   type Claim,
@@ -97,10 +98,13 @@ export interface DriverDeps extends StepDeps {
    *  createSandboxTools; tests hand back a fixed map. A
    *  SandboxProvisionError is the session's trouble — its pinned
    *  sandbox can never be made — and runStep commits it, ending the run
-   *  as "error". Any other rejection is taken as passing — the sandbox
-   *  provider or the secret store down, a rate limit — and the bind is
-   *  retried, with backoff, under the claim's lease (see bindHeld): the
-   *  batch waits, and the worker's other claims never notice. */
+   *  as "error". A ProviderConfigError is the worker's — the provider
+   *  refused its own credentials — and takes the crash path, so the
+   *  misconfiguration shows. Any other rejection is taken as passing —
+   *  the sandbox provider or the secret store down, a rate limit — and
+   *  the bind is retried, with backoff, under the claim's lease (see
+   *  bindHeld): the batch waits, and the worker's other claims never
+   *  notice. */
   bindTools(ref: SessionRef): Promise<Map<string, Tool>>;
   /** Told of each bind failure about to be retried, and how long until
    *  the retry — the host's to log, so an outage is visible while the
@@ -240,7 +244,8 @@ async function runClaim(
     try {
       boundTools = await bindHeld(deps, claim, leaseMs, bind, abort);
     } catch (err) {
-      // bindHeld lets nothing else out: every other failure is retried.
+      // Else a ProviderConfigError, the crash path: bindHeld lets nothing
+      // else out, every other failure is retried.
       if (!(err instanceof SandboxProvisionError)) throw err;
       boundTools = err; // committed by runStep, not thrown: see BoundTools
     }
@@ -263,15 +268,17 @@ async function runClaim(
  * interrupted without ever having run. The keeper stops when the bind
  * settles.
  *
- * A bind that fails for any reason but a SandboxProvisionError is tried
- * again, after 1s, 2s, 4s… (`bind.retryMs` doubling, capped), still
+ * A bind that fails for any reason but a SandboxProvisionError or a
+ * ProviderConfigError is tried again, after 1s, 2s, 4s… (`bind.retryMs` doubling, capped), still
  * under the keeper and still attempt 1: a sandbox provider's outage, a
  * secret store's rate limit, a template build that lost every round
  * all pass, and the batch runs once they have. Rethrown instead, the
  * failure would take the crash path — the worker exiting over every
  * other claim it holds, and again for each batch while the outage
- * lasts. A SandboxProvisionError is rethrown at once: the same request
- * fails the same way every time.
+ * lasts. Those two are rethrown at once: the same request fails the
+ * same way every time. A ProviderConfigError does take the crash path,
+ * on purpose — retried, a worker started with a key its provider
+ * rejects would look healthy while holding every batch to the deadline.
  *
  * Retrying forever would let an outage hold its session forever, so the
  * bind gets `bind.timeoutMs`; past it this returns undefined — the
@@ -309,8 +316,9 @@ async function bindHeld(
   }
 }
 
-/** bindTools until it succeeds or throws a SandboxProvisionError —
- *  undefined once `stop` aborts, never any other failure. */
+/** bindTools until it succeeds or throws a SandboxProvisionError or a
+ *  ProviderConfigError — undefined once `stop` aborts, never any other
+ *  failure. */
 async function bindRetrying(
   deps: DriverDeps,
   claim: Claim,
@@ -323,7 +331,7 @@ async function bindRetrying(
     try {
       return await deps.bindTools(claim.item);
     } catch (err) {
-      if (err instanceof SandboxProvisionError) throw err;
+      if (err instanceof SandboxProvisionError || err instanceof ProviderConfigError) throw err;
       if (stop.aborted) return undefined;
       try {
         deps.onBindRetry?.(claim.item, err, wait);

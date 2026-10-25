@@ -8,9 +8,11 @@
 // store at all, is a SandboxProvisionError, and the driver ends the run
 // with the reason in the batch's results, as for a package that won't
 // install: the session's pinned config asks for the same key on every
-// claim, so retrying can't help until someone puts it. Anything else
-// (the store unreachable, a rate limit) is rethrown as it is, and the
-// driver retries the bind, as for a sandbox provider's outage.
+// claim, so retrying can't help until someone puts it. Anything else is
+// rethrown as it is: the store unreachable or a rate limit, and the
+// driver retries the bind, as for a sandbox provider's outage; the store
+// refusing the worker's own identity (ProviderConfigError), and the
+// worker crashes.
 
 import type { Credential } from "@funky/core";
 import { type ResolvedCredential, SandboxProvisionError } from "../ports/sandbox-provider";
