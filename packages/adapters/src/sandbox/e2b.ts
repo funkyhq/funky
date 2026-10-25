@@ -239,9 +239,9 @@ function isUnbuilt(error: unknown): boolean {
 /** A create's catch. E2B refusing the request itself — its 400: a
  *  timeout over the plan's cap, say — refuses the same request every
  *  time, so it is the port's SandboxProvisionError, and the driver ends
- *  the run with E2B's reason. Rethrown untyped it would take the bind's
- *  crash path: the worker exits, and again on each of the session's
- *  tool batches. Only Sandbox.create's 400 means this (a template
+ *  the run with E2B's reason. Rethrown untyped it would be retried until
+ *  the bind deadline, refused the same way each time, and the batch
+ *  then interrupted. Only Sandbox.create's 400 means this (a template
  *  build's 400 is a collision that waiting serves, e2b-packages.ts),
  *  and, as with isUnbuilt, the SDK types it only by the status leading
  *  the message. Anything else is rethrown as is.

@@ -9,8 +9,8 @@
 // with the reason in the batch's results, as for a package that won't
 // install: the session's pinned config asks for the same key on every
 // claim, so retrying can't help until someone puts it. Anything else
-// (the store unreachable, a rate limit) is rethrown as it is, taking the
-// bind's crash path like a sandbox provider's outage.
+// (the store unreachable, a rate limit) is rethrown as it is, and the
+// driver retries the bind, as for a sandbox provider's outage.
 
 import type { Credential } from "@funky/core";
 import { type ResolvedCredential, SandboxProvisionError } from "../ports/sandbox-provider";

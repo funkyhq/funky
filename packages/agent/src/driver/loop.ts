@@ -97,13 +97,15 @@ export interface DriverDeps extends StepDeps {
    *  createSandboxTools; tests hand back a fixed map. A
    *  SandboxProvisionError is the session's trouble — its pinned
    *  sandbox can never be made — and runStep commits it, ending the run
-   *  as "error". Any other rejection is worker trouble, not tool
-   *  trouble: it propagates uncommitted and the crash rule applies.
-   *  Note the cost: the claim already counted, so the re-claim sees
-   *  attempt > 1 and interrupts the batch rather than retrying the
-   *  bind — a transient sandbox outage costs the model one recoverable
-   *  batch, never a duplicated side effect. */
+   *  as "error". Any other rejection is taken as passing — the sandbox
+   *  provider or the secret store down, a rate limit — and the bind is
+   *  retried, with backoff, under the claim's lease (see bindHeld): the
+   *  batch waits, and the worker's other claims never notice. */
   bindTools(ref: SessionRef): Promise<Map<string, Tool>>;
+  /** Told of each bind failure about to be retried, and how long until
+   *  the retry — the host's to log, so an outage is visible while the
+   *  driver rides it out. */
+  onBindRetry?: (ref: SessionRef, error: unknown, retryInMs: number) => void;
 }
 
 export interface DriverOptions {
@@ -126,8 +128,12 @@ export interface DriverOptions {
   /** How long the sandbox bind may take before the claim is handed
    *  back, as the drain hands one back: released, so the re-claim
    *  interrupts the batch and the model decides whether to call again.
-   *  Default 10 minutes — room for a package template build. */
+   *  Default 10 minutes — room for a package template build, and for
+   *  the retries of a bind that keeps failing. */
   bindTimeoutMs?: number;
+  /** The wait before a failed bind's first retry, doubled for each one
+   *  after it up to 30s. Default 1s. */
+  bindRetryMs?: number;
 }
 
 /**
@@ -139,18 +145,31 @@ export interface DriverOptions {
 export async function runDriver(deps: DriverDeps, opts: DriverOptions = {}): Promise<void> {
   const leaseMs = opts.leaseMs ?? 60_000;
   const idlePollMs = opts.idlePollMs ?? 1_000;
-  const bindTimeoutMs = opts.bindTimeoutMs ?? 10 * 60_000;
+  const bind: BindPolicy = {
+    timeoutMs: opts.bindTimeoutMs ?? 10 * 60_000,
+    retryMs: opts.bindRetryMs ?? 1_000,
+  };
   const drain = watchDrain(opts.drain, opts.drainMs ?? 7_000);
   try {
     while (!drain.fired) {
       const claim = await deps.store.claimItem({ leaseMs, session: opts.session });
-      if (claim) await runOrRelease(deps, claim, leaseMs, bindTimeoutMs, drain);
+      if (claim) await runOrRelease(deps, claim, leaseMs, bind, drain);
       else await sleep(idlePollMs, opts.drain);
     }
   } finally {
     drain.stop();
   }
 }
+
+/** How long a bind may take, and how soon a failed one is retried. */
+interface BindPolicy {
+  timeoutMs: number;
+  /** The first retry's wait; doubled per retry up to BIND_RETRY_CAP_MS. */
+  retryMs: number;
+}
+
+/** The longest wait between two tries of a failing bind. */
+const BIND_RETRY_CAP_MS = 30_000;
 
 /**
  * Run one claim to its own end — or, if the drain's deadline comes
@@ -165,11 +184,11 @@ async function runOrRelease(
   deps: DriverDeps,
   claim: Claim,
   leaseMs: number,
-  bindTimeoutMs: number,
+  bind: BindPolicy,
   drain: DrainWatch,
 ): Promise<void> {
   const abort = new AbortController();
-  const step = runClaim(deps, claim, leaseMs, bindTimeoutMs, abort.signal);
+  const step = runClaim(deps, claim, leaseMs, bind, abort.signal);
   step.catch(() => {}); // if abandoned below, a late failure has no one to report to
   if ((await stepOrDeadline(step, drain.expired)) === "stepped") return;
   abort.abort();
@@ -210,7 +229,7 @@ async function runClaim(
   deps: DriverDeps,
   claim: Claim,
   leaseMs: number,
-  bindTimeoutMs: number,
+  bind: BindPolicy,
   abort: AbortSignal,
 ): Promise<void> {
   // Ensure-on-claim: only an execute_tools item that will actually
@@ -219,16 +238,17 @@ async function runClaim(
   let boundTools: BoundTools | undefined;
   if (claim.item.type === "execute_tools" && claim.item.attempt === 1) {
     try {
-      boundTools = await bindHeld(deps, claim, leaseMs, bindTimeoutMs);
+      boundTools = await bindHeld(deps, claim, leaseMs, bind, abort);
     } catch (err) {
+      // bindHeld lets nothing else out: every other failure is retried.
       if (!(err instanceof SandboxProvisionError)) throw err;
       boundTools = err; // committed by runStep, not thrown: see BoundTools
     }
     if (abort.aborted) return; // drained during the bind: the claim is being released
     if (boundTools === undefined) {
-      // Past the bind deadline: hand the item back, as the drain does.
-      // A release the store cannot serve is swallowed — the lease then
-      // expires on its own, the same re-claim later.
+      // Past the bind deadline, or the lease lost: hand the item back, as
+      // the drain does. A release the store cannot serve is swallowed —
+      // the lease then expires on its own, the same re-claim later.
       await deps.store.releaseItem(claim.item, claim.token).catch(() => {});
       return;
     }
@@ -241,35 +261,71 @@ async function runClaim(
  * above all — can outlive the lease, and an unbeaten lease expires into
  * another worker's re-claim mid-bind: attempt 2, so the batch is
  * interrupted without ever having run. The keeper stops when the bind
- * settles. A lost lease is not acted on here — the bind takes no signal
- * — but runStep's first, awaited beat revalidates, so the step still
- * drops before executing a single tool.
+ * settles.
  *
- * Beating forever would let a hung bind hold its session forever, so
- * the bind gets `bindTimeoutMs`; past it the keeper stops and this
- * returns undefined — the caller releases the claim. The bind itself
- * cannot be cancelled and runs on, abandoned: a late sandbox still goes
- * through ensureSandbox's CAS — registered if it is first, so the next
- * call reuses it, killed if a later bind beat it — and a late failure
- * is already handled: the race subscribed to it.
+ * A bind that fails for any reason but a SandboxProvisionError is tried
+ * again, after 1s, 2s, 4s… (`bind.retryMs` doubling, capped), still
+ * under the keeper and still attempt 1: a sandbox provider's outage, a
+ * secret store's rate limit, a template build that lost every round
+ * all pass, and the batch runs once they have. Rethrown instead, the
+ * failure would take the crash path — the worker exiting over every
+ * other claim it holds, and again for each batch while the outage
+ * lasts. A SandboxProvisionError is rethrown at once: the same request
+ * fails the same way every time.
+ *
+ * Retrying forever would let an outage hold its session forever, so the
+ * bind gets `bind.timeoutMs`; past it this returns undefined — the
+ * caller releases the claim, and the re-claim interrupts the batch. The
+ * retries stop there too, and on the drain, and on a lost lease (the
+ * claim is no longer this worker's). The try in flight cannot be
+ * cancelled and runs on, abandoned: a late sandbox still goes through
+ * ensureSandbox's CAS — registered if it is first, so the next call
+ * reuses it, killed if a later bind beat it — and a late failure is
+ * already handled: the race subscribed to it.
  */
 async function bindHeld(
   deps: DriverDeps,
   claim: Claim,
   leaseMs: number,
-  bindTimeoutMs: number,
+  bind: BindPolicy,
+  abort: AbortSignal,
 ): Promise<Map<string, Tool> | undefined> {
-  const heartbeat = startHeartbeat(deps.store, claim.item, claim.token, leaseMs, () => {});
-  const bind = deps.bindTools(claim.item);
+  const stop = new AbortController();
+  const halt = (): void => stop.abort();
+  const heartbeat = startHeartbeat(deps.store, claim.item, claim.token, leaseMs, halt);
+  abort.addEventListener("abort", halt, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => resolve(undefined), bindTimeoutMs);
+    timer = setTimeout(() => resolve(undefined), bind.timeoutMs);
   });
   try {
-    return await Promise.race([bind, deadline]);
+    return await Promise.race([bindRetrying(deps, claim, bind.retryMs, stop.signal), deadline]);
   } finally {
     clearTimeout(timer);
+    halt(); // an abandoned retry loop schedules nothing more
+    abort.removeEventListener("abort", halt);
     heartbeat.stop();
+  }
+}
+
+/** bindTools until it succeeds or throws a SandboxProvisionError —
+ *  undefined once `stop` aborts, never any other failure. */
+async function bindRetrying(
+  deps: DriverDeps,
+  claim: Claim,
+  firstRetryMs: number,
+  stop: AbortSignal,
+): Promise<Map<string, Tool> | undefined> {
+  for (let wait = firstRetryMs; ; wait = Math.min(wait * 2, BIND_RETRY_CAP_MS)) {
+    try {
+      return await deps.bindTools(claim.item);
+    } catch (err) {
+      if (err instanceof SandboxProvisionError) throw err;
+      if (stop.aborted) return undefined;
+      deps.onBindRetry?.(claim.item, err, wait);
+      await sleep(wait, stop);
+      if (stop.aborted) return undefined;
+    }
   }
 }
 
