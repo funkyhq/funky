@@ -58,11 +58,14 @@ What lives here is what neither the engine nor a host may own:
   the run as `"error"` (no retry yet), and so does a sandbox that can
   never be made as asked (`SandboxProvisionError` — a package that will
   not install, or a credential whose key is not in the secret store):
-  the calls get error results saying why. Any other bind failure — the
-  sandbox provider or the secret store down, a rate limit — is retried
-  with backoff (`bindRetryMs`, doubling to 30s) under the claim's lease
-  until the bind deadline, so an outage costs the batch a wait rather
-  than the worker its other claims. Idle claiming polls (`idlePollMs`)
-  until a Notifier port exists.
+  the calls get error results saying why. A provider refusing the
+  worker's own credentials (`ProviderConfigError` — a revoked API key)
+  takes the crash path, so the misconfiguration restarts the worker
+  loudly. Any other bind failure — the sandbox provider or the secret
+  store down, a rate limit — is retried with backoff (`bindRetryMs`,
+  doubling to 30s) under the claim's lease until the bind deadline, so
+  an outage costs the batch a wait rather than the worker its other
+  claims. Idle claiming polls (`idlePollMs`) until a Notifier port
+  exists.
 
 The engine decides, the store persists, the driver survives.

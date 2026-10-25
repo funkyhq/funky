@@ -9,6 +9,10 @@
 // - `Sandbox.create` throws a plain SandboxError when E2B refuses the
 //   request itself (a 400). The same request is refused every time, so
 //   the port wants SandboxProvisionError (see rethrowRefusal).
+// - The SDK throws AuthenticationError when E2B rejects the API key (a
+//   401, or a key missing or malformed before any request). That is the
+//   worker's configuration, so create, connect and list throw the port's
+//   ProviderConfigError (see rethrowUnauthorized).
 // - `commands.run` throws CommandExitError on a non-zero exit; the port
 //   wants a result. The catch converts. A command-deadline TimeoutError
 //   also settles as a result (see settledResult for the discrimination).
@@ -38,6 +42,7 @@
 
 import {
   ALL_TRAFFIC,
+  AuthenticationError,
   CommandExitError,
   Sandbox as E2bSandbox,
   SandboxError,
@@ -51,7 +56,7 @@ import type {
   SandboxOpts,
 } from "e2b";
 import type { NetworkPolicy } from "@funky/core";
-import { SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
+import { ProviderConfigError, SandboxNotFoundError, SandboxProvisionError } from "@funky/agent";
 import type {
   CommandResult,
   CreateSandboxOptions,
@@ -81,40 +86,7 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
   const builds = e2bTemplateBuilds(connection);
 
   return {
-    async create(opts?: CreateSandboxOptions): Promise<Sandbox> {
-      const canonical = canonicalPackages(opts?.packages ?? {});
-      assertInstallable(canonical);
-      const credentials = opts?.credentials ?? [];
-      // Sandbox-level envs, set here because a template's envs never
-      // reach runtime commands; they survive connect and pause/resume.
-      const envs = {
-        ...credentialEnvs(credentials),
-        // Global npm installs resolve through NODE_PATH.
-        ...(canonical.some(([manager]) => manager === "npm") ? { NODE_PATH: NPM_GLOBAL_ROOT } : {}),
-      };
-      const sandboxOpts: SandboxOpts = {
-        ...connection,
-        timeoutMs: opts?.timeoutMs,
-        lifecycle: { onTimeout: opts?.lifecycle ?? "pause" },
-        metadata: opts?.metadata,
-        ...toNetworkOpts(opts?.network, toRules(credentials)),
-        ...(Object.keys(envs).length > 0 ? { envs } : {}),
-      };
-      const keys = credentials.map(({ key }) => key);
-      const refused = (error: unknown) => rethrowRefusal(error, keys);
-      if (canonical.length === 0) {
-        return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connection);
-      }
-
-      const template = templateName(canonical);
-      try {
-        return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
-      } catch (error) {
-        if (!isUnbuilt(error)) throw error;
-      }
-      await ensureTemplate(builds, template, installCommands(canonical));
-      return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
-    },
+    create: (opts) => create(opts).catch(rethrowUnauthorized),
 
     async connect(sandboxId: string): Promise<Sandbox> {
       try {
@@ -125,22 +97,61 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
         if (error instanceof E2bSandboxNotFoundError) {
           throw new SandboxNotFoundError(error.message);
         }
-        throw error;
+        return rethrowUnauthorized(error);
       }
     },
 
     async list(filter?: { metadata?: Record<string, string> }): Promise<SandboxInfo[]> {
-      const paginator = E2bSandbox.list({
-        ...connection,
-        query: filter?.metadata ? { metadata: filter.metadata } : undefined,
-      });
       const infos: SandboxInfo[] = [];
-      while (paginator.hasNext) {
-        for (const info of await paginator.nextItems()) infos.push(toInfo(info));
+      try {
+        const paginator = E2bSandbox.list({
+          ...connection,
+          query: filter?.metadata ? { metadata: filter.metadata } : undefined,
+        });
+        while (paginator.hasNext) {
+          for (const info of await paginator.nextItems()) infos.push(toInfo(info));
+        }
+      } catch (error) {
+        return rethrowUnauthorized(error);
       }
       return infos;
     },
   };
+
+  async function create(opts?: CreateSandboxOptions): Promise<Sandbox> {
+    const canonical = canonicalPackages(opts?.packages ?? {});
+    assertInstallable(canonical);
+    const credentials = opts?.credentials ?? [];
+    // Sandbox-level envs, set here because a template's envs never
+    // reach runtime commands; they survive connect and pause/resume.
+    const envs = {
+      ...credentialEnvs(credentials),
+      // Global npm installs resolve through NODE_PATH.
+      ...(canonical.some(([manager]) => manager === "npm") ? { NODE_PATH: NPM_GLOBAL_ROOT } : {}),
+    };
+    const sandboxOpts: SandboxOpts = {
+      ...connection,
+      timeoutMs: opts?.timeoutMs,
+      lifecycle: { onTimeout: opts?.lifecycle ?? "pause" },
+      metadata: opts?.metadata,
+      ...toNetworkOpts(opts?.network, toRules(credentials)),
+      ...(Object.keys(envs).length > 0 ? { envs } : {}),
+    };
+    const keys = credentials.map(({ key }) => key);
+    const refused = (error: unknown) => rethrowRefusal(error, keys);
+    if (canonical.length === 0) {
+      return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connection);
+    }
+
+    const template = templateName(canonical);
+    try {
+      return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
+    } catch (error) {
+      if (!isUnbuilt(error)) throw error;
+    }
+    await ensureTemplate(builds, template, installCommands(canonical));
+    return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
+  }
 }
 
 function wrap(initial: E2bSandbox, connection: { apiKey?: string }): Sandbox {
@@ -256,6 +267,17 @@ function rethrowRefusal(error: unknown, keys: readonly string[]): never {
       error.message,
     );
     throw new SandboxProvisionError(`E2B refused the sandbox: ${reason}`);
+  }
+  throw error;
+}
+
+/** A catch for every call on the provider: E2B rejecting the API key
+ *  rejects every request this worker makes, whatever the session, until
+ *  an operator fixes the key — the port's ProviderConfigError, which the
+ *  driver does not retry. Anything else is rethrown as is. */
+function rethrowUnauthorized(error: unknown): never {
+  if (error instanceof AuthenticationError) {
+    throw new ProviderConfigError(`E2B rejected the API key: ${error.message}`);
   }
   throw error;
 }

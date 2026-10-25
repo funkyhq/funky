@@ -25,6 +25,7 @@ import {
   type DriverDeps,
   FencedError,
   type InferenceProvider,
+  ProviderConfigError,
   runDriver,
   runStep,
   SandboxProvisionError,
@@ -698,6 +699,37 @@ describe("runDriver drains", () => {
     // The first claim ran the batch: no re-claim, so nothing was interrupted.
     const tools = (await store.listItems(sessionRef)).find((i) => i.type === "execute_tools");
     expect(tools).toMatchObject({ status: "done", attempt: 1 });
+  });
+
+  it("takes the crash path on a ProviderConfigError: a misconfigured worker isn't retried", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    let binds = 0;
+    let retries = 0;
+    const deps: DriverDeps = {
+      ...stepDeps,
+      bindTools: async () => {
+        binds += 1;
+        throw new ProviderConfigError("E2B rejected the API key");
+      },
+      onBindRetry: () => {
+        retries += 1;
+      },
+    };
+    await expect(
+      runDriver(deps, { bindRetryMs: 10, idlePollMs: 10, session: sessionRef }),
+    ).rejects.toBeInstanceOf(ProviderConfigError);
+    expect(binds).toBe(1);
+    expect(retries).toBe(0);
+    expect(messages(await store.readEntries(sessionRef))).toHaveLength(2); // nothing committed
   });
 
   it("hands back a bind that keeps failing at its deadline, and stops retrying it", async () => {

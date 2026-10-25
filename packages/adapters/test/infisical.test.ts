@@ -4,11 +4,12 @@
 // refused, reads kept to one folder, a namespace's folder made on its
 // first put, the token renewed when
 // Infisical rejects it, a 404 believed only once the environment is
-// known, and no failure but absence ever SecretNotFoundError.
+// known, no failure but absence ever SecretNotFoundError, and what only
+// an operator can fix a ProviderConfigError.
 // infisical-live.test.ts runs the suite against a real Infisical.
 
 import { beforeEach, describe, expect, test } from "vitest";
-import { SecretNotFoundError } from "@funky/agent";
+import { ProviderConfigError, SecretNotFoundError } from "@funky/agent";
 import {
   createInfisicalSecretProvider,
   type InfisicalSecretProviderOptions,
@@ -132,7 +133,9 @@ describe("createInfisicalSecretProvider", () => {
 
   test("throws on a wrong environment or project rather than reading it as empty", async () => {
     const wrongEnvironment = provider({ environment: "production" });
-    await expect(wrongEnvironment.list("acme")).rejects.toThrow('has no environment "production"');
+    const listed = wrongEnvironment.list("acme");
+    await expect(listed).rejects.toBeInstanceOf(ProviderConfigError);
+    await expect(listed).rejects.toThrow('has no environment "production"');
     const error = await wrongEnvironment.resolve("acme", ["k"]).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(SecretNotFoundError);
@@ -141,9 +144,42 @@ describe("createInfisicalSecretProvider", () => {
       "404 to POST /api/v2/folders: Environment not found",
     );
 
-    await expect(provider({ projectId: "nope" }).resolve("acme", ["k"])).rejects.toThrow(
-      "404 to GET /api/v1/projects/nope",
-    );
+    const wrongProject = provider({ projectId: "nope" }).resolve("acme", ["k"]);
+    await expect(wrongProject).rejects.toBeInstanceOf(ProviderConfigError);
+    await expect(wrongProject).rejects.toThrow("Infisical has no project nope");
+  });
+
+  test("a refused sign-in, or access a fresh token doesn't cure, is a config error", async () => {
+    const signIn = provider({ clientSecret: "revoked" }).resolve("acme", ["token"]);
+    await expect(signIn).rejects.toBeInstanceOf(ProviderConfigError);
+    await expect(signIn).rejects.toThrow("Infisical refused the sign-in: Infisical answered 401");
+
+    // An identity without the permission: no token expired, so no second sign-in.
+    const secrets = provider();
+    const signIns = () => calls().filter((c) => c.endsWith("/login")).length - 1; // less the refused one
+    infisical.failNext("GET /api/v4/secrets", 403, {
+      error: "PermissionDenied",
+      message: "You are not allowed to read on secrets",
+    });
+    const read = await secrets.resolve("acme", ["token"]).catch((e: unknown) => e);
+    expect(read).toBeInstanceOf(ProviderConfigError);
+    expect(String(read)).toContain("403 to GET /api/v4/secrets: You are not allowed");
+    expect(signIns()).toBe(1);
+
+    // A token refused again straight after signing in.
+    infisical.failNext("GET /api/v4/secrets", 401, { message: "stale" });
+    infisical.failNext("GET /api/v4/secrets", 401, { message: "still" });
+    await expect(secrets.list("acme")).rejects.toBeInstanceOf(ProviderConfigError);
+    expect(signIns()).toBe(2);
+  });
+
+  test("a rate-limited sign-in is not a config error", async () => {
+    infisical.failNext("POST /api/v1/auth/universal-auth/login", 429, { message: "slow down" });
+    const error = await provider()
+      .resolve("acme", ["token"])
+      .catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(ProviderConfigError);
+    expect(String(error)).toContain("answered 429");
   });
 
   test("never reports an outage or a rate limit as SecretNotFoundError", async () => {
@@ -175,7 +211,9 @@ describe("createInfisicalSecretProvider", () => {
         },
       ],
     });
-    await expect(secrets.resolve("acme", ["token"])).rejects.toThrow("can't read secret values");
+    const hidden = secrets.resolve("acme", ["token"]);
+    await expect(hidden).rejects.toBeInstanceOf(ProviderConfigError);
+    await expect(hidden).rejects.toThrow("can't read secret values");
   });
 
   test("throws when a change policy holds a write for approval", async () => {
