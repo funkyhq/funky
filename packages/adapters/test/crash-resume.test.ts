@@ -50,7 +50,7 @@ import {
   PROMPTS,
   user,
 } from "./fixtures/crash-script";
-import { storeDdl } from "./store-ddl";
+import { migrateStore } from "./migrate-store";
 const driverPath = fileURLToPath(new URL("./fixtures/crash-driver.ts", import.meta.url));
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -328,7 +328,7 @@ beforeAll(async () => {
   templateFresh = join(workRoot, "template-fresh");
   {
     const client = new PGlite(templateFresh);
-    await client.exec(storeDdl);
+    await migrateStore(client);
     const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
     const agentConfigRef = await store.createAgentConfig({
       namespace: DEFAULT_NAMESPACE,

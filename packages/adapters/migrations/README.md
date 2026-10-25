@@ -8,7 +8,9 @@ database hasn't seen, in folder-name order; compose runs it on every `up`.
 
 `20260820000000_init` was the schema's single description while nothing was
 deployed, and it was edited in place. Databases now exist that were created from
-it, so it is frozen, and so is every migration after it once it ships.
+it, so it is frozen, and so is every migration after it once it ships. Its
+header still says nothing is deployed and that it stays the only migration; that
+was true when it was written, and the header is frozen with the rest of it.
 
 The migrator records a migration by its folder name and never reads a recorded
 one again. An edit to a shipped file therefore reaches no existing database:
@@ -24,7 +26,7 @@ pins each migration's SHA-256, so CI refuses the edit instead.
    not a restated `CREATE`. Backfill a column before making it `NOT NULL`, and
    keep the comments a reader of the schema needs, as the init does.
 3. Update `src/store/schema.ts` to match. The suites apply every migration in
-   order (`test/store-ddl.ts`), so the store's tests run against the schema a
+   order (`test/migrate-store.ts`), so the store's tests run against the schema a
    migrated database has.
 4. Pin the new folder in `test/migrations.test.ts`. The test's failure message
    gives the line to add.

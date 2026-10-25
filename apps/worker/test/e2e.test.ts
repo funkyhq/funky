@@ -30,7 +30,7 @@ import {
   type SessionRef,
 } from "@funky/core";
 import { createE2bProvider, createPgStore, type StoreDb } from "@funky/adapters";
-import { storeDdl } from "../../../packages/adapters/test/store-ddl";
+import { migrateStore } from "../../../packages/adapters/test/migrate-store";
 
 const url = process.env.E2E_DATABASE_URL;
 const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -55,8 +55,10 @@ if (!url || !anthropicKey || !e2bKey) {
   const sessions: SessionRef[] = [];
 
   beforeAll(async () => {
-    await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
-    await pool.query(storeDdl);
+    await pool.query(
+      "DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS drizzle CASCADE; CREATE SCHEMA public;",
+    );
+    await migrateStore(pool);
   });
 
   afterAll(async () => {

@@ -6,7 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
-import { storeDdl } from "../../../packages/adapters/test/store-ddl";
+import { migrateStore } from "../../../packages/adapters/test/migrate-store";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
@@ -21,7 +21,7 @@ const PACING = { pollMs: 10, heartbeatMs: 60_000 };
 
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(storeDdl);
+  await migrateStore(client);
   const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   const base = { store, secrets: null, authToken: null, ping: async () => ({}) };
   app = buildApp({ ...base, stream: PACING });

@@ -35,7 +35,7 @@ import {
   toToolSpec,
 } from "@funky/agent";
 import { createPgStore, type StoreDb } from "../src";
-import { storeDdl } from "./store-ddl";
+import { migrateStore } from "./migrate-store";
 
 let client: PGlite;
 let store: Store;
@@ -45,7 +45,7 @@ let clock: { advance: (ms: number) => void };
 // subprocesses share the CPU.
 beforeAll(async () => {
   client = new PGlite();
-  await client.exec(storeDdl);
+  await migrateStore(client);
 }, 60_000);
 
 afterAll(async () => {
