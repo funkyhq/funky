@@ -758,16 +758,20 @@ describe("runDriver drains", () => {
     await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
 
     const retrying = deferred();
+    const waits: number[] = [];
     const deps: DriverDeps = {
       ...stepDeps,
       bindTools: async () => {
         throw new Error("sandbox provider unreachable");
       },
-      onBindRetry: () => retrying.resolve(),
+      onBindRetry: (_ref, _error, retryInMs) => {
+        waits.push(retryInMs);
+        retrying.resolve();
+      },
     };
     const drain = new AbortController();
     const running = runDriver(deps, {
-      bindRetryMs: 60_000, // a wait the drain must not sit out
+      bindRetryMs: 60_000, // a wait the drain must not sit out — held to 30s
       idlePollMs: 10,
       session: sessionRef,
       drain: drain.signal,
@@ -777,8 +781,140 @@ describe("runDriver drains", () => {
     drain.abort();
     await running;
 
+    expect(waits).toEqual([30_000]);
     const reclaimed = await claim(sessionRef);
     expect(reclaimed.item).toMatchObject({ type: "execute_tools", attempt: 2 });
+  });
+
+  it("backs a zero bindRetryMs off from 1ms rather than spinning", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi"), sayText("done")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    let binds = 0;
+    const waits: number[] = [];
+    const deps: DriverDeps = {
+      ...stepDeps,
+      bindTools: async () => {
+        binds += 1;
+        if (binds <= 3) throw new Error("sandbox provider unreachable");
+        return echoOnly;
+      },
+      onBindRetry: (_ref, _error, retryInMs) => waits.push(retryInMs),
+    };
+    const drain = new AbortController();
+    const running = runDriver(deps, {
+      bindRetryMs: 0,
+      idlePollMs: 10,
+      session: sessionRef,
+      drain: drain.signal,
+      drainMs: 5_000,
+    });
+    await until(async () => messages(await store.readEntries(sessionRef)).length === 4);
+    drain.abort();
+    await running;
+
+    expect(waits).toEqual([1, 2, 4]);
+  });
+
+  it("rides out a heartbeat that throws during the bind: the store couldn't say", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi"), sayText("done")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    let binds = 0;
+    let thrown = 0;
+    const deps: DriverDeps = {
+      ...stepDeps,
+      // The store hiccups for as long as the bind fails, then answers.
+      store: {
+        ...store,
+        heartbeat: async (ref, token) => {
+          if (binds < 3) {
+            thrown += 1;
+            throw new Error("connection reset");
+          }
+          return store.heartbeat(ref, token);
+        },
+      },
+      bindTools: async () => {
+        binds += 1;
+        if (binds <= 2) throw new Error("sandbox provider unreachable");
+        return echoOnly;
+      },
+    };
+    const drain = new AbortController();
+    const running = runDriver(deps, {
+      // Room for the retries inside one lease: a beat that throws extends nothing.
+      leaseMs: 600,
+      bindRetryMs: 50,
+      idlePollMs: 10,
+      session: sessionRef,
+      drain: drain.signal,
+      drainMs: 5_000,
+    });
+    await until(async () => messages(await store.readEntries(sessionRef)).length === 4);
+    drain.abort();
+    await running;
+
+    expect(thrown).toBeGreaterThan(0); // the bind's first beat, at least
+    expect(binds).toBe(3);
+    const log = messages(await store.readEntries(sessionRef));
+    expect(log[2]).toMatchObject({ isError: false, content: [{ type: "text", text: "hi" }] });
+    const tools = (await store.listItems(sessionRef)).find((i) => i.type === "execute_tools");
+    expect(tools).toMatchObject({ status: "done", attempt: 1 });
+  });
+
+  it("survives an onBindRetry that throws", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    const provider = scriptedProvider([callEcho("hi"), sayText("done")]);
+    const stepDeps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+    };
+    await runStep(stepDeps, await claim(sessionRef), 60_000); // → execute_tools ready
+
+    let binds = 0;
+    const deps: DriverDeps = {
+      ...stepDeps,
+      bindTools: async () => {
+        binds += 1;
+        if (binds <= 1) throw new Error("sandbox provider unreachable");
+        return echoOnly;
+      },
+      onBindRetry: () => {
+        throw new Error("logger broke");
+      },
+    };
+    const drain = new AbortController();
+    const running = runDriver(deps, {
+      bindRetryMs: 10,
+      idlePollMs: 10,
+      session: sessionRef,
+      drain: drain.signal,
+      drainMs: 5_000,
+    });
+    await until(async () => messages(await store.readEntries(sessionRef)).length === 4);
+    drain.abort();
+    await running; // nothing crashed
+
+    expect(binds).toBe(2);
+    const log = messages(await store.readEntries(sessionRef));
+    expect(log[2]).toMatchObject({ isError: false, content: [{ type: "text", text: "hi" }] });
   });
 
   it("stops retrying a bind once its lease is lost", async () => {

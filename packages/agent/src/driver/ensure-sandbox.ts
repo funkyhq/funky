@@ -60,7 +60,14 @@ export async function ensureSandbox(
       ...opts,
       metadata: { ...opts?.metadata, sessionId: ref.sessionId },
     });
-    const winner = await store.bindSandbox(ref, created.sandboxId, bound);
+    // A registration that throws leaves the sandbox nobody's: kill it,
+    // or each retry of the bind (loop.ts) would leave one more running
+    // until its TTL. Should the bind have committed after all, the
+    // next bind finds the binding gone and replaces it, as above.
+    const winner = await store.bindSandbox(ref, created.sandboxId, bound).catch(async (error) => {
+      await created.kill().catch(() => {});
+      throw error;
+    });
     if (winner === created.sandboxId) return created;
 
     // Lost the registration race: discard the duplicate and join the

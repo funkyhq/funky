@@ -132,7 +132,7 @@ export interface DriverOptions {
    *  the retries of a bind that keeps failing. */
   bindTimeoutMs?: number;
   /** The wait before a failed bind's first retry, doubled for each one
-   *  after it up to 30s. Default 1s. */
+   *  after it; every wait is held to 1ms–30s. Default 1s. */
   bindRetryMs?: number;
 }
 
@@ -277,7 +277,8 @@ async function runClaim(
  * bind gets `bind.timeoutMs`; past it this returns undefined — the
  * caller releases the claim, and the re-claim interrupts the batch. The
  * retries stop there too, and on the drain, and on a lost lease (the
- * claim is no longer this worker's). The try in flight cannot be
+ * store answering that the claim is no longer this worker's — a beat
+ * that throws is not that answer). The try in flight cannot be
  * cancelled and runs on, abandoned: a late sandbox still goes through
  * ensureSandbox's CAS — registered if it is first, so the next call
  * reuses it, killed if a later bind beat it — and a late failure is
@@ -292,7 +293,7 @@ async function bindHeld(
 ): Promise<Map<string, Tool> | undefined> {
   const stop = new AbortController();
   const halt = (): void => stop.abort();
-  const heartbeat = startHeartbeat(deps.store, claim.item, claim.token, leaseMs, halt);
+  const heartbeat = startHeartbeat(deps.store, claim.item, claim.token, leaseMs, halt, "beat on");
   abort.addEventListener("abort", halt, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<undefined>((resolve) => {
@@ -316,13 +317,19 @@ async function bindRetrying(
   firstRetryMs: number,
   stop: AbortSignal,
 ): Promise<Map<string, Tool> | undefined> {
-  for (let wait = firstRetryMs; ; wait = Math.min(wait * 2, BIND_RETRY_CAP_MS)) {
+  // At least 1ms, so a zero doubles into a backoff rather than a spin.
+  let wait = Math.min(Math.max(firstRetryMs, 1), BIND_RETRY_CAP_MS);
+  for (; ; wait = Math.min(wait * 2, BIND_RETRY_CAP_MS)) {
     try {
       return await deps.bindTools(claim.item);
     } catch (err) {
       if (err instanceof SandboxProvisionError) throw err;
       if (stop.aborted) return undefined;
-      deps.onBindRetry?.(claim.item, err, wait);
+      try {
+        deps.onBindRetry?.(claim.item, err, wait);
+      } catch {
+        // The host's tap: its failure must not take the crash path.
+      }
       await sleep(wait, stop);
       if (stop.aborted) return undefined;
     }
@@ -623,6 +630,12 @@ function toNext(action: Action): CommitStepRequest["next"] {
  * if it was actually alive, the item simply expires into a re-claim
  * (inference re-runs; a tool batch interrupts). Wasted work, never
  * wrong work.
+ *
+ * The bind's keeper passes `onThrow: "beat on"`: a beat that throws
+ * there says nothing about the lease, and taking it as lost would end
+ * the bind's retries over one store hiccup. It beats again a period
+ * later; only the store answering false stops it. Should the lease
+ * expire meanwhile, runStep's first beat catches it.
  */
 function startHeartbeat(
   store: Store,
@@ -630,6 +643,7 @@ function startHeartbeat(
   token: LeaseToken,
   leaseMs: number,
   onLost: () => void,
+  onThrow: "lost" | "beat on" = "lost",
 ): { validated: Promise<void>; stop: () => void } {
   const period = Math.max(1, Math.floor(leaseMs / 3));
   let stopped = false;
@@ -639,7 +653,7 @@ function startHeartbeat(
     try {
       alive = await store.heartbeat(ref, token);
     } catch {
-      alive = false;
+      alive = onThrow === "beat on";
     }
     if (stopped) return;
     if (!alive) {
