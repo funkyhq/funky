@@ -76,6 +76,13 @@ const deps: DriverDeps = {
     }));
     return createSandboxTools(sandbox);
   },
+  // A bind failure the driver rides out: logged to stderr, so an outage
+  // of the sandbox provider or the secret store shows while it lasts.
+  onBindRetry: (ref, error, retryInMs) =>
+    console.error(
+      `worker: sandbox bind for session ${ref.sessionId} failed; retrying in ${retryInMs}ms:`,
+      error,
+    ),
 };
 
 const drain = new AbortController();

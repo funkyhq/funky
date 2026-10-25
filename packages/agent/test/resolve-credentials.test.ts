@@ -2,7 +2,7 @@
 // the credentials use, each credential handed back with its key; a key
 // the store doesn't have, or no store at all, is a SandboxProvisionError
 // (the run ends), and any other failure passes through untyped (the
-// crash path).
+// driver retries the bind).
 
 import { describe, expect, test } from "vitest";
 import type { Credential } from "@funky/core";

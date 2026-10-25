@@ -1,6 +1,7 @@
 // ensure-on-claim over fakes: connect when the Store already registered
 // the session's sandbox, create-and-register when none exists, kill the
-// duplicate and join the winner when the registration CAS is lost, and
+// duplicate and join the winner when the registration CAS is lost (and
+// kill what it created when the registration throws), and
 // replace a binding only when the provider says it is definitively gone.
 // The create options are read only for a create, and a failed read
 // leaves nothing created or bound.
@@ -44,7 +45,7 @@ function fakeProvider(opts?: { deadIds?: string[]; connectError?: Error }) {
 
 const s1: SessionRef = { namespace: "default", sessionId: "s1" };
 
-function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
+function fakeStore(opts?: { sandboxId?: string; winner?: string; bindError?: Error }) {
   const binds: { candidate: string; previous?: string }[] = [];
   const session: Session = {
     sessionId: "s1",
@@ -60,6 +61,7 @@ function fakeStore(opts?: { sandboxId?: string; winner?: string }) {
       ref.namespace === "default" && ref.sessionId === "s1" ? session : undefined,
     bindSandbox: async (_ref: SessionRef, candidate: string, previous?: string) => {
       binds.push({ candidate, previous });
+      if (opts?.bindError) throw opts.bindError;
       return opts?.winner ?? candidate;
     },
   };
@@ -148,6 +150,15 @@ describe("ensureSandbox", () => {
     expect(store.binds).toEqual([{ candidate: "sbx_created", previous: undefined }]);
     expect(killed()).toBe(1);
     expect(calls.connect).toEqual(["sbx_theirs"]);
+  });
+
+  test("kills what it created when registering it fails", async () => {
+    const store = fakeStore({ bindError: new Error("connection reset") });
+    const { provider, killed } = fakeProvider();
+
+    await expect(ensureSandbox(store, provider, s1)).rejects.toThrow("connection reset");
+    expect(store.binds).toEqual([{ candidate: "sbx_created", previous: undefined }]);
+    expect(killed()).toBe(1);
   });
 
   test("replaces a binding the provider reports definitively gone", async () => {
