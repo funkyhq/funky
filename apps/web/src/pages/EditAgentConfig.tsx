@@ -41,11 +41,13 @@ import {
 } from "../lib/network";
 import { compact, samePackages } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
+import { sameSetupCommands, toSetupCommands } from "../lib/setup-commands";
 import { CredentialsFields } from "../components/CredentialsFields";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { PackagesFields } from "../components/PackagesFields";
+import { SetupCommandsFields } from "../components/SetupCommandsFields";
 import { absoluteTime } from "../lib/format";
 
 type Fields = { provider: string; model: string; systemPrompt: string };
@@ -163,6 +165,7 @@ function EditForm({
   const [credentialFields, setCredentialFields] = useState(() =>
     credentialFieldsOf(config.credentials),
   );
+  const [setupCards, setSetupCards] = useState(config.setupCommands);
   const [failure, setFailure] = useState<string>();
   // WHICH write is in flight, not merely whether one is. The two paths out
   // of this dialog are mutually exclusive and every control is disabled by
@@ -202,8 +205,19 @@ function EditForm({
   const credentials = toCredentials(credentialFields);
   const credentialsChanged =
     credentials !== undefined && !sameCredentials(credentials, config.credentials);
+  // Absent while a setup command is blank (see toSetupCommands).
+  const setupCommands = toSetupCommands(setupCards);
+  const setupChanged =
+    setupCommands !== undefined && !sameSetupCommands(setupCommands, config.setupCommands);
+  const incomplete =
+    network === undefined || credentials === undefined || setupCommands === undefined;
   const changed =
-    inferenceChanged || promptChanged || networkChanged || packagesChanged || credentialsChanged;
+    inferenceChanged ||
+    promptChanged ||
+    networkChanged ||
+    packagesChanged ||
+    credentialsChanged ||
+    setupChanged;
 
   // The offered provider, when it is one; otherwise the config's own, whose
   // models this console can't enumerate — so the model it already has is
@@ -230,7 +244,7 @@ function EditForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || archived || network === undefined || credentials === undefined) return;
+    if (busy || archived || incomplete) return;
     // Nothing to send is nothing to version. Closing IS the save.
     if (!changed) {
       onClose();
@@ -247,6 +261,7 @@ function EditForm({
       network: networkChanged ? network : undefined,
       packages: packagesChanged ? compact(packages) : undefined,
       credentials: credentialsChanged ? credentials : undefined,
+      setupCommands: setupChanged ? setupCommands : undefined,
       version: config.version,
     };
 
@@ -354,6 +369,12 @@ function EditForm({
             onChange={setCredentialFields}
             disabled={archived || busy}
           />
+
+          <SetupCommandsFields
+            commands={setupCards}
+            onChange={setSetupCards}
+            disabled={archived || busy}
+          />
         </div>
 
         {/* Archive sits away from the two buttons that answer the form:
@@ -377,7 +398,7 @@ function EditForm({
             <button
               className="btn btn-primary"
               type="submit"
-              disabled={busy || network === undefined || credentials === undefined || !changed}
+              disabled={busy || incomplete || !changed}
             >
               {pending === "saving" ? "Saving…" : `Save as version ${config.version + 1}`}
             </button>
