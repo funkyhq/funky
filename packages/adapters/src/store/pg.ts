@@ -44,6 +44,7 @@ import {
   AgentMessage,
   CreateAgentConfigRequest,
   CreateSessionRequest,
+  EntryUsage,
   IntakeResult,
   type JsonValue,
   ListAgentConfigsRequest,
@@ -599,6 +600,30 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         )
         .orderBy(asc(sessionEntries.seq));
       return rows.map((r) => SessionEntry.parse(r.entry));
+    },
+
+    async readUsage(ref) {
+      const { namespace, sessionId } = SessionRef.parse(ref);
+      const { entry } = sessionEntries;
+      // Filtered and projected in SQL: only assistant rows match, and
+      // only their id and usage cross the wire.
+      const rows = await db
+        .select({
+          entryId: sql<string>`${entry}->>'id'`,
+          usage: sql<unknown>`${entry}->'message'->'usage'`,
+        })
+        .from(sessionEntries)
+        .where(
+          and(
+            eq(sessionEntries.namespace, namespace),
+            eq(sessionEntries.sessionId, sessionId),
+            sql`${entry}->>'type' = 'message'`,
+            sql`${entry}->'message'->>'role' = 'assistant'`,
+            sql`${entry}->'message'->'usage' IS NOT NULL`,
+          ),
+        )
+        .orderBy(asc(sessionEntries.seq));
+      return rows.map((r) => EntryUsage.parse(r));
     },
 
     async listItems(ref) {
