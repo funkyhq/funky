@@ -337,6 +337,7 @@ beforeAll(async () => {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
     });
     sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,

@@ -97,6 +97,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       network: { type: "none" },
       packages: { pip: ["numpy"] },
       credentials: [],
+      setupCommands: [],
     });
     const newSession = (agentConfigVersion?: number) =>
       store.createSession({
@@ -164,6 +165,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [STRIPE],
+      setupCommands: [],
     });
     const newSession = () =>
       store.createSession({ namespace: DEFAULT_NAMESPACE, agentConfigId: agent.agentConfigId });

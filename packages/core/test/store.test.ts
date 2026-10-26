@@ -50,6 +50,7 @@ describe("configs", () => {
           value: "Bearer {secret}",
         },
       ],
+      setupCommands: ["monid keys add --key monid_funky_injected --label funky"],
       namespace: "tenant-a",
       metadata: { team: "growth" },
       version: 3,
@@ -67,6 +68,7 @@ describe("configs", () => {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
     });
     expect(result.success).toBe(true);
   });
@@ -115,6 +117,7 @@ describe("configs", () => {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",
@@ -169,10 +172,11 @@ describe("configs", () => {
     expect(
       AgentConfig.safeParse({ ...config, network: { type: "none" }, packages: {} }).success,
     ).toBe(false);
-    expect(
-      AgentConfig.safeParse({ ...config, network: { type: "none" }, packages: {}, credentials: [] })
-        .success,
-    ).toBe(true);
+    const environment = { network: { type: "none" }, packages: {}, credentials: [] };
+    expect(AgentConfig.safeParse({ ...config, ...environment }).success).toBe(false);
+    expect(AgentConfig.safeParse({ ...config, ...environment, setupCommands: [] }).success).toBe(
+      true,
+    );
   });
 
   it("requires the environment on agent config create, accepts it on update, and validates it", () => {
@@ -192,16 +196,14 @@ describe("configs", () => {
           value: "Bearer {secret}",
         },
       ],
+      setupCommands: ["monid keys add --key monid_funky_injected --label funky"],
     };
     expect(CreateAgentConfigRequest.safeParse(create).success).toBe(true);
-    const { network, packages, credentials, ...bare } = create;
-    expect(CreateAgentConfigRequest.safeParse({ ...bare, packages, credentials }).success).toBe(
-      false,
-    );
-    expect(CreateAgentConfigRequest.safeParse({ ...bare, network, credentials }).success).toBe(
-      false,
-    );
-    expect(CreateAgentConfigRequest.safeParse({ ...bare, network, packages }).success).toBe(false);
+    expect(CreateAgentConfigRequest.safeParse({ ...create, setupCommands: [] }).success).toBe(true);
+    for (const field of ["network", "packages", "credentials", "setupCommands"] as const) {
+      const { [field]: _, ...missing } = create;
+      expect(CreateAgentConfigRequest.safeParse(missing).success, field).toBe(false);
+    }
     expect(
       CreateAgentConfigRequest.safeParse({ ...create, credentials: [{ env: "GH_TOKEN" }] }).success,
     ).toBe(false);
@@ -215,6 +217,9 @@ describe("configs", () => {
     expect(UpdateAgentConfigRequest.safeParse({ credentials: [] }).success).toBe(true);
     expect(UpdateAgentConfigRequest.safeParse({ packages: ["numpy"] }).success).toBe(false);
     expect(UpdateAgentConfigRequest.safeParse({ credentials: {} }).success).toBe(false);
+    expect(UpdateAgentConfigRequest.safeParse({ setupCommands: [] }).success).toBe(true);
+    expect(UpdateAgentConfigRequest.safeParse({ setupCommands: ["  "] }).success).toBe(false);
+    expect(UpdateAgentConfigRequest.safeParse({ setupCommands: "npm i" }).success).toBe(false);
   });
 
   it("round-trips an archived agent config — the mark is a timestamp, not a flag", () => {
@@ -225,6 +230,7 @@ describe("configs", () => {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
       namespace: "default",
       version: 2,
       createdAt: "2026-08-11T12:00:00Z",
@@ -242,6 +248,7 @@ describe("configs", () => {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",
