@@ -33,6 +33,7 @@ export type AgentConfig = {
   network: NetworkPolicy;
   packages: Packages;
   credentials: Credential[];
+  setupCommands: string[];
   /** Monotonic; an update lands as the next version rather than a rewrite. */
   version: number;
   createdAt: string;
@@ -199,14 +200,17 @@ export function listAgentConfigs(
 }
 
 /** The create body, minus the namespace this console pins for every call.
- *  Network, packages and credentials are required: the request says what
- *  the sandbox is, rather than leaving it to an api default. */
+ *  Network, packages, credentials and setup commands are required: the
+ *  request says what the sandbox is, rather than leaving it to an api
+ *  default. */
 export type CreateAgentConfigInput = {
   inference: InferenceConfig;
   systemPrompt: string;
   network: NetworkPolicy;
   packages: Packages;
   credentials: Credential[];
+  /** Shell commands that finish the sandbox after its packages install. */
+  setupCommands: string[];
   metadata?: unknown;
 };
 
@@ -252,6 +256,7 @@ export type UpdateAgentConfigInput = {
   network?: NetworkPolicy;
   packages?: Packages;
   credentials?: Credential[];
+  setupCommands?: string[];
   /** Optimistic concurrency: the version this edit was made against. The
    *  api answers 409 if it is no longer the current one. */
   version?: number;

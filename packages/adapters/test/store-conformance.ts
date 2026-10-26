@@ -43,6 +43,8 @@ const GITHUB: Credential = {
   header: "Authorization",
   value: "Bearer {secret}",
 };
+const MONID_KEY = "monid keys add --key monid_funky_injected --label funky";
+const SKILL_FILE = "mkdir -p ~/skills && cat > ~/skills/SKILL.md <<'EOF'\n# Monid\nEOF";
 
 export interface StoreHarness {
   store: Store;
@@ -83,6 +85,7 @@ export function describeStoreConformance(
         network: { type: "unrestricted" },
         packages: {},
         credentials: [],
+        setupCommands: [],
         ...overrides,
       });
     }
@@ -131,6 +134,7 @@ export function describeStoreConformance(
           network: { type: "unrestricted" },
           packages: {},
           credentials: [],
+          setupCommands: [],
           metadata: { team: "growth" },
         });
         const config = await store.getAgentConfig(ref);
@@ -173,6 +177,7 @@ export function describeStoreConformance(
             network: { type: "unrestricted" },
             packages: {},
             credentials: [],
+            setupCommands: [],
           }),
         ).rejects.toThrow();
       });
@@ -322,16 +327,18 @@ export function describeStoreConformance(
         ).rejects.toThrow();
       });
 
-      it("requires network, packages and credentials at agent config create — no default to resolve", async () => {
+      it("requires network, packages, credentials and setup commands at agent config create — no default to resolve", async () => {
         const base = {
           namespace: DEFAULT_NAMESPACE,
           inference: { provider: "fake", model: "m" },
           systemPrompt: "s",
         };
+        const network = { type: "unrestricted" };
         for (const req of [
-          { ...base, packages: {}, credentials: [] },
-          { ...base, network: { type: "unrestricted" }, credentials: [] },
-          { ...base, network: { type: "unrestricted" }, packages: {} },
+          { ...base, packages: {}, credentials: [], setupCommands: [] },
+          { ...base, network, credentials: [], setupCommands: [] },
+          { ...base, network, packages: {}, setupCommands: [] },
+          { ...base, network, packages: {}, credentials: [] },
         ]) {
           // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
           await expect(store.createAgentConfig(req as any)).rejects.toThrow();
@@ -346,11 +353,13 @@ export function describeStoreConformance(
           network: { type: "allowlist", domains: ["pypi.org"] },
           packages: { pip: ["pandas==2.2.0"] },
           credentials: [STRIPE, GITHUB],
+          setupCommands: [MONID_KEY, SKILL_FILE],
         });
         expect(await store.getAgentConfig(ref)).toMatchObject({
           network: { type: "allowlist", domains: ["pypi.org"] },
           packages: { pip: ["pandas==2.2.0"] },
           credentials: [STRIPE, GITHUB],
+          setupCommands: [MONID_KEY, SKILL_FILE],
         });
       });
 
@@ -392,7 +401,18 @@ export function describeStoreConformance(
           version: 5,
         });
         const v6 = await store.updateAgentConfig(ref, { systemPrompt: "behavior again" });
-        expect(v6).toMatchObject({ credentials: [GITHUB], version: 6 });
+        expect(v6).toMatchObject({ credentials: [GITHUB], setupCommands: [], version: 6 });
+
+        const v7 = await store.updateAgentConfig(ref, { setupCommands: [MONID_KEY] });
+        expect(v7).toMatchObject({
+          network: { type: "none" },
+          packages: { npm: ["zod@4"] },
+          credentials: [GITHUB],
+          setupCommands: [MONID_KEY],
+          version: 7,
+        });
+        const v8 = await store.updateAgentConfig(ref, { systemPrompt: "behavior once more" });
+        expect(v8).toMatchObject({ setupCommands: [MONID_KEY], version: 8 });
 
         // Every snapshot is whole: a pinned version keeps the world it had.
         expect(await store.getAgentConfig({ ...ref, version: 1 })).toEqual(v1);
@@ -409,6 +429,7 @@ export function describeStoreConformance(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
           newAgent({ credentials: [{ ...GITHUB, type: "unsafe" }] as any }),
         ).rejects.toThrow();
+        await expect(newAgent({ setupCommands: [" "] })).rejects.toThrow();
         const ref = await newAgent();
         await expect(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
@@ -416,6 +437,10 @@ export function describeStoreConformance(
         ).rejects.toThrow();
         await expect(
           store.updateAgentConfig(ref, { credentials: [STRIPE, { ...GITHUB, env: STRIPE.env }] }),
+        ).rejects.toThrow();
+        await expect(
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+          store.updateAgentConfig(ref, { setupCommands: MONID_KEY } as any),
         ).rejects.toThrow();
         expect((await store.getAgentConfig(ref))?.version).toBe(1);
       });
@@ -480,6 +505,7 @@ export function describeStoreConformance(
           { network: { type: "none" } as const },
           { packages: { pip: ["numpy"] } },
           { credentials: [GITHUB] },
+          { setupCommands: [MONID_KEY] },
           { systemPrompt: "after", version: 1 },
         ]) {
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
@@ -729,12 +755,14 @@ export function describeStoreConformance(
           network: { type: "none" },
           packages: { pip: ["numpy"] },
           credentials: [GITHUB],
+          setupCommands: [MONID_KEY],
         });
         const before = await newSessionOn(agentConfigRef);
         await store.updateAgentConfig(agentConfigRef, {
           network: { type: "allowlist", domains: ["example.com"] },
           packages: { npm: ["zod"] },
           credentials: [STRIPE],
+          setupCommands: [SKILL_FILE],
         });
         const after = await newSessionOn(agentConfigRef);
 
@@ -748,17 +776,20 @@ export function describeStoreConformance(
             network: config?.network,
             packages: config?.packages,
             credentials: config?.credentials,
+            setupCommands: config?.setupCommands,
           };
         };
         expect(await environmentOf(before)).toEqual({
           network: { type: "none" },
           packages: { pip: ["numpy"] },
           credentials: [GITHUB],
+          setupCommands: [MONID_KEY],
         });
         expect(await environmentOf(after)).toEqual({
           network: { type: "allowlist", domains: ["example.com"] },
           packages: { npm: ["zod"] },
           credentials: [STRIPE],
+          setupCommands: [SKILL_FILE],
         });
       });
 

@@ -103,6 +103,7 @@ const agentConfigColumns = {
   network: agentConfigVersions.network,
   packages: agentConfigVersions.packages,
   credentials: agentConfigVersions.credentials,
+  setupCommands: agentConfigVersions.setupCommands,
   metadata: agentConfigVersions.metadata,
   updatedAt: agentConfigVersions.updatedAt,
   id: agentConfigs.id,
@@ -125,6 +126,7 @@ const toAgentConfig = (row: AgentConfigRow): AgentConfig =>
     network: row.network,
     packages: row.packages,
     credentials: row.credentials,
+    setupCommands: row.setupCommands,
     namespace: row.namespace,
     ...unwrapped(row.metadata),
     version: row.version,
@@ -233,6 +235,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           network: parsed.network,
           packages: parsed.packages,
           credentials: parsed.credentials,
+          setupCommands: parsed.setupCommands,
           metadata: wrap(parsed.metadata),
           updatedAt: timestamp,
         });
@@ -285,6 +288,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         parsed.network !== undefined ||
         parsed.packages !== undefined ||
         parsed.credentials !== undefined ||
+        parsed.setupCommands !== undefined ||
         parsed.metadata !== undefined;
 
       return db.transaction(async (tx) => {
@@ -312,6 +316,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
                 network: agentConfigVersions.network,
                 packages: agentConfigVersions.packages,
                 credentials: agentConfigVersions.credentials,
+                setupCommands: agentConfigVersions.setupCommands,
                 metadata: agentConfigVersions.metadata,
               })
               .from(agentConfigVersions)
@@ -335,6 +340,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               network: parsed.network ?? previous.network,
               packages: parsed.packages ?? previous.packages,
               credentials: parsed.credentials ?? previous.credentials,
+              setupCommands: parsed.setupCommands ?? previous.setupCommands,
               metadata: parsed.metadata === undefined ? previous.metadata : wrap(parsed.metadata),
               updatedAt: now(),
             };

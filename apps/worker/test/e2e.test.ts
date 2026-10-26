@@ -121,6 +121,7 @@ if (!url || !anthropicKey || !e2bKey) {
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
     });
     const sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,

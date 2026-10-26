@@ -39,13 +39,15 @@ export TOKEN=<your FUNKY_AUTH_TOKEN>
 export H="Authorization: Bearer $TOKEN"
 export J="content-type: application/json"
 
-# 1. an agent config: the model, the system prompt, and its sandbox's network, packages and keys
+# 1. an agent config: the model, the system prompt, and its sandbox's network, packages, keys
+#    and setup commands
 AID=$(curl -s localhost:3000/v1/agent-configs -H "$H" -H "$J" -d '{
   "inference": { "provider": "anthropic", "model": "claude-sonnet-5", "maxTokens": 2048 },
   "systemPrompt": "You are an autonomous agent in a fresh Linux sandbox.",
   "network": { "type": "unrestricted" },
   "packages": {},
-  "credentials": []
+  "credentials": [],
+  "setupCommands": []
 }' | jq -r .id)
 
 # 2. a session: one pinned agent config version + a durable entry log

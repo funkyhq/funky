@@ -46,6 +46,7 @@ async function seedConfigs(
       network: { type: "unrestricted" },
       packages: {},
       credentials: [],
+      setupCommands: [],
     })
   ).json();
   return { agentConfigId: agent.id };

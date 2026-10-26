@@ -21,7 +21,10 @@ const RECIPE = {
   network: { type: "unrestricted" },
   packages: {},
   credentials: [],
+  setupCommands: [],
 };
+
+const MONID_KEY = "monid keys add --key monid_funky_injected --label funky";
 
 const STRIPE = {
   type: "injected",
@@ -103,6 +106,7 @@ describe("POST /v1/agent-configs", () => {
       network: RECIPE.network,
       packages: RECIPE.packages,
       credentials: RECIPE.credentials,
+      setupCommands: RECIPE.setupCommands,
     });
     expect(res.status).toBe(201);
     expect((await res.json()).namespace).toBe("default");
@@ -132,21 +136,24 @@ describe("POST /v1/agent-configs", () => {
       network: { type: "allowlist", domains: ["pypi.org", "api.stripe.com", "api.github.com"] },
       packages: { pip: ["pandas==2.2.0"] },
       credentials: [STRIPE, GITHUB],
+      setupCommands: [MONID_KEY],
     });
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({
       network: { type: "allowlist", domains: ["pypi.org", "api.stripe.com", "api.github.com"] },
       packages: { pip: ["pandas==2.2.0"] },
       credentials: [STRIPE, GITHUB],
+      setupCommands: [MONID_KEY],
     });
   });
 
-  it("rejects a create without network, packages or credentials, 400", async () => {
-    const { network, packages, credentials, ...bare } = RECIPE;
+  it("rejects a create without network, packages, credentials or setup commands, 400", async () => {
+    const { network, packages, credentials, setupCommands, ...bare } = RECIPE;
     for (const body of [
-      { ...bare, packages, credentials },
-      { ...bare, network, credentials },
-      { ...bare, network, packages },
+      { ...bare, packages, credentials, setupCommands },
+      { ...bare, network, credentials, setupCommands },
+      { ...bare, network, packages, setupCommands },
+      { ...bare, network, packages, credentials },
     ]) {
       const res = await post(app, "/v1/agent-configs", body);
       expect(res.status).toBe(400);
@@ -155,7 +162,11 @@ describe("POST /v1/agent-configs", () => {
   });
 
   it("rejects a malformed environment, 400", async () => {
-    for (const extra of [{ network: { type: "vpn" } }, { packages: ["numpy"] }]) {
+    for (const extra of [
+      { network: { type: "vpn" } },
+      { packages: ["numpy"] },
+      { setupCommands: MONID_KEY },
+    ]) {
       const res = await post(app, "/v1/agent-configs", { ...RECIPE, ...extra });
       expect(res.status).toBe(400);
       expect((await res.json()).error.type).toBe("invalid_request_error");
@@ -339,6 +350,19 @@ describe("POST /v1/agent-configs/:id", () => {
     expect(await carried.json()).toMatchObject({ credentials: [GITHUB], version: 3 });
   });
 
+  it("replaces setup commands on update, and carries them forward when an update omits them", async () => {
+    const created = await (
+      await post(app, "/v1/agent-configs", { ...RECIPE, setupCommands: [MONID_KEY] })
+    ).json();
+    const replaced = await post(app, `/v1/agent-configs/${created.id}`, {
+      setupCommands: ["echo ready"],
+    });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ setupCommands: ["echo ready"], version: 2 });
+    const carried = await post(app, `/v1/agent-configs/${created.id}`, { systemPrompt: "next" });
+    expect(await carried.json()).toMatchObject({ setupCommands: ["echo ready"], version: 3 });
+  });
+
   it("accepts an empty update as a no-op", async () => {
     const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
     const res = await post(app, `/v1/agent-configs/${created.id}`, {});
@@ -354,6 +378,7 @@ describe("POST /v1/agent-configs/:id", () => {
       { network: { type: "vpn" } },
       { packages: ["numpy"] },
       { credentials: [{ ...GITHUB, type: "unsafe" }] },
+      { setupCommands: [""] },
     ]) {
       const res = await post(app, `/v1/agent-configs/${created.id}`, body);
       expect(res.status).toBe(400);
