@@ -72,6 +72,7 @@ const deps: DriverDeps = {
       timeoutMs: cfg.sandboxTimeoutMs,
       network: config.network,
       packages: config.packages,
+      setupCommands: config.setupCommands,
       credentials: await resolveCredentials(secrets, session.namespace, config.credentials),
     }));
     return createSandboxTools(sandbox);

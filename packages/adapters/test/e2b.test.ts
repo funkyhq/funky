@@ -132,7 +132,7 @@ describe("createE2bProvider", () => {
     const provider = createE2bProvider();
 
     await provider.create({ packages: {} });
-    await provider.create({ packages: { pip: [] } });
+    await provider.create({ packages: { pip: [] }, setupCommands: [] });
     for (const call of mocks.create.mock.calls) {
       expect(call).toHaveLength(1); // opts only — no template name
       expect(call[0]).not.toHaveProperty("envs");
@@ -173,11 +173,44 @@ describe("createE2bProvider", () => {
       { fake: "builds" },
       mocks.create.mock.calls[0]?.[0],
       [
-        "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'graphviz'",
-        "pip install 'it'\\''s>=1'",
+        expect.objectContaining({
+          command: "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'graphviz'",
+          user: "root",
+        }),
+        expect.objectContaining({ command: "pip install 'it'\\''s>=1'", user: "root" }),
       ],
     );
     expect(mocks.create).toHaveBeenCalledTimes(2);
+  });
+
+  test("create with setup commands builds a template even without packages", async () => {
+    mocks.create
+      .mockRejectedValueOnce(new mocks.SandboxError("404: tag 'default' does not exist"))
+      .mockResolvedValueOnce(fakeSandbox());
+    const provider = createE2bProvider();
+    const setup = ["monid keys add --key monid_x_y --label funky"];
+
+    await provider.create({ packages: {}, setupCommands: setup });
+    const [template, opts] = mocks.create.mock.calls[0] ?? [];
+    expect(template).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
+    expect(opts).not.toHaveProperty("envs"); // no npm, no NODE_PATH
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith({ fake: "builds" }, template, [
+      { command: setup[0], user: "user", label: "setupCommands.0" },
+    ]);
+    expect(mocks.create.mock.calls[1]?.[0]).toBe(template);
+  });
+
+  test("create names another template for the same packages with setup", async () => {
+    mocks.create.mockResolvedValue(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: { pip: ["numpy"] } });
+    await provider.create({ packages: { pip: ["numpy"] }, setupCommands: [] });
+    await provider.create({ packages: { pip: ["numpy"] }, setupCommands: ["true"] });
+    const [bare, empty, setup] = mocks.create.mock.calls.map((call) => call[0]);
+    expect(empty).toBe(bare);
+    expect(setup).not.toBe(bare);
+    expect(mocks.ensureTemplate).not.toHaveBeenCalled();
   });
 
   test("create rejects what it cannot install, and lets other failures through", async () => {

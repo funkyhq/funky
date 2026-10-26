@@ -1,8 +1,9 @@
 // Package templates on E2B, without E2B: the canonical form and the name
-// it hashes to, the quoting E2B's own installers lack, and ensureTemplate's
+// it hashes to, the quoting E2B's own installers lack, the build's steps
+// (installs as root, then setup as the sandbox's user), and ensureTemplate's
 // state machine against a scripted TemplateBuilds — above all the
 // concurrency rules the live probes forced (wait on an in-flight build,
-// never start a rival; only our own failed install is permanent). The
+// never start a rival; only our own failed step is permanent). The
 // real API is exercised by the key-gated live suite in e2b-live.test.ts.
 
 import { describe, expect, test, vi } from "vitest";
@@ -10,9 +11,10 @@ import { SandboxProvisionError } from "@funky/agent";
 import {
   assertInstallable,
   type BuildState,
+  type BuildStep,
+  buildSteps,
   canonicalPackages,
   ensureTemplate,
-  installCommands,
   shellQuote,
   type TemplateBuilds,
   templateName,
@@ -42,6 +44,25 @@ describe("canonical package sets", () => {
     );
   });
 
+  test("setup joins the name only when there is some — older templates keep theirs", () => {
+    const numpy = canonicalPackages({ pip: ["numpy"] });
+    // The name this set had before setup commands existed.
+    expect(templateName(numpy)).toBe("funky-pkgs-b2fb9f11e388088f3dae1471");
+    expect(templateName(numpy, [])).toBe(templateName(numpy));
+
+    const setup = ["monid keys add --key monid_x_y --label funky"];
+    expect(templateName(numpy, setup)).not.toBe(templateName(numpy));
+    expect(templateName(numpy, setup)).toBe(templateName(numpy, [...setup]));
+    // Setup alone is a template of its own.
+    expect(templateName([], setup)).not.toBe(templateName([]));
+    expect(templateName([], setup)).not.toBe(templateName(numpy, setup));
+  });
+
+  test("setup is not canonicalized: another order is another build", () => {
+    expect(templateName([], ["a", "b"])).not.toBe(templateName([], ["b", "a"]));
+    expect(templateName([], ["a", "a"])).not.toBe(templateName([], ["a"]));
+  });
+
   test("rejects managers without an installer", () => {
     expect(() => assertInstallable(canonicalPackages({ pip: ["numpy"] }))).not.toThrow();
     expect(() =>
@@ -54,7 +75,7 @@ describe("canonical package sets", () => {
   });
 });
 
-describe("install commands", () => {
+describe("build steps", () => {
   test("quote every spec — the shell sees each one literally", () => {
     expect(shellQuote("pandas>=2.0")).toBe("'pandas>=2.0'");
     expect(shellQuote("a b; rm -rf / | $(x) `y` <z")).toBe("'a b; rm -rf / | $(x) `y` <z'");
@@ -62,12 +83,28 @@ describe("install commands", () => {
   });
 
   test("one command per manager, in canonical order, as root's global install", () => {
-    expect(
-      installCommands(canonicalPackages({ pip: ["six<2"], npm: ["zod@4"], apt: ["git"] })),
-    ).toEqual([
-      "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'git'",
-      "npm install -g 'zod@4'",
-      "pip install 'six<2'",
+    expect(buildSteps(canonicalPackages({ pip: ["six<2"], npm: ["zod@4"], apt: ["git"] }))).toEqual(
+      [
+        {
+          command: "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'git'",
+          user: "root",
+          label: "package install",
+        },
+        { command: "npm install -g 'zod@4'", user: "root", label: "package install" },
+        { command: "pip install 'six<2'", user: "root", label: "package install" },
+      ],
+    );
+  });
+
+  test("setup runs after the installs, verbatim and in order, as the sandbox's user", () => {
+    const setup = ["monid keys add --key monid_x_y --label funky", "cat > a <<'EOF'\nb\nEOF"];
+    expect(buildSteps(canonicalPackages({ npm: ["@monid-ai/cli"] }), setup)).toEqual([
+      { command: "npm install -g '@monid-ai/cli'", user: "root", label: "package install" },
+      { command: setup[0], user: "user", label: "setupCommands.0" },
+      { command: setup[1], user: "user", label: "setupCommands.1" },
+    ]);
+    expect(buildSteps([], ["true"])).toEqual([
+      { command: "true", user: "user", label: "setupCommands.0" },
     ]);
   });
 });
@@ -110,12 +147,24 @@ const build = (buildId: string, status: BuildState["status"]): Latest => ({
 });
 
 const NAME = "funky-pkgs-test";
-const COMMANDS = ["pip install 'numpy'"];
+const STEPS: BuildStep[] = [
+  { command: "pip install 'numpy'", user: "root", label: "package install" },
+  {
+    command: "monid keys add --key monid_x_y --label funky",
+    user: "user",
+    label: "setupCommands.0",
+  },
+];
+/** A build that ended in error on step `step` (1-based, as E2B says). */
+const failedAt = (step: string): BuildState => ({
+  status: "error",
+  reason: { message: "failed to run command: exit status 1", step },
+});
 
 describe("ensureTemplate", () => {
   test("a ready build is enough — nothing started", async () => {
     const builds = scripted({ latest: [build("b1", "ready")] });
-    await ensureTemplate(builds, NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
     expect(builds.start).not.toHaveBeenCalled();
   });
 
@@ -124,7 +173,7 @@ describe("ensureTemplate", () => {
       latest: [build("theirs", "building")],
       settles: { theirs: { status: "ready" } },
     });
-    await ensureTemplate(builds, NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
     expect(builds.settle).toHaveBeenCalledWith(expect.objectContaining({ buildId: "theirs" }));
     expect(builds.start).not.toHaveBeenCalled();
   });
@@ -135,8 +184,8 @@ describe("ensureTemplate", () => {
       starts: ["ours"],
       settles: { ours: { status: "ready" } },
     });
-    await ensureTemplate(builds, NAME, COMMANDS);
-    expect(builds.start).toHaveBeenCalledWith(NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
+    expect(builds.start).toHaveBeenCalledWith(NAME, STEPS);
   });
 
   test("our own failed install is permanent", async () => {
@@ -153,9 +202,33 @@ describe("ensureTemplate", () => {
         },
       },
     });
-    const ensured = ensureTemplate(builds, NAME, COMMANDS);
+    const ensured = ensureTemplate(builds, NAME, STEPS);
     await expect(ensured).rejects.toBeInstanceOf(SandboxProvisionError);
     await expect(ensured).rejects.toThrow("package install failed: failed to run command");
+  });
+
+  test("a failed setup command is permanent, and named by its place in the config", async () => {
+    const builds = scripted({
+      latest: [undefined],
+      starts: ["ours"],
+      settles: { ours: failedAt("2") },
+    });
+    const ensured = ensureTemplate(builds, NAME, STEPS);
+    await expect(ensured).rejects.toBeInstanceOf(SandboxProvisionError);
+    await expect(ensured).rejects.toThrow(
+      "setupCommands.0 failed: failed to run command: exit status 1",
+    );
+  });
+
+  test("a failed step it can't place is still permanent, by E2B's number", async () => {
+    const builds = scripted({
+      latest: [undefined],
+      starts: ["ours"],
+      settles: { ours: failedAt("7") },
+    });
+    const ensured = ensureTemplate(builds, NAME, STEPS);
+    await expect(ensured).rejects.toBeInstanceOf(SandboxProvisionError);
+    await expect(ensured).rejects.toThrow("build step 7 failed: failed to run command");
   });
 
   test("a start that collides waits on the build that won", async () => {
@@ -164,7 +237,7 @@ describe("ensureTemplate", () => {
       starts: [new Error("500: duplicate key value violates unique constraint")],
       settles: { winner: { status: "ready" } },
     });
-    await ensureTemplate(builds, NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
     expect(builds.start).toHaveBeenCalledTimes(1);
   });
 
@@ -177,7 +250,7 @@ describe("ensureTemplate", () => {
         newer: { status: "ready" },
       },
     });
-    await ensureTemplate(builds, NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
     expect(builds.start).toHaveBeenCalledTimes(1);
   });
 
@@ -190,7 +263,7 @@ describe("ensureTemplate", () => {
         ours: { status: "ready" },
       },
     });
-    await ensureTemplate(builds, NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
     expect(builds.start).toHaveBeenCalledTimes(1);
   });
 
@@ -200,14 +273,14 @@ describe("ensureTemplate", () => {
       starts: ["ours"],
       settles: { ours: { status: "ready" } },
     });
-    await ensureTemplate(builds, NAME, COMMANDS);
+    await ensureTemplate(builds, NAME, STEPS);
     expect(builds.start).toHaveBeenCalledTimes(1);
   });
 
   test("collisions are not retried forever — the last error propagates untyped", async () => {
     const collision = new Error("400: build is not in waiting state");
     const builds = scripted({ latest: [undefined], starts: Array(10).fill(collision) });
-    const ensured = ensureTemplate(builds, NAME, COMMANDS);
+    const ensured = ensureTemplate(builds, NAME, STEPS);
     await expect(ensured).rejects.toBe(collision);
     expect(builds.start).toHaveBeenCalledTimes(5);
   });

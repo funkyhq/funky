@@ -30,7 +30,7 @@
 //   simply never committed, and the fence rejects late work.
 // - `kill` destroys the sandbox including its workspace.
 
-import type { Credential, NetworkPolicy, Packages } from "@funky/core";
+import type { Credential, NetworkPolicy, Packages, SetupCommands } from "@funky/core";
 
 /**
  * connect()'s "definitively gone" rejection: the sandbox no longer
@@ -45,8 +45,9 @@ export class SandboxNotFoundError extends Error {}
 /**
  * create()'s "never, as asked" rejection: the sandbox this request
  * describes cannot be provisioned — a package that does not install, a
- * package manager the adapter cannot serve, a request the provider
- * refuses outright — so the same request fails the same way every time.
+ * setup command that fails, a package manager the adapter cannot serve,
+ * a request the provider refuses outright — so the same request fails
+ * the same way every time.
  * resolveCredentials throws it too, before any create, for a key the
  * secret store doesn't have, or a deployment with no store. The driver
  * ends the run on it, so adapters MUST NOT throw it for a transient
@@ -80,6 +81,14 @@ export interface CreateSandboxOptions {
    *  — never hand back a sandbox missing what was asked for. Absent or
    *  empty = nothing beyond the provider's base image. */
   packages?: Packages;
+  /** Shell commands to run after the packages install, in order, as the
+   *  user later commands run as (core/environment.ts). Adapters MUST run
+   *  every one before the sandbox is handed back, or reject create() with
+   *  SandboxProvisionError when one fails or cannot be run — never hand
+   *  back a sandbox the setup didn't finish. They run without the
+   *  credentials, so an adapter may run them once and reuse the result.
+   *  Absent or empty = none. */
+  setupCommands?: SetupCommands;
   /** Keys to deliver, each with its credential (core/environment.ts),
    *  read from the secret store by resolveCredentials. Adapters MUST
    *  deliver each as its type says or reject create() with
