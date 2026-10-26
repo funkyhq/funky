@@ -66,10 +66,10 @@
   text-decoration: none;
 }
 
-/* The tail, off. There is no mark for the other side of it — a stream
+/* The tail, off. There is no mark for the other side of it — a poll
    that is keeping up has nothing to report — so this appears only when
    the log has stopped following, and its absence is the good news.
-   Dimmed even so: EventSource retries by itself, so a reconnect is
+   Dimmed even so: the next poll asks again by itself, so a failed one is
    ordinary and this reports rather than warns. */
 .live {
   display: inline-flex;

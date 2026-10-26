@@ -7,7 +7,7 @@ import { auth } from "./middleware/auth";
 import { requestId } from "./middleware/request-id";
 import { agentConfigRoutes } from "./routes/agent-configs";
 import { secretRoutes } from "./routes/secrets";
-import { sessionRoutes, type StreamPacing } from "./routes/sessions";
+import { sessionRoutes } from "./routes/sessions";
 
 export type AppDeps = {
   /** the harness Store — each route narrows it to the slice it needs */
@@ -18,8 +18,6 @@ export type AppDeps = {
   authToken: string | null;
   /** liveness of the DB, e.g. () => pool.query("SELECT 1") */
   ping: () => Promise<unknown>;
-  /** SSE tail pacing for /sessions/:id/stream */
-  stream: StreamPacing;
 };
 
 type Env = { Variables: { requestId: string } };
@@ -38,7 +36,7 @@ export function buildApp(deps: AppDeps) {
   app.use("/v1/*", auth(deps.authToken));
   app.route("/v1/agent-configs", agentConfigRoutes(deps.store));
   app.route("/v1/secrets", secretRoutes(deps.secrets));
-  app.route("/v1/sessions", sessionRoutes(deps.store, deps.stream));
+  app.route("/v1/sessions", sessionRoutes(deps.store));
 
   app.notFound((c) => errorResponse(c, 404, "not_found_error", "unknown route"));
   app.onError(errorHandler);

@@ -399,11 +399,11 @@ export function SessionDetail({ id }: { id: string }) {
         ) : (
           <>
             {/* Not the session's state — THIS CLIENT'S. The log follows a
-                stream, and this is shown only where that has come off:
-                while it is attached the transcript keeps itself current,
+                poll, and this is shown only where that has come off: while
+                the polls are answered the transcript keeps itself current,
                 and a mark saying so is a green light that is always on.
                 Held back until the log has loaded, too, since a tail not
-                opened yet is not a tail that dropped. */}
+                started yet is not a tail that dropped. */}
             {state.status === "ready" && !live ? (
               <span className="live">
                 <span className="live-dot" aria-hidden="true" />

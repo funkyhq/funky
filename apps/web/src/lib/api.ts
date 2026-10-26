@@ -520,7 +520,8 @@ export type IntakeResult =
 
 /** The log from `after` on, in seq order — the whole log when `after` is
  *  absent. A bare array rather than a page: a session's log is read in
- *  full, and the stream below is how a caller follows it. */
+ *  full, and asking again from the last seq held is how a caller follows
+ *  it (lib/useEntries.ts). */
 export function readEntries(
   id: string,
   opts: { after?: number; signal?: AbortSignal } = {},
@@ -532,23 +533,6 @@ export function readEntries(
       after: opts.after === undefined ? undefined : String(opts.after),
     },
     opts.signal,
-  );
-}
-
-/**
- * The URL an EventSource tails the log from — a path, not a fetch, because
- * following the log is the browser's job here: EventSource reconnects on
- * its own and resumes with Last-Event-ID, which this route honors over
- * `after`. Same-origin, so it carries the proxy's auth like every other
- * call; EventSource could not have set a header anyway.
- */
-export function entryStreamUrl(id: string, after?: number): string {
-  return (
-    `/v1/sessions/${encodeURIComponent(id)}/stream` +
-    search({
-      namespace: DEFAULT_NAMESPACE,
-      after: after === undefined ? undefined : String(after),
-    })
   );
 }
 

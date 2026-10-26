@@ -5,12 +5,12 @@
 // fixture that mirrors it. "stack e2e" is the P3 exit artifact: the real
 // api forked beside the real worker, seeded and observed exclusively
 // over HTTP — postgres the only rendezvous — with a SIGKILL mid-run and
-// an SSE reconnect-with-cursor across it. Assertions are invariants over
-// the log and the workspace, never transcripts: the model's words are
-// its own; what must hold is the log's shape (every call resolved
-// exactly once, terminal assistant tail), the registered sandbox
-// binding, and the file the task asked for actually existing in the
-// sandbox.
+// an entries poll resuming from its cursor across it. Assertions are
+// invariants over the log and the workspace, never transcripts: the
+// model's words are its own; what must hold is the log's shape (every
+// call resolved exactly once, terminal assistant tail), the registered
+// sandbox binding, and the file the task asked for actually existing in
+// the sandbox.
 //
 // Opt-in: set E2E_DATABASE_URL (a SCRATCH database — its public schema
 // is dropped and recreated per run), ANTHROPIC_API_KEY and E2B_API_KEY.
@@ -279,7 +279,6 @@ if (!url || !anthropicKey || !e2bKey) {
         DATABASE_URL: url,
         PORT: String(API_PORT),
         FUNKY_AUTH_TOKEN: API_TOKEN,
-        FUNKY_STREAM_POLL_MS: "100",
       },
     });
     workers.push(api);
@@ -299,59 +298,33 @@ if (!url || !anthropicKey || !e2bKey) {
     return res.json();
   }
 
-  /** Read the session's SSE stream until `until` holds over the entries
-   *  received so far. `after` resumes via Last-Event-ID, exactly as a
-   *  reconnecting EventSource would; heartbeat comments are skipped. */
-  async function readStream(
+  /** Poll the session's entries from `after` on until `until` holds over
+   *  the entries received so far — the way any client follows a log: ask
+   *  again from the last seq it holds. */
+  async function pollEntries(
     sessionId: string,
     opts: { after?: number; until: (entries: SessionEntry[]) => boolean; timeoutMs: number },
   ): Promise<SessionEntry[]> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
-    const headers: Record<string, string> = { Authorization: `Bearer ${API_TOKEN}` };
-    if (opts.after !== undefined) headers["Last-Event-ID"] = String(opts.after);
+    const deadline = Date.now() + opts.timeoutMs;
     const collected: SessionEntry[] = [];
-    try {
-      const res = await fetch(`${API_URL}/v1/sessions/${sessionId}/stream`, {
-        headers,
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) throw new Error(`stream -> ${res.status}`);
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (!opts.until(collected)) {
-        const { done, value } = await reader.read();
-        if (done) throw new Error("stream ended before the condition was met");
-        buffer += decoder.decode(value, { stream: true });
-        let cut;
-        while ((cut = buffer.indexOf("\n\n")) !== -1) {
-          const frame = buffer.slice(0, cut);
-          buffer = buffer.slice(cut + 2);
-          const data = frame
-            .split("\n")
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => line.slice(5).trim())
-            .join("");
-          if (data !== "") collected.push(JSON.parse(data) as SessionEntry);
-        }
-      }
-      return collected;
-    } catch (err) {
-      if (controller.signal.aborted) {
-        throw new Error(`timed out streaming after ${opts.timeoutMs}ms`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-      // Hanging up is the stream's only end — the abort stops the route's loop.
-      controller.abort();
+    let cursor = opts.after;
+    while (!opts.until(collected)) {
+      if (Date.now() >= deadline) throw new Error(`timed out polling after ${opts.timeoutMs}ms`);
+      const query = cursor === undefined ? "" : `?after=${cursor}`;
+      const entries = (await apiJson(
+        "GET",
+        `/v1/sessions/${sessionId}/entries${query}`,
+      )) as SessionEntry[];
+      collected.push(...entries);
+      cursor = collected[collected.length - 1]?.seq ?? cursor;
+      if (entries.length === 0) await sleep(250);
     }
+    return collected;
   }
 
   describe("stack e2e (two processes: the real api + the real worker)", () => {
     it(
-      "seeds over HTTP, streams live, survives kill -9, reconnects with the cursor",
+      "seeds over HTTP, follows the log, survives kill -9, resumes from the cursor",
       { timeout: 300_000 },
       async () => {
         const api = forkApi();
@@ -388,14 +361,14 @@ if (!url || !anthropicKey || !e2bKey) {
           const started = await apiJson("POST", `/v1/sessions/${session.id}/messages`, {
             content:
               "First run the bash command `sleep 15`. Then create a file at " +
-              "/home/user/answer.txt containing exactly: streamed",
+              "/home/user/answer.txt containing exactly: polled",
           });
           expect(started.kind).toBe("started");
 
-          // Watch the run open on the live stream: the replayed user
-          // message, then the assistant's tool call landing in real time.
+          // Watch the run open by polling: the user message already in the
+          // log, then the assistant's tool call landing while we watch.
           first = forkWorker();
-          const opening = await readStream(session.id, {
+          const opening = await pollEntries(session.id, {
             until: (entries) => entries.length >= 2,
             timeoutMs: 120_000,
           });
@@ -416,9 +389,9 @@ if (!url || !anthropicKey || !e2bKey) {
           await killWorker(first);
           resume = forkWorker();
 
-          // Reconnect exactly as an EventSource would: Last-Event-ID is
-          // the seq of the last entry seen before the disconnect.
-          const rest = await readStream(session.id, {
+          // Pick the poll up again from the seq of the last entry seen
+          // before the kill.
+          const rest = await pollEntries(session.id, {
             after: lastSeen,
             until: (entries) =>
               entries.some(
@@ -442,14 +415,14 @@ if (!url || !anthropicKey || !e2bKey) {
             "all items done",
           );
 
-          // Continuity across the reconnect: the two stream segments,
+          // Continuity across the resume: the two polled segments,
           // concatenated, are the durable log — no gap, no duplicate.
-          const streamed = [...opening, ...rest].map((entry) => entry.seq);
+          const polled = [...opening, ...rest].map((entry) => entry.seq);
           const durable = (await apiJson(
             "GET",
             `/v1/sessions/${session.id}/entries`,
           )) as SessionEntry[];
-          expect(streamed).toEqual(durable.map((entry) => entry.seq).sort((a, b) => a - b));
+          expect(polled).toEqual(durable.map((entry) => entry.seq).sort((a, b) => a - b));
 
           // The same invariants as the worker e2e, read over HTTP.
           assertEveryCallResolvedOnce(durable);
@@ -475,7 +448,7 @@ if (!url || !anthropicKey || !e2bKey) {
           if (!bound.sandboxId) throw new Error("no sandbox bound to the session");
           const sandbox = await sandboxes.connect(bound.sandboxId);
           const bytes = await sandbox.readFile("/home/user/answer.txt");
-          expect(new TextDecoder().decode(bytes).trim()).toBe("streamed");
+          expect(new TextDecoder().decode(bytes).trim()).toBe("polled");
         } finally {
           if (first) await killWorker(first).catch(() => {});
           if (resume) await killWorker(resume);
