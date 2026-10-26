@@ -83,6 +83,7 @@ async function provision(
   const sandbox = await ensureSandbox(store, provider, ref, async () => ({
     network: config.network,
     packages: config.packages,
+    setupCommands: config.setupCommands,
     credentials: await resolveCredentials(secrets, session.namespace, config.credentials),
   }));
   return { sandboxId: sandbox.sandboxId, network: config.network };
@@ -97,7 +98,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       network: { type: "none" },
       packages: { pip: ["numpy"] },
       credentials: [],
-      setupCommands: [],
+      setupCommands: ["echo v1 > ~/version"],
     });
     const newSession = (agentConfigVersion?: number) =>
       store.createSession({
@@ -111,12 +112,17 @@ describe("provisioning from the session's pinned agent config version", () => {
     const { provider, created, kill } = fakeProvider();
     const first = await provision(s1, provider);
     expect(first.network).toEqual({ type: "none" });
-    expect(created[0]).toMatchObject({ network: { type: "none" }, packages: { pip: ["numpy"] } });
+    expect(created[0]).toMatchObject({
+      network: { type: "none" },
+      packages: { pip: ["numpy"] },
+      setupCommands: ["echo v1 > ~/version"],
+    });
 
     // 2. the agent config is updated underneath it — a new version 2.
     await store.updateAgentConfig(agent, {
       network: { type: "allowlist", domains: ["example.com"] },
       packages: { npm: ["zod"] },
+      setupCommands: ["echo v2 > ~/version"],
     });
 
     // 3. session 1's sandbox dies; the next claim must replace it. The
@@ -124,7 +130,11 @@ describe("provisioning from the session's pinned agent config version", () => {
     kill(first.sandboxId);
     const replaced = await provision(s1, provider);
     expect(replaced.sandboxId).not.toBe(first.sandboxId); // really a new sandbox
-    expect(created[1]).toMatchObject({ network: { type: "none" }, packages: { pip: ["numpy"] } });
+    expect(created[1]).toMatchObject({
+      network: { type: "none" },
+      packages: { pip: ["numpy"] },
+      setupCommands: ["echo v1 > ~/version"],
+    });
     expect((await store.getSession(s1))?.agentConfigVersion).toBe(1);
 
     // 4. session 2, created after the update, pins version 2.
@@ -134,6 +144,7 @@ describe("provisioning from the session's pinned agent config version", () => {
     expect(created[2]).toMatchObject({
       network: { type: "allowlist", domains: ["example.com"] },
       packages: { npm: ["zod"] },
+      setupCommands: ["echo v2 > ~/version"],
     });
 
     // 5. a session may still ask for the old version explicitly.

@@ -1,14 +1,21 @@
-// Agent-config packages on E2B: one template per distinct package set,
-// built on first use and shared by every session that asks for the same
-// set — across namespaces, which is safe exactly because the template's
-// name hashes every input of its build (the specs, the base template,
-// the recipe version). Anything else that ever shapes a build — a
-// private index, a credential — must join the hash, or the cache must
-// become per-namespace.
+// Agent-config packages and setup commands on E2B: one template per
+// distinct package set and setup list, built on first use and shared by
+// every session that asks for the same pair — across namespaces, which
+// is safe exactly because the template's name hashes every input of its
+// build (the specs, the setup commands, the base template, the recipe
+// version). Anything else that ever shapes a build — a private index, a
+// credential — must join the hash, or the cache must become
+// per-namespace.
 //
 // The hash names the request, not the resolved versions: an unpinned
 // spec ("pandas") resolves once, at the first build, and every later
 // session gets that same build until the specs or RECIPE_VERSION change.
+// So does whatever a setup command fetches.
+//
+// Packages install as root; setup commands then run as `user`, the
+// sandbox's default user that every later command runs as, so what they
+// write lands in its home (/home/user, the build's working directory for
+// that user; probed).
 //
 // What E2B does with same-name builds (probed live, 2026-10-19) shapes
 // ensureTemplate:
@@ -24,7 +31,7 @@
 
 import { createHash } from "node:crypto";
 import { ApiClient, ConnectionConfig, Template } from "e2b";
-import type { Packages } from "@funky/core";
+import type { Packages, SetupCommands } from "@funky/core";
 import { SandboxProvisionError } from "@funky/agent";
 
 /** Bump when the recipe below changes how an image is built: every
@@ -76,22 +83,47 @@ export function assertInstallable(canonical: CanonicalPackages): void {
   }
 }
 
-/** The template a package set builds into, named by the hash of
- *  everything that shapes the build. */
-export function templateName(canonical: CanonicalPackages): string {
-  const hash = createHash("sha256")
-    .update(JSON.stringify({ recipe: RECIPE_VERSION, base: BASE_TEMPLATE, packages: canonical }))
-    .digest("hex");
+/** The template a package set and setup list build into, named by the
+ *  hash of everything that shapes the build. Setup joins the hash only
+ *  when there is some, so a package set without it keeps the name — and
+ *  the build — it had before setup commands existed. Setup is never
+ *  canonicalized: its order is the order it runs in. */
+export function templateName(canonical: CanonicalPackages, setup: SetupCommands = []): string {
+  const inputs = {
+    recipe: RECIPE_VERSION,
+    base: BASE_TEMPLATE,
+    packages: canonical,
+    ...(setup.length > 0 ? { setup } : {}),
+  };
+  const hash = createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
   return `funky-pkgs-${hash.slice(0, 24)}`;
 }
 
-/** The build's commands, in order. */
-export function installCommands(canonical: CanonicalPackages): string[] {
-  return canonical.map(([manager, specs]) => {
+/** One command of a build, the user it runs as, and what to call it when
+ *  it fails. */
+export interface BuildStep {
+  command: string;
+  user: "root" | "user";
+  label: string;
+}
+
+/** The build's steps, in order: the installs, then the setup. */
+export function buildSteps(canonical: CanonicalPackages, setup: SetupCommands = []): BuildStep[] {
+  const installs = canonical.map(([manager, specs]): BuildStep => {
     const install = INSTALLERS[manager];
     if (!install) throw new Error(`no installer for ${manager}`); // assertInstallable's job
-    return install(specs.map(shellQuote).join(" "));
+    return {
+      command: install(specs.map(shellQuote).join(" ")),
+      user: "root",
+      label: "package install",
+    };
   });
+  const setups = setup.map((command, i): BuildStep => ({
+    command,
+    user: "user",
+    label: `setupCommands.${i}`,
+  }));
+  return [...installs, ...setups];
 }
 
 /** POSIX single-quoting: everything literal, an embedded ' closed,
@@ -108,7 +140,8 @@ export interface BuildRef {
 export interface BuildState {
   status: "building" | "waiting" | "ready" | "error";
   /** Why a build ended in error. `step` is set when one of the recipe's
-   *  own commands failed; a cancelled build has none. */
+   *  own commands failed — its 1-based position among the steps
+   *  (probed) — and a cancelled build has none. */
   reason?: { message: string; step?: string };
 }
 
@@ -118,7 +151,7 @@ export interface TemplateBuilds {
   /** The template's newest build, or undefined if it was never built. */
   latest(name: string): Promise<(BuildRef & BuildState) | undefined>;
   /** Start a build. Rejects when the start collides with another. */
-  start(name: string, commands: string[]): Promise<BuildRef>;
+  start(name: string, steps: BuildStep[]): Promise<BuildRef>;
   /** Resolves once the build is ready or in error. */
   settle(build: BuildRef): Promise<BuildState>;
 }
@@ -140,7 +173,7 @@ const MAX_ROUNDS = 5;
 export async function ensureTemplate(
   builds: TemplateBuilds,
   name: string,
-  commands: string[],
+  steps: BuildStep[],
 ): Promise<void> {
   let lastError: unknown;
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -152,7 +185,7 @@ export async function ensureTemplate(
     }
     let ours: BuildRef;
     try {
-      ours = await builds.start(name, commands);
+      ours = await builds.start(name, steps);
     } catch (error) {
       lastError = error; // collided with another worker's start: wait on theirs
       continue;
@@ -160,7 +193,9 @@ export async function ensureTemplate(
     const state = await builds.settle(ours);
     if (state.status === "ready") return;
     if (state.reason?.step !== undefined) {
-      throw new SandboxProvisionError(`package install failed: ${state.reason.message}`);
+      const failed =
+        steps[Number(state.reason.step) - 1]?.label ?? `build step ${state.reason.step}`;
+      throw new SandboxProvisionError(`${failed} failed: ${state.reason.message}`);
     }
     lastError = new Error(`template build ${ours.buildId}: ${state.reason?.message ?? "error"}`);
     // Cancelled — superseded by another worker's build; wait on that one.
@@ -199,9 +234,9 @@ export function e2bTemplateBuilds(connection: { apiKey?: string }): TemplateBuil
       return newest && { templateId, buildId: newest.buildID, status: newest.status };
     },
 
-    async start(name, commands) {
+    async start(name, steps) {
       let template = Template().fromTemplate(BASE_TEMPLATE);
-      for (const command of commands) template = template.runCmd(command, { user: "root" });
+      for (const { command, user } of steps) template = template.runCmd(command, { user });
       const { templateId, buildId } = await Template.buildInBackground(template, name, connection);
       return { templateId, buildId };
     },

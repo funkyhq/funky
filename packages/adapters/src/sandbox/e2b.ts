@@ -31,6 +31,11 @@
 // template, and only its 404 — the template has no ready build yet —
 // takes the build path.
 //
+// Setup commands ride the same template: they run in its build, after
+// the installs and as the sandbox's user, so a config with setup but no
+// packages builds a template too, and every later sandbox starts with
+// the setup done.
+//
 // Credentials become network rules: on requests to a credential's
 // domains, E2B's egress proxy, outside the sandbox, sets the credential's
 // header with the key in its value (see toRules). The sandbox gets a
@@ -68,10 +73,10 @@ import type {
 } from "@funky/agent";
 import {
   assertInstallable,
+  buildSteps,
   canonicalPackages,
   e2bTemplateBuilds,
   ensureTemplate,
-  installCommands,
   NPM_GLOBAL_ROOT,
   templateName,
 } from "./e2b-packages";
@@ -121,6 +126,7 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
   async function create(opts?: CreateSandboxOptions): Promise<Sandbox> {
     const canonical = canonicalPackages(opts?.packages ?? {});
     assertInstallable(canonical);
+    const setup = opts?.setupCommands ?? [];
     const credentials = opts?.credentials ?? [];
     // Sandbox-level envs, set here because a template's envs never
     // reach runtime commands; they survive connect and pause/resume.
@@ -139,17 +145,17 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
     };
     const keys = credentials.map(({ key }) => key);
     const refused = (error: unknown) => rethrowRefusal(error, keys);
-    if (canonical.length === 0) {
+    if (canonical.length === 0 && setup.length === 0) {
       return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connection);
     }
 
-    const template = templateName(canonical);
+    const template = templateName(canonical, setup);
     try {
       return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
     } catch (error) {
       if (!isUnbuilt(error)) throw error;
     }
-    await ensureTemplate(builds, template, installCommands(canonical));
+    await ensureTemplate(builds, template, buildSteps(canonical, setup));
     return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
   }
 }
