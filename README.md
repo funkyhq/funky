@@ -136,23 +136,15 @@ and shared by every session that uses it, so packages work under any `network` p
 
 ### Setup commands
 
-`setupCommands` finish the sandbox after its packages install. For example, a CLI that reads its
-key from a file rather than an env var gets a stand-in key, and a [credential](#credentials)
-for its API swaps in the real one outside the sandbox:
+`setupCommands` run after the packages install, in the same build:
 
 ```json
-"packages": { "npm": ["@monid-ai/cli"] },
-"setupCommands": ["monid keys add --key monid_funky_injected --label funky"]
+"setupCommands": ["git config --global user.name agent", "mkdir -p ~/work"]
 ```
 
-They run in the package template's build, so only the first session on a new list waits.
-
-- Each runs in its own shell, in order, as the sandbox's user, from `/home/user`.
-- They run at the build, not per session: they see no credentials, and what they fetch is
-  frozen at the first build. The build's network isn't the session's `network` policy.
-- A command that fails ends the run as `"error"`, naming it (`setupCommands.1 failed: …`).
-  A network hiccup counts too, and the next session builds again, so give a download its own
-  retries (`curl --retry 3`).
+- Each runs in its own shell, in order, as the sandbox's user.
+- They run once per build, not per session, so they see no credentials.
+- A command that fails ends the run as `"error"`, naming it. Give downloads their own retries.
 
 ### Secrets
 
