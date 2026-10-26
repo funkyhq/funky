@@ -1167,6 +1167,7 @@ export function describeStoreConformance(
 
         expect(await store.getSession(foreign)).toBeUndefined();
         expect(await store.readEntries(foreign)).toEqual([]);
+        expect(await store.readUsage(foreign)).toEqual([]);
         expect(await store.listItems(foreign)).toEqual([]);
         expect(await store.pendingInputs(foreign)).toEqual([]);
         await expect(store.intake(foreign, user("hi"))).rejects.toThrow("unknown session");
@@ -1649,6 +1650,36 @@ export function describeStoreConformance(
         await store.intake(sessionRef, user("again")); // seq 3
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
+      });
+
+      it("reads usage off the assistant messages that carry it, in seq order", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef); // seq 0: user message
+        const usage = { input: 100, output: 20, cacheRead: 30, cacheWrite: 10, reasoning: 5 };
+        const later = { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 };
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [
+            { ...assistant("calling"), stopReason: "tool_use", usage }, // seq 1
+            {
+              role: "toolResult",
+              toolCallId: "call_1",
+              toolName: "bash",
+              content: [{ type: "text", text: "output" }],
+              isError: false,
+            }, // seq 2
+            { ...assistant("failed"), stopReason: "error", errorMessage: "boom" }, // seq 3
+            { ...assistant("done"), usage: later }, // seq 4
+          ],
+          next: { kind: "end_run", status: "completed" },
+        });
+
+        const entries = await store.readEntries(sessionRef);
+        expect(await store.readUsage(sessionRef)).toEqual([
+          { entryId: entries[1]!.id, usage },
+          { entryId: entries[4]!.id, usage: later },
+        ]);
       });
     });
   });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AgentMessage, JsonValue } from "./messages";
+import { AgentMessage, JsonValue, Usage } from "./messages";
 
 /**
  * The session log's row type — the envelope around the payloads.
@@ -70,3 +70,13 @@ export const SessionEntry = z.discriminatedUnion("type", [
   ControlEntry,
 ]);
 export type SessionEntry = z.infer<typeof SessionEntry>;
+
+// One assistant message's token usage, addressed by its entry: the
+// projection a billing read takes instead of the whole log. Only
+// messages that carry usage have one — an errored or aborted message
+// carries none.
+export const EntryUsage = z.object({
+  entryId: z.string(),
+  usage: Usage,
+});
+export type EntryUsage = z.infer<typeof EntryUsage>;
