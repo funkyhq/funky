@@ -134,6 +134,26 @@ and shared by every session that uses it, so packages work under any `network` p
 - Unpinned specs resolve once, at the first build. Pin versions to control them.
 - A spec that fails to install ends the run as `"error"`, with the reason in the tool result.
 
+### Setup commands
+
+`setupCommands` finish the sandbox after its packages install. For example, a CLI that reads its
+key from a file rather than an env var gets a stand-in key, and a [credential](#credentials)
+for its API swaps in the real one outside the sandbox:
+
+```json
+"packages": { "npm": ["@monid-ai/cli"] },
+"setupCommands": ["monid keys add --key monid_funky_injected --label funky"]
+```
+
+They run in the package template's build, so only the first session on a new list waits.
+
+- Each runs in its own shell, in order, as the sandbox's user, from `/home/user`.
+- They run at the build, not per session: they see no credentials, and what they fetch is
+  frozen at the first build. The build's network isn't the session's `network` policy.
+- A command that fails ends the run as `"error"`, naming it (`setupCommands.1 failed: …`).
+  A network hiccup counts too, and the next session builds again, so give a download its own
+  retries (`curl --retry 3`).
+
 ### Secrets
 
 Most setups skip this. It's only for API keys your agent's tools use, such as a Stripe or
@@ -181,7 +201,9 @@ HTTPS requests to `api.stripe.com`. Inside, `STRIPE_API_KEY` holds a placeholder
 
 - Keys are read when a sandbox is created, so a changed key misses sessions that already have one.
 - Headers only: a key that belongs in a URL, a body or a signature (AWS) can't be injected.
-- Tools that check a key's format, like the Stripe CLI, need a stand-in in that format instead.
+- Tools that check a key's format, like the Stripe CLI, need a stand-in in that format instead,
+  and tools that keep their key in a file need it registered by a
+  [setup command](#setup-commands).
 - A host on `domains` that echoes request headers hands the key back to the agent.
 
 ## Why Funky?

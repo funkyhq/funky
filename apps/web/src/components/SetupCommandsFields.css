@@ -1,0 +1,9 @@
+/* apps/web/src/components/SetupCommandsFields.css
+   The setup commands field (components/SetupCommandsFields.tsx). Its cards
+   are the credentials field's (components/CredentialsFields.css); only the
+   command itself differs: shell, so set in the monospace face. */
+
+.setup textarea.control {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}

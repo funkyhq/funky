@@ -2,10 +2,9 @@
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
 // The form is the request's REQUIRED shape: provider, model, system prompt,
-// network, packages, credentials — no packages typed is {}, install nothing,
-// and no credential added is [], no keys, both said explicitly. Setup
-// commands, also required, have no field yet, so the body says [], none.
-// The body's optional parts — maxTokens, temperature, metadata —
+// network, packages, credentials, setup commands — no packages typed is {},
+// install nothing, and no credential or command added is [], none, each
+// said explicitly. The body's optional parts — maxTokens, temperature, metadata —
 // are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
@@ -33,10 +32,12 @@ import { type CredentialFields, toCredentials } from "../lib/credentials";
 import { type NetworkFields, toPolicy } from "../lib/network";
 import { compact } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
+import { toSetupCommands } from "../lib/setup-commands";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { CredentialsFields } from "../components/CredentialsFields";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { PackagesFields } from "../components/PackagesFields";
+import { SetupCommandsFields } from "../components/SetupCommandsFields";
 import { Modal } from "../components/Modal";
 import { ProviderKeys } from "../components/ProviderKeys";
 
@@ -115,20 +116,24 @@ function Form({
   });
   const [packages, setPackages] = useState<Packages>({});
   const [credentialFields, setCredentialFields] = useState<CredentialFields[]>([]);
+  const [setupCards, setSetupCards] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   // The api's refusal — a 400, or an api that isn't there. What the fields
   // themselves refuse is a request that isn't one yet (below).
   const [failure, setFailure] = useState<string>();
 
-  // Absent while the allowlist has no domain on it, or a credential has an
-  // empty field — the two states of this form that aren't a request yet
-  // (see toPolicy, toCredentials).
+  // Absent while the allowlist has no domain on it, a credential has an
+  // empty field, or a setup command is blank — the states of this form that
+  // aren't a request yet (see toPolicy, toCredentials, toSetupCommands).
   const network = toPolicy(networkFields);
   const credentials = toCredentials(credentialFields);
+  const setupCommands = toSetupCommands(setupCards);
+  const incomplete =
+    network === undefined || credentials === undefined || setupCommands === undefined;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || network === undefined || credentials === undefined) return;
+    if (busy || incomplete) return;
 
     const input: CreateAgentConfigInput = {
       inference: toInference(fields),
@@ -136,7 +141,7 @@ function Form({
       network,
       packages: compact(packages),
       credentials,
-      setupCommands: [],
+      setupCommands,
     };
 
     setFailure(undefined);
@@ -158,8 +163,8 @@ function Form({
       title="Create agent config"
       description={
         <>
-          The model, system prompt, network, packages and credentials a session runs with. Lands as
-          version 1 in the <code>{DEFAULT_NAMESPACE}</code> namespace.
+          The model, system prompt, network, packages, credentials and setup commands a session runs
+          with. Lands as version 1 in the <code>{DEFAULT_NAMESPACE}</code> namespace.
         </>
       }
       dismissible={!busy}
@@ -176,6 +181,7 @@ function Form({
           <NetworkFieldset fields={networkFields} onChange={setNetworkFields} autoFocus={false} />
           <PackagesFields packages={packages} onChange={setPackages} />
           <CredentialsFields credentials={credentialFields} onChange={setCredentialFields} />
+          <SetupCommandsFields commands={setupCards} onChange={setSetupCards} />
         </div>
 
         <footer className="modal-foot">
@@ -187,11 +193,7 @@ function Form({
           <button className="btn" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button
-            className="btn btn-primary"
-            type="submit"
-            disabled={busy || network === undefined || credentials === undefined}
-          >
+          <button className="btn btn-primary" type="submit" disabled={busy || incomplete}>
             {busy ? "Creating…" : "Create"}
           </button>
         </footer>
