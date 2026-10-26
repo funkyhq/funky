@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Credentials } from "../src/environment";
+import { Credentials, SetupCommands } from "../src/environment";
 
 const STRIPE = {
   type: "injected",
@@ -112,5 +112,40 @@ describe("credentials", () => {
     expect(
       problems([STRIPE, { ...STRIPE, env: "STRIPE_ACCOUNT", header: "Stripe-Account" }]),
     ).toEqual([]);
+  });
+});
+
+/** The issues a setup list draws, each as "path: message". */
+const setupProblems = (commands: unknown) => {
+  const result = SetupCommands.safeParse(commands);
+  return result.success
+    ? []
+    : result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
+};
+
+describe("setup commands", () => {
+  it("takes shell commands, in order, and none at all", () => {
+    const commands = [
+      "monid keys add --key monid_funky_injected --label funky",
+      "monid keys add --key monid_funky_injected --label funky",
+      "mkdir -p ~/skills/monid && cat > ~/skills/monid/SKILL.md <<'EOF'\n# Monid\nEOF",
+    ];
+    expect(SetupCommands.parse(commands)).toEqual(commands);
+    expect(setupProblems([])).toEqual([]);
+  });
+
+  it("refuses a blank command", () => {
+    for (const command of ["", " ", "\n\t"]) {
+      expect(setupProblems(["true", command])).toEqual(["1: must not be blank"]);
+    }
+  });
+
+  it("refuses NUL, which no shell command can carry", () => {
+    expect(setupProblems(["echo a\0b"])).toEqual(["0: must not contain NUL"]);
+  });
+
+  it("takes a list of strings, not one string", () => {
+    expect(setupProblems("monid keys add")).toHaveLength(1);
+    expect(setupProblems([["monid", "keys", "add"]])).toHaveLength(1);
   });
 });
