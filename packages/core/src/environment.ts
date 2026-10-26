@@ -29,6 +29,24 @@ export type NetworkPolicy = z.infer<typeof NetworkPolicy>;
 export const Packages = z.record(z.string(), z.array(z.string()));
 export type Packages = z.infer<typeof Packages>;
 
+// Shell commands that finish preparing the environment after its
+// packages are installed: writing a tool's config, registering a
+// stand-in key, putting files on disk. They run in order, each in its
+// own shell (a `cd` doesn't carry over), as the user the agent's
+// commands run as, and the first to fail fails the environment. They
+// are part of the environment, not the session: an adapter may run them
+// once and reuse the result for every session that asks for the same
+// environment, so they see no credentials, and what they fetch is
+// frozen at that first run. Line breaks are allowed (a heredoc writes a
+// file); NUL is not, as no shell command can carry it.
+export const SetupCommands = z.array(
+  z
+    .string()
+    .regex(/\S/, "must not be blank")
+    .refine((command) => !command.includes("\0"), "must not contain NUL"),
+);
+export type SetupCommands = z.infer<typeof SetupCommands>;
+
 /** A key's name in the namespace's secret store (/v1/secrets). */
 export const SecretName = z
   .string()
