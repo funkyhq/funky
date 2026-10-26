@@ -234,7 +234,7 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
       }
       after = resumed.data;
     }
-    return streamSSE(c, async (stream) => {
+    const res = streamSSE(c, async (stream) => {
       let cursor = after;
       let quietSince = Date.now();
       while (!stream.aborted) {
@@ -256,6 +256,13 @@ export function sessionRoutes(store: SessionStore, pacing: StreamPacing) {
         await stream.sleep(pacing.pollMs);
       }
     });
+    // streamSSE sets Transfer-Encoding and Connection, connection-specific
+    // headers HTTP/2 forbids: over h2c (listen.ts) the first fails the
+    // response and the second is dropped with a warning. Node sets both
+    // itself on an HTTP/1.1 response of unknown length.
+    res.headers.delete("Transfer-Encoding");
+    res.headers.delete("Connection");
+    return res;
   });
 
   /** The one ownership check — a scoped get: the store answers undefined
