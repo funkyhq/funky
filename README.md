@@ -139,7 +139,7 @@ and shared by every session that uses it, so packages work under any `network` p
 `setupCommands` run after the packages install, in the same build:
 
 ```json
-"setupCommands": ["git config --global user.name agent", "mkdir -p ~/work"]
+"setupCommands": ["echo 'hello world' > ~/hello.txt"]
 ```
 
 - Each runs in its own shell, in order, as the sandbox's user.
