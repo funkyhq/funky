@@ -9,7 +9,7 @@
 // migrator itself records in __drizzle_migrations — in the PR that adds it;
 // from then on it is frozen.
 import { PGlite } from "@electric-sql/pglite";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrations } from "./migrate-store";
 
 const SHIPPED: Record<string, string> = {
@@ -48,36 +48,34 @@ describe("shipped migrations", () => {
 });
 
 describe("20261026180444_add_agent_config_setup_commands", () => {
-  /** A database at the init, holding one agent config version saved then. */
-  const atInit = async () => {
-    const db = new PGlite();
-    const [init] = migrations;
-    for (const chunk of init!.sql) await db.exec(chunk);
+  // One database for both tests, booted once: PGlite takes seconds to
+  // start on a CI runner. It is at the init, holding one agent config
+  // version saved then, when the migration runs.
+  let db: PGlite;
+  beforeAll(async () => {
+    db = new PGlite();
+    const at = (name: string) => migrations.find((m) => m.name === name)!;
+    for (const chunk of at("20260820000000_init").sql) await db.exec(chunk);
     await db.exec(`
       INSERT INTO agent_configs VALUES ('default', 'a1', 1, now(), NULL);
       INSERT INTO agent_config_versions
         (namespace, agent_config_id, version, inference, system_prompt, network, packages, credentials, updated_at)
         VALUES ('default', 'a1', 1, '{}', 's', '{}', '{}', '[]', now());
     `);
-    return db;
-  };
-  const apply = async (db: PGlite) => {
-    const migration = migrations.find(
-      (m) => m.name === "20261026180444_add_agent_config_setup_commands",
-    );
-    for (const chunk of migration!.sql) await db.exec(chunk);
-  };
+    for (const chunk of at("20261026180444_add_agent_config_setup_commands").sql) {
+      await db.exec(chunk);
+    }
+  }, 60_000);
+  afterAll(async () => {
+    await db?.close();
+  });
 
   it("gives versions saved before it no setup commands", async () => {
-    const db = await atInit();
-    await apply(db);
     const { rows } = await db.query("SELECT setup_commands FROM agent_config_versions");
     expect(rows).toEqual([{ setup_commands: [] }]);
   });
 
   it("leaves no default behind: a write without setup commands is refused", async () => {
-    const db = await atInit();
-    await apply(db);
     await expect(
       db.exec(`
         INSERT INTO agent_config_versions
