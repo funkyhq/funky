@@ -14,7 +14,7 @@
   "dependencies": {
     "@funky/agent": "workspace:*",
     "@funky/core": "workspace:*",
-    "ai": "^7.0.0",
+    "ai": "^7.0.154",
     "drizzle-orm": "^1.0.0-beta.2",
     "e2b": "^2.33.0",
     "pg": "^8.22.0",

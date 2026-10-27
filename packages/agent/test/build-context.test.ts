@@ -7,7 +7,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@funky/core";
-import { buildContext } from "../src/engine/build-context";
+import { buildContext, truncatedResult } from "../src/engine/build-context";
 
 const user = (text: string): UserMessage => ({
   role: "user",
@@ -145,6 +145,27 @@ describe("buildContext", () => {
     const asking = assistant("tool_use", [toolCall("c1"), toolCall("c2")]);
     const context = buildContext([entry(0, asking), entry(1, toolResult("c1"))]);
     expect(context).toEqual([asking, toolResult("c1"), interrupted("c2")]);
+  });
+
+  it("synthesizes truncated results for calls from a max_tokens message", () => {
+    const cut = assistant("max_tokens", [toolCall("c1")]);
+    const next = user("?");
+    const context = buildContext([entry(0, user("go")), entry(1, cut), entry(2, next)]);
+    expect(context).toEqual([user("go"), cut, truncatedResult(toolCall("c1")), next]);
+    expect(truncatedResult(toolCall("c1")).isError).toBe(true);
+  });
+
+  it("goes back to interrupted results after a max_tokens message", () => {
+    const cut = assistant("max_tokens", [toolCall("c1")]);
+    const asking = assistant("tool_use", [toolCall("c2")]);
+    const context = buildContext([entry(0, cut), entry(1, user("again")), entry(2, asking)]);
+    expect(context).toEqual([
+      cut,
+      truncatedResult(toolCall("c1")),
+      user("again"),
+      asking,
+      interrupted("c2"),
+    ]);
   });
 
   it("closes dangling calls before the next message, not at the end", () => {

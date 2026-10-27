@@ -1,5 +1,11 @@
-import type { AgentMessage, SessionEntry, ToolCall, UserMessage } from "@funky/core";
-import { interruptedResult } from "./execute-tools";
+import type {
+  AgentMessage,
+  SessionEntry,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage,
+} from "@funky/core";
+import { errorResult, interruptedResult } from "./execute-tools";
 
 /**
  * Fold the session log into the model context. Pure: the driver reads the
@@ -26,9 +32,12 @@ import { interruptedResult } from "./execute-tools";
  *   are dropped here
  * - tool calls and results must pair up, repaired in both directions: a
  *   kept assistant message whose calls have no committed results gets
- *   synthesized interrupted results (the cancel-before-execute path), and
- *   a result whose parent assistant message was dropped is dropped with it
- *   — dangling calls and orphaned results are equally malformed
+ *   synthesized interrupted results (the cancel-before-execute path) —
+ *   or, when the message stopped on max_tokens, results that name the
+ *   output limit, so the model can tell a call it cut short from one
+ *   that something else stopped — and a result whose parent assistant
+ *   message was dropped is dropped with it — dangling calls and orphaned
+ *   results are equally malformed
  *
  * steeringMessages append at the tail: they are steering by construction
  * (the driver drains only at inference prep; follow-ups become ordinary
@@ -44,9 +53,11 @@ export function buildContext(
   const context: AgentMessage[] = [];
   // Calls from the most recent kept assistant message still awaiting results.
   let openCalls = new Map<string, ToolCall>();
+  // How those calls settle if their results never come.
+  let unanswered = interruptedResult;
 
   const closeOpenCalls = () => {
-    for (const call of openCalls.values()) context.push(interruptedResult(call));
+    for (const call of openCalls.values()) context.push(unanswered(call));
     openCalls = new Map();
   };
 
@@ -64,6 +75,7 @@ export function buildContext(
       case "assistant": {
         if (message.stopReason === "aborted" || message.stopReason === "error") break;
         context.push(message);
+        unanswered = message.stopReason === "max_tokens" ? truncatedResult : interruptedResult;
         for (const part of message.content) {
           if (part.type === "toolCall") openCalls.set(part.id, part);
         }
@@ -80,4 +92,17 @@ export function buildContext(
 
   context.push(...steeringMessages);
   return context;
+}
+
+/** A call from a max_tokens-stopped message: never executed (nextAction
+ *  ends the run), and its arguments may be cut short. Saying so lets the
+ *  model recover — retry with less output per call — instead of
+ *  guessing at an outside interruption. */
+export function truncatedResult(call: ToolCall): ToolResultMessage {
+  return errorResult(
+    call,
+    "Tool call was not executed: the response hit the output token limit (max_tokens) " +
+      "before this call was complete, so its arguments may be cut off. " +
+      "Retry with less output per call, e.g. split large content across several calls.",
+  );
 }
