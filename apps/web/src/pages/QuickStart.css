@@ -1,16 +1,65 @@
 /* apps/web/src/pages/QuickStart.css
-   The walk: the three dots and the line between them, and the card holding
-   whichever step is open. The fields inside the card are
-   components/Field.css — this page writes the same two configs the dialogs
-   do, so it draws them the same way. Every colour resolves to a token in
-   index.css. */
+   The walk: the three dots and the line between them, the card holding
+   whichever step is open, and beside it that step's call as curl. The
+   fields inside the card are components/Field.css — this page writes the
+   same config the dialogs do, so it draws it the same way. Every colour
+   resolves to a token in index.css. */
 
 .qs {
   align-self: start;
   width: 100%;
-  max-width: 620px;
+  max-width: 1040px;
   min-width: 0;
   animation: qs-in 420ms var(--ease);
+}
+
+/* Layout -----------------------------------------------------------------
+   The steps across both columns; the call beside the card, starting level
+   with it rather than with the dots. Below 900px of pane the two columns
+   would squeeze the form, so the call drops under it. */
+
+.qs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 580px) minmax(0, 1fr);
+  grid-template-areas:
+    "steps steps"
+    "card call";
+  column-gap: 20px;
+  align-items: start;
+}
+
+/* The full row, card and call together, so the dots spread under the
+   whole walk rather than over one column of it. */
+.qs-steps {
+  grid-area: steps;
+}
+
+.qs-card {
+  grid-area: card;
+}
+
+.qs-call {
+  grid-area: call;
+}
+
+@container pane (max-width: 900px) {
+  .qs {
+    max-width: 620px;
+  }
+
+  .qs-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "steps"
+      "card"
+      "call";
+    row-gap: 16px;
+  }
+
+  /* The gap does the spacing once the call is a row of its own. */
+  .qs-layout .qs-steps {
+    margin-bottom: 2px;
+  }
 }
 
 /* Head ------------------------------------------------------------------- */
@@ -181,30 +230,29 @@ button.qs-dot {
   overflow-wrap: anywhere;
 }
 
-/* The plan ---------------------------------------------------------------
-   The two configs as the last step sees them: not rows that exist, but the
-   requests about to be sent. */
+/* The review -----------------------------------------------------------
+   Step 2: the config the session will run, one sunken card per field —
+   the key as a caption, the value as it will be sent. */
 
-.qs-plan {
+.qs-review {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
-.qs-plan li {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 12px;
-  padding: 11px 13px;
+.qs-review > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--bg-sunken);
 }
 
-.qs-plan-key {
+.qs-review dt {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.09em;
@@ -212,32 +260,94 @@ button.qs-dot {
   color: var(--text-3);
 }
 
-/* Right of the key, on its row: what the config will be once it exists —
-   or, after a submit that stopped part way, the id it already has. */
-.qs-plan-state {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  font-size: 11.5px;
-  color: var(--text-3);
-  text-align: right;
-}
-
-.qs-plan-value {
-  grid-column: 1 / -1;
+.qs-review dd {
+  margin: 0;
   font-size: 13.5px;
+  line-height: 1.5;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
-/* One line of it: a system prompt can be a page long, and this is a
-   summary of what will be sent, not the field it was typed into. */
-.qs-plan-note {
-  grid-column: 1 / -1;
-  overflow: hidden;
-  font-size: 12px;
+/* What the api takes as written — a model id's label, package specs. */
+.qs-review .qs-review-mono {
+  font: 500 12.5px/1.55 var(--mono);
+}
+
+.qs-review .qs-review-none {
   color: var(--text-3);
+}
+
+/* The prompt as typed, line breaks kept — but a page-long prompt is the
+   step 1 field's to show, so this stops at five lines. */
+.qs-review-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+}
+
+/* The call ---------------------------------------------------------------
+   One step's request as curl. Sticky, so a long step — packages under the
+   network under the prompt — keeps its call in view while it is filled.
+   A line too long for the column wraps rather than scrolls — a copy takes
+   the script as written either way. */
+
+.qs-call {
+  position: sticky;
+  /* Under the topbar (57px), with the pane's breathing room. */
+  top: 77px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.qs-call-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 15px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+
+.qs-call-title {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.qs-call-route {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: 500 11.5px var(--mono);
+  color: var(--text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.qs-call-copy {
+  padding: 4px 11px;
+  font-size: 12px;
+}
+
+.qs-call-code {
+  margin: 0;
+  padding: 14px 15px 16px;
+  font: 400 11.5px/1.65 var(--mono);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.qs-call-comment {
+  color: var(--text-3);
 }
 
 /* Foot ------------------------------------------------------------------- */
