@@ -51,6 +51,7 @@ import {
   type JsonValue,
   ListAgentConfigsRequest,
   ListSessionsRequest,
+  ListTasksRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -195,7 +196,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
    * newest (and drizzle's and() drops it).
    */
   async function olderThanCursor(
-    table: typeof agentConfigs | typeof sessions,
+    table: typeof agentConfigs | typeof sessions | typeof tasks,
     scope: SQL,
     after: string | undefined,
   ): Promise<SQL | undefined> {
@@ -665,6 +666,19 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .from(tasks)
         .where(and(eq(tasks.id, taskId), eq(tasks.namespace, namespace)));
       return row === undefined ? undefined : toTask(row);
+    },
+
+    async listTasks(req) {
+      const parsed = ListTasksRequest.parse(req);
+      const scope = eq(tasks.namespace, parsed.namespace);
+      const page = await olderThanCursor(tasks, scope, parsed.after);
+      const rows = await db
+        .select()
+        .from(tasks)
+        .where(and(scope, page))
+        .orderBy(desc(tasks.createdAt), desc(tasks.id))
+        .limit(parsed.limit);
+      return rows.map(toTask);
     },
 
     async readEntries(ref, after) {

@@ -17,6 +17,8 @@ const SHIPPED: Record<string, string> = {
   "20261026180444_add_agent_config_setup_commands":
     "7f315fbe305d053e1f37c3086918fac4ca8f31b707f4e781b415e00109739f3b",
   "20261027225858_add_tasks": "506fc1f62cceec5019bf73e7f7ec7621e67ba327a30a67be53a10466515555be",
+  "20261027233451_add_tasks_list_scan":
+    "b9f5180374a4329f6f87d756afc469793aeebb7433699b765713d61e2ceba81c",
 };
 
 const hashes = new Map(migrations.map((m) => [m.name, m.hash]));

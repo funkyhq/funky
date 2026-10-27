@@ -200,6 +200,14 @@ export const TaskRef = z.object({
 });
 export type TaskRef = z.infer<typeof TaskRef>;
 
+/** Lists one namespace's tasks with keyset pagination, newest first. */
+export const ListTasksRequest = z.object({
+  namespace: z.string().min(1),
+  limit: z.number().int().min(1),
+  after: z.string().min(1).optional(),
+});
+export type ListTasksRequest = z.infer<typeof ListTasksRequest>;
+
 export const CreateTaskRequest = z.object({
   namespace: z.string().min(1),
   agentConfigId: z.string(),

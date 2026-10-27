@@ -153,6 +153,48 @@ describe("POST /v1/tasks", () => {
   });
 });
 
+describe("GET /v1/tasks", () => {
+  it("returns the namespace's tasks newest first, whole rows, hasMore false", async () => {
+    const older = await seedTask("list-whole", "first");
+    const newer = await seedTask("list-whole", "second");
+    const res = await get(app, "/v1/tasks?namespace=list-whole");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: [newer, older], hasMore: false, lastId: older.id });
+  });
+
+  it("pages with limit and after: the walk equals the whole list", async () => {
+    for (let i = 0; i < 3; i++) await seedTask("list-walk", `task ${i}`);
+    const whole = (await (await get(app, "/v1/tasks?namespace=list-walk")).json()).data;
+
+    const first = await (await get(app, "/v1/tasks?namespace=list-walk&limit=2")).json();
+    expect(first.hasMore).toBe(true);
+    const second = await (
+      await get(app, `/v1/tasks?namespace=list-walk&limit=2&after=${first.lastId}`)
+    ).json();
+    expect(second.hasMore).toBe(false);
+    expect([...first.data, ...second.data]).toEqual(whole);
+  });
+
+  it("answers an empty namespace with an empty page and no cursor", async () => {
+    const res = await get(app, "/v1/tasks?namespace=list-empty");
+    expect(await res.json()).toEqual({ data: [], hasMore: false });
+  });
+
+  it("400s a limit outside the bounds and a cursor the store can't resolve", async () => {
+    const foreign = await seedTask("list-foreign");
+    for (const query of [
+      "limit=0",
+      "limit=101",
+      "after=nope",
+      `namespace=list-other&after=${foreign.id}`,
+    ]) {
+      const res = await get(app, `/v1/tasks?${query}`);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.type).toBe("invalid_request_error");
+    }
+  });
+});
+
 describe("GET /v1/tasks/:id", () => {
   it("returns the task as created", async () => {
     const task = await seedTask("tenant-a");

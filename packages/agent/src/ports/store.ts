@@ -11,6 +11,7 @@ import type {
   IntakeResult,
   ListAgentConfigsRequest,
   ListSessionsRequest,
+  ListTasksRequest,
   PendingInput,
   Session,
   SessionEntry,
@@ -148,6 +149,8 @@ export interface Store {
    *  behind: no session, no entry, no item. */
   createTask(req: CreateTaskRequest): Promise<TaskRef>;
   getTask(ref: TaskRef): Promise<Task | undefined>;
+  /** One namespace's tasks, newest first — see ListTasksRequest. */
+  listTasks(req: ListTasksRequest): Promise<Task[]>;
 
   // --- reads — table-shaped; reads need no atomicity ---
 

@@ -167,6 +167,10 @@ export const tasks = pgTable(
       columns: [t.namespace, t.sessionId],
       foreignColumns: [sessions.namespace, sessions.id],
     }),
+    // The list scan's index (pg.ts listTasks), for the reason sessions
+    // carry theirs: the PK's random id cannot order by time, and tasks
+    // grow without bound.
+    index("tasks_list_scan").on(t.namespace, t.createdAt, t.id),
   ],
 );
 
