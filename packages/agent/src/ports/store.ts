@@ -5,6 +5,7 @@ import type {
   AgentMessage,
   CreateAgentConfigRequest,
   CreateSessionRequest,
+  CreateTaskRequest,
   EntryUsage,
   InputId,
   IntakeResult,
@@ -14,6 +15,8 @@ import type {
   Session,
   SessionEntry,
   SessionRef,
+  Task,
+  TaskRef,
   UpdateAgentConfigRequest,
   UserMessage,
   WorkItem,
@@ -30,8 +33,11 @@ import type { RunEndStatus } from "../engine/next-action";
  * Two run write paths, two callers: the api calls intake, the driver calls
  * commitStep. They are the only run-status mutations in the system, and
  * work items are born only inside their transactions — which is why there
- * is no createWorkItem. archiveSession is the separate terminal lifecycle
- * transition and may land only while neither path has left an open item.
+ * is no createWorkItem. (createTask starts a run too, but on a session it
+ * creates in the same transaction: it is createSession and intake's
+ * started branch committed together, not a third path.) archiveSession is
+ * the separate terminal lifecycle transition and may land only while
+ * neither path has left an open item.
  *
  * The load-bearing invariant: at most one open (non-done) item per
  * session. "Busy" IS an open item's existence, and a run's end is the
@@ -130,6 +136,18 @@ export interface Store {
   /** One namespace's active sessions, newest first. includeArchived opts
    *  terminal rows back in — see ListSessionsRequest. */
   listSessions(req: ListSessionsRequest): Promise<Session[]>;
+
+  // --- tasks ---
+
+  /** Create a task and start it: one transaction creates the session
+   *  (pinning the agent version exactly as createSession does), logs
+   *  the content as its first message, and readies the inference item
+   *  that starts its run. Rejects what createSession rejects — an
+   *  unknown or foreign config or version as "unknown", an archived
+   *  config with ArchivedError — and a rejected task leaves nothing
+   *  behind: no session, no entry, no item. */
+  createTask(req: CreateTaskRequest): Promise<TaskRef>;
+  getTask(ref: TaskRef): Promise<Task | undefined>;
 
   // --- reads — table-shaped; reads need no atomicity ---
 

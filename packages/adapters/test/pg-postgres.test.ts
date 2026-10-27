@@ -32,7 +32,7 @@ if (!url) {
 
   describeStoreConformance("pg over network postgres", async () => {
     await pool.query(
-      "TRUNCATE agent_configs, sessions, session_entries, work_items, pending_inputs RESTART IDENTITY CASCADE",
+      "TRUNCATE agent_configs, sessions, tasks, session_entries, work_items, pending_inputs RESTART IDENTITY CASCADE",
     );
     let offsetMs = 0;
     const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb, {

@@ -881,6 +881,201 @@ export function describeStoreConformance(
       });
     });
 
+    describe("tasks", () => {
+      /** A task on a fresh config in `namespace`, asking for `text`. */
+      async function newTask(text = "do the thing", namespace = DEFAULT_NAMESPACE) {
+        const agentConfigRef = await newAgent({ namespace });
+        const taskRef = await store.createTask({
+          namespace,
+          agentConfigId: agentConfigRef.agentConfigId,
+          content: user(text).content,
+        });
+        return { agentConfigRef, taskRef };
+      }
+
+      /** Every session in the default namespace, archived ones too. */
+      const allSessions = () =>
+        store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 100, includeArchived: true });
+
+      it("round-trips a task, absence as absence", async () => {
+        const { agentConfigRef, taskRef } = await newTask("summarize the report");
+        expect(taskRef.namespace).toBe(DEFAULT_NAMESPACE);
+
+        const task = await store.getTask(taskRef);
+        expect(task).toEqual({
+          namespace: DEFAULT_NAMESPACE,
+          taskId: taskRef.taskId,
+          agentConfigId: agentConfigRef.agentConfigId,
+          agentConfigVersion: 1,
+          content: user("summarize the report").content,
+          sessionId: expect.any(String),
+          createdAt: expect.any(String),
+        });
+        expect(task).not.toHaveProperty("metadata");
+      });
+
+      it("keeps JSON null metadata on the task, and none on its session", async () => {
+        const agentConfigRef = await newAgent();
+        const taskRef = await store.createTask({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          content: user("go").content,
+          metadata: null,
+        });
+        const task = await store.getTask(taskRef);
+        expect(task).toHaveProperty("metadata", null);
+        const session = await store.getSession({
+          namespace: DEFAULT_NAMESPACE,
+          sessionId: task!.sessionId,
+        });
+        expect(session).not.toHaveProperty("metadata");
+      });
+
+      it("starts its session's first run — the content logged, one ready inference item", async () => {
+        const { agentConfigRef, taskRef } = await newTask("summarize the report");
+        const task = await store.getTask(taskRef);
+        const sessionRef = { namespace: DEFAULT_NAMESPACE, sessionId: task!.sessionId };
+
+        expect(await store.getSession(sessionRef)).toMatchObject({
+          agentConfigId: agentConfigRef.agentConfigId,
+          agentConfigVersion: task!.agentConfigVersion,
+        });
+        const entries = await store.readEntries(sessionRef);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          type: "message",
+          seq: 0,
+          message: user("summarize the report"),
+        });
+        const items = await store.listItems(sessionRef);
+        expect(items).toHaveLength(1);
+        expect(items[0]).toMatchObject({ type: "inference", status: "ready", attempt: 0 });
+        // The worker finds it like any other run's first item.
+        const claim = await store.claimItem({ leaseMs: 60_000 });
+        expect(claim?.item.sessionId).toBe(task!.sessionId);
+      });
+
+      it("starts an ordinary session — a follow-up queues behind the task's run", async () => {
+        const { taskRef } = await newTask();
+        const task = await store.getTask(taskRef);
+        const sessionRef = { namespace: DEFAULT_NAMESPACE, sessionId: task!.sessionId };
+
+        expect((await store.intake(sessionRef, user("and also this"))).kind).toBe("queued");
+        expect(await store.pendingInputs(sessionRef)).toHaveLength(1);
+      });
+
+      it("pins the latest agent version at creation — a later edit doesn't reach it", async () => {
+        const agentConfigRef = await newAgent({ systemPrompt: "v1" });
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2" });
+        const taskRef = await store.createTask({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          content: user("go").content,
+        });
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v3" });
+
+        const task = await store.getTask(taskRef);
+        expect(task?.agentConfigVersion).toBe(2);
+        const session = await store.getSession({
+          namespace: DEFAULT_NAMESPACE,
+          sessionId: task!.sessionId,
+        });
+        expect(session?.agentConfigVersion).toBe(2);
+      });
+
+      it("pins an explicitly requested agent version", async () => {
+        const agentConfigRef = await newAgent({ systemPrompt: "v1" });
+        await store.updateAgentConfig(agentConfigRef, { systemPrompt: "v2" });
+        const taskRef = await store.createTask({
+          namespace: DEFAULT_NAMESPACE,
+          agentConfigId: agentConfigRef.agentConfigId,
+          agentConfigVersion: 1,
+          content: user("go").content,
+        });
+
+        const task = await store.getTask(taskRef);
+        expect(task?.agentConfigVersion).toBe(1);
+        const session = await store.getSession({
+          namespace: DEFAULT_NAMESPACE,
+          sessionId: task!.sessionId,
+        });
+        expect(session?.agentConfigVersion).toBe(1);
+      });
+
+      it("refuses an archived config and leaves nothing behind", async () => {
+        const agentConfigRef = await newAgent();
+        await store.archiveAgentConfig(agentConfigRef);
+
+        await expect(
+          store.createTask({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            content: user("go").content,
+          }),
+        ).rejects.toBeInstanceOf(ArchivedError);
+        expect(await allSessions()).toEqual([]);
+      });
+
+      it("rejects an unknown or foreign config or version as unknown, leaving nothing behind", async () => {
+        const agentA = await newAgent({ namespace: "tenant-a" });
+        const attempts = [
+          { namespace: DEFAULT_NAMESPACE, agentConfigId: "nope" },
+          { namespace: "tenant-b", agentConfigId: agentA.agentConfigId },
+          { namespace: "tenant-a", agentConfigId: agentA.agentConfigId, agentConfigVersion: 2 },
+        ];
+        for (const attempt of attempts) {
+          await expect(
+            store.createTask({ ...attempt, content: user("go").content }),
+          ).rejects.toThrow("unknown agent config");
+        }
+        for (const namespace of [DEFAULT_NAMESPACE, "tenant-a", "tenant-b"]) {
+          expect(
+            await store.listSessions({ namespace, limit: 100, includeArchived: true }),
+          ).toEqual([]);
+        }
+      });
+
+      it("rejects an invalid create request at the boundary", async () => {
+        const agentConfigRef = await newAgent();
+        await expect(
+          store.createTask({
+            agentConfigId: agentConfigRef.agentConfigId,
+            content: user("go").content,
+            // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
+          } as any),
+        ).rejects.toThrow();
+        await expect(
+          store.createTask({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+            content: "go" as any,
+          }),
+        ).rejects.toThrow();
+        expect(await allSessions()).toEqual([]);
+      });
+
+      it("stamps the namespace on the task and its session", async () => {
+        const { taskRef } = await newTask("go", "tenant-a");
+        expect(taskRef.namespace).toBe("tenant-a");
+        const task = await store.getTask(taskRef);
+        expect(task?.namespace).toBe("tenant-a");
+        expect(
+          (await store.getSession({ namespace: "tenant-a", sessionId: task!.sessionId }))
+            ?.namespace,
+        ).toBe("tenant-a");
+      });
+
+      it("returns undefined for an unknown or foreign task", async () => {
+        const { taskRef } = await newTask("go", "tenant-a");
+        expect(
+          await store.getTask({ namespace: DEFAULT_NAMESPACE, taskId: "nope" }),
+        ).toBeUndefined();
+        expect(await store.getTask({ ...taskRef, namespace: "tenant-b" })).toBeUndefined();
+        expect(await store.getTask(taskRef)).toBeDefined();
+      });
+    });
+
     describe("archiving sessions", () => {
       it("marks an idle session archived without changing its durable inputs", async () => {
         const ref = await newSession({ metadata: { purpose: "audit" } });

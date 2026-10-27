@@ -137,6 +137,39 @@ export const sessions = pgTable(
   ],
 );
 
+export const tasks = pgTable(
+  "tasks",
+  {
+    namespace: text("namespace").notNull(),
+    id: text("id").notNull(),
+    agentConfigId: text("agent_config_id").notNull(),
+    // Pinned when the task is created; its session pins the same version.
+    agentConfigVersion: integer("agent_config_version").notNull(),
+    // The first message's content, kept on the task as well as logged.
+    content: jsonb("content").$type<UserMessage["content"]>().notNull(),
+    metadata: jsonb("metadata").$type<WrappedJson>(),
+    // The session the task started. Never null today: a task starts in
+    // the transaction that creates it.
+    sessionId: text("session_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.namespace, t.id] }),
+    foreignKey({
+      columns: [t.namespace, t.agentConfigId, t.agentConfigVersion],
+      foreignColumns: [
+        agentConfigVersions.namespace,
+        agentConfigVersions.agentConfigId,
+        agentConfigVersions.version,
+      ],
+    }),
+    foreignKey({
+      columns: [t.namespace, t.sessionId],
+      foreignColumns: [sessions.namespace, sessions.id],
+    }),
+  ],
+);
+
 export const sessionEntries = pgTable(
   "session_entries",
   {

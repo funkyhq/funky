@@ -8,10 +8,11 @@
 //   per-session log stays gapless and monotonic.
 // - Lock order is item → session everywhere an item is involved; no path
 //   takes session → item, so no cycle exists.
-// - createSession holds a FOR SHARE lock on the agent config row until it
-//   commits, while archiveAgentConfig's UPDATE takes the row exclusively:
-//   the operations serialize, so no session is born against an archived
-//   config. Shared mode lets concurrent creates proceed together.
+// - createSession and createTask hold a FOR SHARE lock on the agent
+//   config row until they commit, while archiveAgentConfig's UPDATE takes
+//   the row exclusively: the operations serialize, so no session or task
+//   is born against an archived config. Shared mode lets concurrent
+//   creates proceed together.
 // - archiveSession, intake, and the liveness-changing half of commitStep
 //   serialize on the session row. Archive sees either idle or one open item,
 //   never a stale gap between checking and stamping the terminal state.
@@ -44,6 +45,7 @@ import {
   AgentMessage,
   CreateAgentConfigRequest,
   CreateSessionRequest,
+  CreateTaskRequest,
   EntryUsage,
   IntakeResult,
   type JsonValue,
@@ -53,6 +55,8 @@ import {
   Session,
   SessionEntry,
   SessionRef,
+  Task,
+  TaskRef,
   UpdateAgentConfigRequest,
   UserMessage,
   WorkItem,
@@ -72,6 +76,7 @@ import {
   pendingInputs,
   sessionEntries,
   sessions,
+  tasks,
   workItems,
   type WrappedJson,
 } from "./schema";
@@ -149,6 +154,18 @@ const toSession = (row: typeof sessions.$inferSelect): Session =>
     ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
+const toTask = (row: typeof tasks.$inferSelect): Task =>
+  Task.parse({
+    taskId: row.id,
+    namespace: row.namespace,
+    agentConfigId: row.agentConfigId,
+    agentConfigVersion: row.agentConfigVersion,
+    content: row.content,
+    ...unwrapped(row.metadata),
+    sessionId: row.sessionId,
+    createdAt: iso(row.createdAt),
+  });
+
 export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
   const now = opts.now ?? (() => new Date());
 
@@ -213,6 +230,76 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       });
       await tx.insert(sessionEntries).values({ namespace, sessionId, seq, entry });
     }
+  }
+
+  /**
+   * createSession's write, inside the caller's transaction: check the
+   * config, pin its version, insert the row. Returns the new id and the
+   * pinned version.
+   *
+   * Ids, namespaces, and version snapshots are immutable and configs are
+   * never deleted, so existence and ownership cannot go stale; the FK
+   * constraint remains as the backstop. The check is namespace-scoped: a
+   * session and its config always share one namespace, and a foreign
+   * config is "unknown" — indistinguishable from nonexistent, so nothing
+   * leaks.
+   *
+   * Archive is the one terminal fact that CAN change under this check, so
+   * the config row is read FOR SHARE and the lock held through the
+   * caller's commit. A concurrent archive waits behind this transaction or
+   * is already committed and read here. "New sessions cannot reference an
+   * archived config" is therefore structural, not a check/write window.
+   */
+  async function insertSession(
+    tx: Tx,
+    req: CreateSessionRequest,
+  ): Promise<{ sessionId: string; agentConfigVersion: number }> {
+    const { namespace, agentConfigId } = req;
+    const requestedAgentVersion =
+      req.agentConfigVersion === undefined
+        ? currentAgentVersion
+        : and(
+            eq(agentConfigVersions.namespace, agentConfigs.namespace),
+            eq(agentConfigVersions.agentConfigId, agentConfigs.id),
+            eq(agentConfigVersions.version, req.agentConfigVersion),
+          );
+    const [agent] = await tx
+      .select({ version: agentConfigVersions.version, archivedAt: agentConfigs.archivedAt })
+      .from(agentConfigs)
+      .innerJoin(agentConfigVersions, requestedAgentVersion)
+      .where(and(eq(agentConfigs.id, agentConfigId), eq(agentConfigs.namespace, namespace)))
+      .for("share", { of: agentConfigs });
+    if (!agent) throw new Error(`unknown agent config: ${agentConfigId}`);
+    if (agent.archivedAt !== null) {
+      throw ArchivedError.forAgentConfig({ namespace, agentConfigId });
+    }
+    const sessionId = randomUUID();
+    await tx.insert(sessions).values({
+      id: sessionId,
+      agentConfigId,
+      agentConfigVersion: agent.version,
+      namespace,
+      metadata: wrap(req.metadata),
+      createdAt: now(),
+    });
+    return { sessionId, agentConfigVersion: agent.version };
+  }
+
+  /** Start a run on an idle session: log the message, ready the run's
+   *  first inference item. Caller must hold the session lock and have
+   *  seen no open item. Returns the item's id. */
+  async function startRun(tx: Tx, ref: SessionRef, message: UserMessage): Promise<string> {
+    await appendEntries(tx, ref, [{ type: "message", message }]);
+    const itemId = randomUUID();
+    await tx.insert(workItems).values({
+      id: itemId,
+      namespace: ref.namespace,
+      sessionId: ref.sessionId,
+      type: "inference",
+      status: "ready",
+      createdAt: now(),
+    });
+    return itemId;
   }
 
   return {
@@ -425,51 +512,8 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
 
     async createSession(req) {
       const parsed = CreateSessionRequest.parse(req);
-      const { namespace } = parsed;
-      const requestedAgentVersion =
-        parsed.agentConfigVersion === undefined
-          ? currentAgentVersion
-          : and(
-              eq(agentConfigVersions.namespace, agentConfigs.namespace),
-              eq(agentConfigVersions.agentConfigId, agentConfigs.id),
-              eq(agentConfigVersions.version, parsed.agentConfigVersion),
-            );
-      const id = randomUUID();
-      // Ids, namespaces, and version snapshots are immutable and configs are
-      // never deleted, so existence and ownership cannot go stale; the FK
-      // constraint remains as the backstop. The check is namespace-scoped:
-      // a session and its config always share one namespace, and a foreign
-      // config is "unknown" — indistinguishable from nonexistent, so nothing
-      // leaks.
-      //
-      // Archive is the one terminal fact that CAN change under this check,
-      // so the config row is read FOR SHARE and the lock held through the
-      // insert. A concurrent archive waits behind this transaction or is
-      // already committed and read here. "New sessions cannot reference an
-      // archived config" is therefore structural, not a check/write window.
-      await db.transaction(async (tx) => {
-        const [agent] = await tx
-          .select({ version: agentConfigVersions.version, archivedAt: agentConfigs.archivedAt })
-          .from(agentConfigs)
-          .innerJoin(agentConfigVersions, requestedAgentVersion)
-          .where(
-            and(eq(agentConfigs.id, parsed.agentConfigId), eq(agentConfigs.namespace, namespace)),
-          )
-          .for("share", { of: agentConfigs });
-        if (!agent) throw new Error(`unknown agent config: ${parsed.agentConfigId}`);
-        if (agent.archivedAt !== null) {
-          throw ArchivedError.forAgentConfig({ namespace, agentConfigId: parsed.agentConfigId });
-        }
-        await tx.insert(sessions).values({
-          id,
-          agentConfigId: parsed.agentConfigId,
-          agentConfigVersion: agent.version,
-          namespace,
-          metadata: wrap(parsed.metadata),
-          createdAt: now(),
-        });
-      });
-      return SessionRef.parse({ namespace, sessionId: id });
+      const { sessionId } = await db.transaction((tx) => insertSession(tx, parsed));
+      return SessionRef.parse({ namespace: parsed.namespace, sessionId });
     },
 
     async getSession(ref) {
@@ -583,6 +627,44 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .orderBy(desc(sessions.createdAt), desc(sessions.id))
         .limit(parsed.limit);
       return rows.map(toSession);
+    },
+
+    async createTask(req) {
+      const parsed = CreateTaskRequest.parse(req);
+      const { namespace } = parsed;
+      const taskId = randomUUID();
+      await db.transaction(async (tx) => {
+        // The session takes the task's pin and none of its metadata: the
+        // metadata describes the task. The row is new and uncommitted, so
+        // this transaction holds the session lock startRun asks for, and
+        // a new session has no open item.
+        const { sessionId, agentConfigVersion } = await insertSession(tx, {
+          namespace,
+          agentConfigId: parsed.agentConfigId,
+          agentConfigVersion: parsed.agentConfigVersion,
+        });
+        await startRun(tx, { namespace, sessionId }, { role: "user", content: parsed.content });
+        await tx.insert(tasks).values({
+          namespace,
+          id: taskId,
+          agentConfigId: parsed.agentConfigId,
+          agentConfigVersion,
+          content: parsed.content,
+          metadata: wrap(parsed.metadata),
+          sessionId,
+          createdAt: now(),
+        });
+      });
+      return TaskRef.parse({ namespace, taskId });
+    },
+
+    async getTask(ref) {
+      const { namespace, taskId } = TaskRef.parse(ref);
+      const [row] = await db
+        .select()
+        .from(tasks)
+        .where(and(eq(tasks.id, taskId), eq(tasks.namespace, namespace)));
+      return row === undefined ? undefined : toTask(row);
     },
 
     async readEntries(ref, after) {
@@ -821,16 +903,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             .values({ namespace, sessionId, id: inputId, message: msg, arrivedAt: now() });
           return IntakeResult.parse({ kind: "queued", inputId });
         }
-        await appendEntries(tx, { namespace, sessionId }, [{ type: "message", message: msg }]);
-        const itemId = randomUUID();
-        await tx.insert(workItems).values({
-          id: itemId,
-          namespace,
-          sessionId,
-          type: "inference",
-          status: "ready",
-          createdAt: now(),
-        });
+        const itemId = await startRun(tx, { namespace, sessionId }, msg);
         return IntakeResult.parse({ kind: "started", itemId });
       });
     },
