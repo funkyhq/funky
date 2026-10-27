@@ -38,7 +38,7 @@ export function SetupCommandsFields({
               name={`setup-command-${i}`}
               value={command}
               onChange={(next) => onChange(commands.map((c, j) => (j === i ? next : c)))}
-              placeholder="monid keys add --key monid_funky_injected --label funky"
+              placeholder="echo 'hello world' > ~/hello.txt"
               // Tall enough for the command it holds and a line to spare (a
               // long line wraps), so a heredoc shows whole; past eight, it
               // scrolls.
