@@ -7,7 +7,10 @@
 // batch work: a second's lag on a log is nothing, and a poll holds nothing
 // open between answers. The cursor is the last seq the poll has taken
 // in, so a poll that fails is simply asked again — nothing is lost, and
-// nothing arrives twice.
+// nothing arrives twice. Up to a point: after MAX_FAILURES in a row the
+// tail stops, since an api that has refused that often (a rotated token,
+// an api that is down) is not going to answer the next one either, and a
+// tab left open should not ask it once a second forever.
 import { useEffect, useState } from "react";
 import { type SessionEntry, readEntries } from "./api";
 
@@ -23,6 +26,10 @@ const messageOf = (err: unknown) => (err instanceof Error ? err.message : String
 /** How long after one poll answers the next one goes out. */
 const POLL_MS = 1000;
 
+/** How many polls in a row may fail before the tail stops asking. About
+ *  ten seconds of trying: a redeploy's gap, not an outage. */
+const MAX_FAILURES = 10;
+
 /**
  * The log, appended to as it grows.
  *
@@ -32,10 +39,10 @@ const POLL_MS = 1000;
  */
 export function useEntries(id: string, tail: boolean) {
   const [state, setState] = useState<LogState>({ status: "loading" });
-  // Whether the last poll failed. The only part of being live that this
-  // can't work out for itself — a failure is news from outside — so it is
-  // the only part that is state.
-  const [dropped, setDropped] = useState(false);
+  // How many polls in a row have failed. The only part of being live that
+  // this can't work out for itself — a failure is news from outside — so it
+  // is the only part that is state.
+  const [failures, setFailures] = useState(0);
   // Where the tail starts, and the fact that the read has finished: an
   // object, because `after` is legitimately absent for an empty log and
   // that must not read as "not loaded yet".
@@ -49,7 +56,10 @@ export function useEntries(id: string, tail: boolean) {
    * every poll with nothing, and a tail that works perfectly would report
    * itself broken for as long as the session had nothing to say.
    */
-  const live = tail && start !== undefined && !dropped;
+  const live = tail && start !== undefined && failures === 0;
+
+  /** Whether the tail has given up: it asks again only through `refresh`. */
+  const stopped = failures >= MAX_FAILURES;
 
   /**
    * Read the log again, keeping the rows already on screen until the answer
@@ -63,10 +73,13 @@ export function useEntries(id: string, tail: boolean) {
    * entries could land just after the only thing watching for them went
    * away, and the page would sit on a log one short of final with no way to
    * ask again.
+   *
+   * And what restarts a tail that has stopped: the same read, so whatever
+   * landed while nothing was asking arrives with it.
    */
   function refresh() {
     setStart(undefined);
-    setDropped(false);
+    setFailures(0);
     setReloads((n) => n + 1);
   }
 
@@ -106,6 +119,7 @@ export function useEntries(id: string, tail: boolean) {
     let cursor = start.after;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let polling = false;
+    let failed = 0;
 
     // One at a time: the next poll is scheduled when this one answers,
     // never on a fixed beat, so a slow api is never asked twice at once.
@@ -116,7 +130,8 @@ export function useEntries(id: string, tail: boolean) {
         const entries = await readEntries(id, { after: cursor, signal: abort.signal });
         const sorted = [...entries].sort((a, b) => a.seq - b.seq);
         cursor = sorted[sorted.length - 1]?.seq ?? cursor;
-        setDropped(false);
+        failed = 0;
+        setFailures(0);
         if (sorted.length > 0) {
           setState((prev) => {
             if (prev.status !== "ready") return prev;
@@ -132,7 +147,7 @@ export function useEntries(id: string, tail: boolean) {
         // The log on screen is still what the reads returned, so a failure
         // dims the live mark rather than throwing the transcript away, and
         // the next poll asks again from the same cursor.
-        if (!abort.signal.aborted) setDropped(true);
+        if (!abort.signal.aborted) setFailures(++failed);
       } finally {
         polling = false;
       }
@@ -142,7 +157,7 @@ export function useEntries(id: string, tail: boolean) {
     // A hidden tab is not polled: nobody is reading the log, so the next
     // poll waits for the tab to come back and goes out the moment it does.
     function schedule() {
-      if (abort.signal.aborted || document.hidden) return;
+      if (abort.signal.aborted || document.hidden || failed >= MAX_FAILURES) return;
       timer = setTimeout(poll, POLL_MS);
     }
 
@@ -150,7 +165,7 @@ export function useEntries(id: string, tail: boolean) {
       if (document.hidden) {
         clearTimeout(timer);
         timer = undefined;
-      } else if (timer === undefined && !polling) {
+      } else if (timer === undefined && !polling && failed < MAX_FAILURES) {
         void poll();
       }
     }
@@ -164,5 +179,5 @@ export function useEntries(id: string, tail: boolean) {
     };
   }, [id, tail, start]);
 
-  return { state, live, reload, refresh };
+  return { state, live, stopped, reload, refresh };
 }

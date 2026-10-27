@@ -387,6 +387,15 @@ describe("inspection", () => {
     expect(afterTail).toHaveLength(0);
   });
 
+  it("404s a foreign session's entries", async () => {
+    const sessionId = await seedSession(app, "tenant-a");
+    await post(app, `/v1/sessions/${sessionId}/messages?namespace=tenant-a`, { content: "hi" });
+    const res = await get(app, `/v1/sessions/${sessionId}/entries?namespace=tenant-b`);
+    expect(res.status).toBe(404);
+    const own = await get(app, `/v1/sessions/${sessionId}/entries?namespace=tenant-a`);
+    expect(await own.json()).toHaveLength(1);
+  });
+
   it("items shows the started run's ready inference item", async () => {
     const sessionId = await seedSession(app);
     const started = await (

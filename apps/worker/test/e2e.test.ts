@@ -285,9 +285,15 @@ if (!url || !anthropicKey || !e2bKey) {
     return api;
   }
 
-  async function apiJson(method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
+  async function apiJson(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<any> {
     const res = await fetch(`${API_URL}${path}`, {
       method,
+      signal,
       headers: {
         Authorization: `Bearer ${API_TOKEN}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -308,13 +314,22 @@ if (!url || !anthropicKey || !e2bKey) {
     const deadline = Date.now() + opts.timeoutMs;
     const collected: SessionEntry[] = [];
     let cursor = opts.after;
+    const timedOut = () => new Error(`timed out polling after ${opts.timeoutMs}ms`);
     while (!opts.until(collected)) {
-      if (Date.now() >= deadline) throw new Error(`timed out polling after ${opts.timeoutMs}ms`);
+      if (Date.now() >= deadline) throw timedOut();
       const query = cursor === undefined ? "" : `?after=${cursor}`;
+      // The deadline bounds each request too, not just the gap between
+      // them: an api that never answers one would otherwise hold the loop
+      // until vitest's own timeout, which says nothing about what it was
+      // waiting for.
       const entries = (await apiJson(
         "GET",
         `/v1/sessions/${sessionId}/entries${query}`,
-      )) as SessionEntry[];
+        undefined,
+        AbortSignal.timeout(Math.max(deadline - Date.now(), 1)),
+      ).catch((err: unknown) => {
+        throw err instanceof Error && err.name === "TimeoutError" ? timedOut() : err;
+      })) as SessionEntry[];
       collected.push(...entries);
       cursor = collected[collected.length - 1]?.seq ?? cursor;
       if (entries.length === 0) await sleep(250);

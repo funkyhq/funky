@@ -70,7 +70,8 @@
    that is keeping up has nothing to report — so this appears only when
    the log has stopped following, and its absence is the good news.
    Dimmed even so: the next poll asks again by itself, so a failed one is
-   ordinary and this reports rather than warns. */
+   ordinary and this reports rather than warns — until the polls give up,
+   when it carries the Reconnect button instead. */
 .live {
   display: inline-flex;
   align-items: center;

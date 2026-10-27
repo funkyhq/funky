@@ -59,9 +59,11 @@ curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
   -d '{"content":"Run uname -a in your sandbox and tell me what you see."}'
 
 # 4. follow the log: each poll asks only for what is newer than the last seq seen
+#    (an answer that isn't a list of entries is an error: print it and stop)
 Q=""
 while sleep 1; do
   NEW=$(curl -s -H "$H" "localhost:3000/v1/sessions/$SID/entries$Q")
+  echo "$NEW" | jq -e 'type == "array"' >/dev/null || { echo "$NEW" >&2; break; }
   echo "$NEW" | jq -c '.[]'
   LAST=$(echo "$NEW" | jq '.[-1].seq // empty')
   [ -n "$LAST" ] && Q="?after=$LAST"
