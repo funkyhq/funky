@@ -8,6 +8,7 @@ import { requestId } from "./middleware/request-id";
 import { agentConfigRoutes } from "./routes/agent-configs";
 import { secretRoutes } from "./routes/secrets";
 import { sessionRoutes } from "./routes/sessions";
+import { taskRoutes } from "./routes/tasks";
 
 export type AppDeps = {
   /** the harness Store — each route narrows it to the slice it needs */
@@ -37,6 +38,7 @@ export function buildApp(deps: AppDeps) {
   app.route("/v1/agent-configs", agentConfigRoutes(deps.store));
   app.route("/v1/secrets", secretRoutes(deps.secrets));
   app.route("/v1/sessions", sessionRoutes(deps.store));
+  app.route("/v1/tasks", taskRoutes(deps.store));
 
   app.notFound((c) => errorResponse(c, 404, "not_found_error", "unknown route"));
   app.onError(errorHandler);

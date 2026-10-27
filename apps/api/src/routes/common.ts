@@ -5,7 +5,7 @@
 // gets back, written once so no two resources page differently.
 import { zValidator } from "@hono/zod-validator";
 import { type ZodType, z } from "zod";
-import { DEFAULT_NAMESPACE } from "@funky/core";
+import { DEFAULT_NAMESPACE, UserMessage } from "@funky/core";
 import { errorResponse } from "../http";
 
 export const validate = <T extends ZodType>(target: "json" | "query" | "param", schema: T) =>
@@ -39,6 +39,18 @@ export const NamespaceQuery = z.object({
     .default(DEFAULT_NAMESPACE),
 });
 export type NamespaceQuery = z.infer<typeof NamespaceQuery>;
+
+/**
+ * A user message's content as the wire takes it. Core keeps content an
+ * array ("plain strings are normalized at intake", core/messages.ts), and
+ * the api is that intake: a plain string is accepted here and becomes one
+ * text block, so a route always receives the array.
+ */
+export const WireContent = z
+  .union([z.string(), UserMessage.shape.content])
+  .transform((content) =>
+    typeof content === "string" ? [{ type: "text" as const, text: content }] : content,
+  );
 
 /** Page size when the caller doesn't ask, and the ceiling when it does. */
 const DEFAULT_LIMIT = 20;
