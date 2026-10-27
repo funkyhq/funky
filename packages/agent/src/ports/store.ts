@@ -5,6 +5,7 @@ import type {
   AgentMessage,
   CreateAgentConfigRequest,
   CreateSessionRequest,
+  EntryUsage,
   InputId,
   IntakeResult,
   ListAgentConfigsRequest,
@@ -134,6 +135,10 @@ export interface Store {
 
   /** `after` is a seq cursor: only entries with seq > after. */
   readEntries(ref: SessionRef, after?: number): Promise<SessionEntry[]>;
+  /** The usage of every assistant message that carries one, in seq
+   *  order — readEntries narrowed in the store, so the tool results
+   *  that make up most of a log never leave it. */
+  readUsage(ref: SessionRef): Promise<EntryUsage[]>;
   /** Inspection and audit; workers get items through claimItem. */
   listItems(ref: SessionRef): Promise<WorkItem[]>;
   pendingInputs(ref: SessionRef): Promise<PendingInput[]>;

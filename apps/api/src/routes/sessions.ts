@@ -34,6 +34,7 @@ export type SessionStore = Pick<
   | "intake"
   | "requestCancel"
   | "readEntries"
+  | "readUsage"
   | "listItems"
 >;
 
@@ -196,6 +197,17 @@ export function sessionRoutes(store: SessionStore) {
     const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
     return c.json(await store.readEntries(session, c.req.valid("query").after));
+  });
+
+  // Token usage per assistant message, in log order: the entry's id and
+  // the provider-reported counts its message carries (`input` includes
+  // the cache reads and writes). A message without usage is left out —
+  // the engine attaches none to an errored or aborted one — so the list
+  // is the usage a session is charged for.
+  r.get("/:id/usage", validate("query", NamespaceQuery), async (c) => {
+    const session = await owned(c, c.req.valid("query").namespace);
+    if (!session) return notFound(c);
+    return c.json(await store.readUsage(session));
   });
 
   r.get("/:id/items", validate("query", NamespaceQuery), async (c) => {

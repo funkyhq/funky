@@ -6,17 +6,20 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgStore, type StoreDb } from "@funky/adapters";
+import type { Store } from "@funky/agent";
+import { type AssistantMessage, DEFAULT_NAMESPACE } from "@funky/core";
 import { migrateStore } from "../../../packages/adapters/test/migrate-store";
 import { buildApp } from "../src/app";
 import { get, post } from "./helpers";
 
 let client: PGlite;
+let store: Store;
 let app: ReturnType<typeof buildApp>;
 
 beforeAll(async () => {
   client = new PGlite();
   await migrateStore(client);
-  const store = createPgStore(drizzle({ client }) as unknown as StoreDb);
+  store = createPgStore(drizzle({ client }) as unknown as StoreDb);
   app = buildApp({ store, secrets: null, authToken: null, ping: async () => ({}) });
 });
 
@@ -405,6 +408,67 @@ describe("inspection", () => {
     const items = await (await get(app, `/v1/sessions/${sessionId}/items`)).json();
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ id: started.itemId, type: "inference", status: "ready" });
+  });
+});
+
+describe("GET /v1/sessions/:id/usage", () => {
+  const usage = { input: 100, output: 20, cacheRead: 30, cacheWrite: 10, reasoning: 5 };
+
+  /** One run, played by hand where a worker would: the message starts
+   *  it, and the claim commits `reply` as the run's last step. */
+  async function run(sessionId: string, reply: AssistantMessage): Promise<void> {
+    await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
+    const claim = await store.claimItem({
+      leaseMs: 60_000,
+      session: { namespace: DEFAULT_NAMESPACE, sessionId },
+    });
+    await store.commitStep({
+      itemRef: claim!.item,
+      token: claim!.token,
+      append: [reply],
+      next: { kind: "end_run", status: "completed" },
+    });
+  }
+
+  const reply = (rest: Partial<AssistantMessage>): AssistantMessage => ({
+    role: "assistant",
+    content: [{ type: "text", text: "ok" }],
+    model: "m",
+    stopReason: "end_turn",
+    ...rest,
+  });
+
+  it("pairs each assistant entry with its usage, skipping messages without any", async () => {
+    const sessionId = await seedSession(app);
+    await run(sessionId, reply({ usage }));
+    await run(sessionId, reply({ stopReason: "error", errorMessage: "boom" }));
+    await run(sessionId, reply({ usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } }));
+
+    const entries = await (await get(app, `/v1/sessions/${sessionId}/entries`)).json();
+    const assistants = entries.filter(
+      (entry: { type: string; message?: { role: string } }) =>
+        entry.type === "message" && entry.message?.role === "assistant",
+    );
+    expect(assistants).toHaveLength(3);
+
+    const res = await get(app, `/v1/sessions/${sessionId}/usage`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      { entryId: assistants[0].id, usage },
+      { entryId: assistants[2].id, usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } },
+    ]);
+  });
+
+  it("answers a session with no inference yet with an empty list", async () => {
+    const sessionId = await seedSession(app);
+    await post(app, `/v1/sessions/${sessionId}/messages`, { content: "hi" });
+    expect(await (await get(app, `/v1/sessions/${sessionId}/usage`)).json()).toEqual([]);
+  });
+
+  it("404s unknown and foreign sessions alike", async () => {
+    const sessionId = await seedSession(app, "tenant-a");
+    expect((await get(app, `/v1/sessions/${sessionId}/usage?namespace=tenant-b`)).status).toBe(404);
+    expect((await get(app, "/v1/sessions/nope/usage")).status).toBe(404);
   });
 });
 
