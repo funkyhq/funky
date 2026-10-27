@@ -30,7 +30,7 @@ You can interact with the Funky service through Web UI or CURL.
 session, and watch its log grow — all in the browser. It proxies the api and attaches
 the token itself, so no credential ever reaches the page.
 
-<img width="2270" height="1506" alt="funky_web_console" src="https://github.com/user-attachments/assets/3ab4b897-6d6d-434b-a651-1646a2febd2d" />
+<img width="2880" height="1878" alt="funky_web_console" src="https://github.com/user-attachments/assets/247cfa8e-0609-4e39-84a8-fd29a1a77999" />
 
 **The api**, at `localhost:3000` — bearer-authed, and the same five steps with curl:
 
