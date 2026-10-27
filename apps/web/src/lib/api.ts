@@ -322,73 +322,14 @@ export type Session = {
   metadata?: unknown;
 };
 
-/**
- * One page of the namespace's sessions, newest first.
- *
- * `includeArchived` mirrors the api's own switch, default and all: the api
- * lists ACTIVE rows only unless asked, because archived history grows
- * without bound and a caller asking for its sessions usually means the live
- * ones. A caller that draws a status column wants both — that is the
- * console's editorial call, so the page makes it (see pages/Sessions.tsx).
- */
-export function listSessions(
-  opts: {
-    after?: string;
-    limit?: number;
-    includeArchived?: boolean;
-    signal?: AbortSignal;
-  } = {},
-): Promise<Page<Session>> {
-  return get<Page<Session>>(
-    "/v1/sessions",
-    {
-      namespace: DEFAULT_NAMESPACE,
-      limit: opts.limit === undefined ? undefined : String(opts.limit),
-      after: opts.after,
-      // snake_case because the wire is, and spelled as a word rather than a
-      // flag: the route parses "true"/"false" by name — JavaScript
-      // truthiness would read "false" as true — so an absent switch has to
-      // be absent from the query, not sent as an empty string.
-      include_archived:
-        opts.includeArchived === undefined ? undefined : String(opts.includeArchived),
-    },
-    opts.signal,
-  );
-}
-
-/** One session by id. What the detail page resolves a link against — the
- *  list is a page of rows, and a session can be addressed without it. */
+/** One session by id — what a task's page shows once it knows which
+ *  session the task started. */
 export function getSession(id: string, opts: { signal?: AbortSignal } = {}): Promise<Session> {
   return get<Session>(
     `/v1/sessions/${encodeURIComponent(id)}`,
     { namespace: DEFAULT_NAMESPACE },
     opts.signal,
   );
-}
-
-/** The create body, minus the namespace this console pins for every call.
- *  Omitting `agentConfigVersion` pins the config's latest version at create,
- *  which is what a console starting a session from a picker means. */
-export type CreateSessionInput = {
-  agentConfigId: string;
-  agentConfigVersion?: number;
-  metadata?: unknown;
-};
-
-/**
- * Creates a session and returns it materialized: the agent version pinned,
- * so the answer is the world the run will have rather than the request that
- * asked for it. The namespace rides in the body here, as it does for both
- * config creates.
- *
- * An archived config answers 409 and an unknown one 400 — the api's words
- * either way, which is why the dialog shows only active configs.
- */
-export function createSession(
-  input: CreateSessionInput,
-  opts: { signal?: AbortSignal } = {},
-): Promise<Session> {
-  return post<Session>("/v1/sessions", { namespace: DEFAULT_NAMESPACE, ...input }, {}, opts.signal);
 }
 
 /**
@@ -417,6 +358,75 @@ export function archiveSession(id: string, opts: { signal?: AbortSignal } = {}):
     { namespace: DEFAULT_NAMESPACE },
     opts.signal,
   );
+}
+
+// --- tasks ---
+
+/**
+ * One task: work handed to an agent config. Creating it starts a session
+ * whose first message is the task's content, in the same call — so every
+ * task has a session, and the session is where its log lives.
+ */
+export type Task = {
+  id: string;
+  namespace: string;
+  agentConfigId: string;
+  /** Pinned when the task was created; its session runs this version. */
+  agentConfigVersion: number;
+  content: UserMessage["content"];
+  /** The session the task started. */
+  sessionId: string;
+  createdAt: string;
+  metadata?: unknown;
+};
+
+/** One page of the namespace's tasks, newest first. */
+export function listTasks(
+  opts: { after?: string; limit?: number; signal?: AbortSignal } = {},
+): Promise<Page<Task>> {
+  return get<Page<Task>>(
+    "/v1/tasks",
+    {
+      namespace: DEFAULT_NAMESPACE,
+      limit: opts.limit === undefined ? undefined : String(opts.limit),
+      after: opts.after,
+    },
+    opts.signal,
+  );
+}
+
+/** One task by id. What a task's page resolves its link against, to learn
+ *  the session to show. */
+export function getTask(id: string, opts: { signal?: AbortSignal } = {}): Promise<Task> {
+  return get<Task>(
+    `/v1/tasks/${encodeURIComponent(id)}`,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
+/** The create body, minus the namespace this console pins for every call.
+ *  Omitting `agentConfigVersion` pins the config's latest version. */
+export type CreateTaskInput = {
+  agentConfigId: string;
+  agentConfigVersion?: number;
+  /** Plain text is the wire's other accepted spelling for content; the api
+   *  turns it into one text block. */
+  content: string;
+  metadata?: unknown;
+};
+
+/**
+ * Creates a task and returns it: one call that makes the session and gives
+ * it its first message together, so a refusal leaves nothing behind. An
+ * archived config answers 409 and an unknown one 400 — the api's words
+ * either way, which is why the dialog offers only active configs.
+ */
+export function createTask(
+  input: CreateTaskInput,
+  opts: { signal?: AbortSignal } = {},
+): Promise<Task> {
+  return post<Task>("/v1/tasks", { namespace: DEFAULT_NAMESPACE, ...input }, {}, opts.signal);
 }
 
 // --- the session log ---
