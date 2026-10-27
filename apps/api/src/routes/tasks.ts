@@ -16,10 +16,10 @@ import { Hono } from "hono";
 import { CreateTaskRequest, type Task } from "@funky/core";
 import { ArchivedError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
-import { NamespaceQuery, validate, WireContent } from "./common";
+import { ListQuery, NamespaceQuery, page, validate, WireContent } from "./common";
 
 /** The slice of the harness Store this resource needs. */
-export type TaskStore = Pick<Store, "createTask" | "getTask" | "requestCancel">;
+export type TaskStore = Pick<Store, "createTask" | "getTask" | "listTasks" | "requestCancel">;
 
 type Env = { Variables: { requestId: string } };
 
@@ -55,6 +55,23 @@ export function taskRoutes(store: TaskStore) {
       throw err;
     }
     return c.json(wire(task), 201);
+  });
+
+  // list → one page of this namespace's tasks, newest first. The store
+  // is asked for limit + 1: the extra row is hasMore (see page()).
+  r.get("/", validate("query", ListQuery), async (c) => {
+    const { namespace, limit, after } = c.req.valid("query");
+    try {
+      const rows = await store.listTasks({ namespace, limit: limit + 1, after });
+      return c.json(page(rows.map(wire), limit));
+    } catch (err) {
+      // A cursor the store can't resolve — foreign or made-up, the same
+      // "unknown" either way — is the client's mistake, so 400 not 500.
+      if (err instanceof Error && err.message.startsWith("unknown cursor")) {
+        return errorResponse(c, 400, "invalid_request_error", err.message);
+      }
+      throw err;
+    }
   });
 
   r.get("/:id", validate("query", NamespaceQuery), async (c) => {

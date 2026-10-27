@@ -1076,6 +1076,102 @@ export function describeStoreConformance(
       });
     });
 
+    describe("listing tasks", () => {
+      /** n tasks, each a tick newer than the last, oldest id first. */
+      async function taskIds(n: number, namespace = DEFAULT_NAMESPACE): Promise<string[]> {
+        const agentConfigRef = await newAgent({ namespace });
+        const ids: string[] = [];
+        for (let i = 0; i < n; i++) {
+          const ref = await store.createTask({
+            namespace,
+            agentConfigId: agentConfigRef.agentConfigId,
+            content: user(`task ${i}`).content,
+          });
+          ids.push(ref.taskId);
+          clock.advance(1_000);
+        }
+        return ids;
+      }
+
+      /** Walk the whole list one small page at a time. */
+      async function walk(namespace: string, limit: number): Promise<string[]> {
+        const ids: string[] = [];
+        let after: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page = await store.listTasks({ namespace, limit, after });
+          expect(page.length).toBeLessThanOrEqual(limit);
+          if (page.length === 0) return ids;
+          ids.push(...page.map((t) => t.taskId));
+          after = page[page.length - 1]?.taskId;
+        }
+        throw new Error("walk did not terminate");
+      }
+
+      it("lists a namespace's tasks newest first, whole rows", async () => {
+        const [oldest, middle, newest] = await taskIds(3);
+        const list = await store.listTasks({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(list.map((t) => t.taskId)).toEqual([newest, middle, oldest]);
+        // The same shape a get returns — one row mapping, not two.
+        expect(list[0]).toEqual(
+          await store.getTask({ namespace: DEFAULT_NAMESPACE, taskId: newest! }),
+        );
+      });
+
+      it("bounds the page at limit and resumes strictly after the cursor", async () => {
+        const [oldest, middle, newest] = await taskIds(3);
+        const first = await store.listTasks({ namespace: DEFAULT_NAMESPACE, limit: 2 });
+        expect(first.map((t) => t.taskId)).toEqual([newest, middle]);
+        const second = await store.listTasks({
+          namespace: DEFAULT_NAMESPACE,
+          limit: 2,
+          after: middle,
+        });
+        expect(second.map((t) => t.taskId)).toEqual([oldest]);
+        expect(
+          await store.listTasks({ namespace: DEFAULT_NAMESPACE, limit: 2, after: oldest }),
+        ).toEqual([]);
+      });
+
+      it("pages an unadvanced clock without dropping or duplicating a row", async () => {
+        // No clock advance: created_at ties are likely, so this pins the
+        // (createdAt, id) key's total order.
+        const agentConfigRef = await newAgent();
+        for (let i = 0; i < 5; i++) {
+          await store.createTask({
+            namespace: DEFAULT_NAMESPACE,
+            agentConfigId: agentConfigRef.agentConfigId,
+            content: user(`task ${i}`).content,
+          });
+        }
+        const whole = await store.listTasks({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(whole).toHaveLength(5);
+        expect(await walk(DEFAULT_NAMESPACE, 2)).toEqual(whole.map((t) => t.taskId));
+      });
+
+      it("scopes the list to one namespace — a page walk never crosses the boundary", async () => {
+        const a = await taskIds(3, "tenant-a");
+        const b = await taskIds(2, "tenant-b");
+        expect(await walk("tenant-a", 2)).toEqual([...a].reverse());
+        expect(await walk("tenant-b", 2)).toEqual([...b].reverse());
+        expect(await store.listTasks({ namespace: "tenant-c", limit: 10 })).toEqual([]);
+      });
+
+      it("lists only tasks — a session created directly is not one", async () => {
+        await newSession();
+        expect(await store.listTasks({ namespace: DEFAULT_NAMESPACE, limit: 10 })).toEqual([]);
+      });
+
+      it("rejects a cursor it cannot resolve — a foreign one like a nonexistent one", async () => {
+        const [foreign] = await taskIds(1, "tenant-b");
+        await expect(
+          store.listTasks({ namespace: "tenant-a", limit: 10, after: "nope" }),
+        ).rejects.toThrow("unknown cursor");
+        await expect(
+          store.listTasks({ namespace: "tenant-a", limit: 10, after: foreign }),
+        ).rejects.toThrow("unknown cursor");
+      });
+    });
+
     describe("archiving sessions", () => {
       it("marks an idle session archived without changing its durable inputs", async () => {
         const ref = await newSession({ metadata: { purpose: "audit" } });
