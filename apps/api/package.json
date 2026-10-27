@@ -15,7 +15,7 @@
     "@funky/core": "workspace:*",
     "@hono/node-server": "^2.0.8",
     "@hono/zod-validator": "^0.7.4",
-    "ai": "^7.0.22",
+    "ai": "^7.0.154",
     "drizzle-orm": "^1.0.0-beta.2",
     "e2b": "^2.33.0",
     "hono": "^4.12.27",
