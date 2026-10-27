@@ -19,10 +19,10 @@
 // itself happens in a worker, asynchronously.
 import { Hono } from "hono";
 import { z } from "zod";
-import { CreateSessionRequest, type Session, UserMessage, type WorkItem } from "@funky/core";
+import { CreateSessionRequest, type Session, type UserMessage, type WorkItem } from "@funky/core";
 import { ArchivedError, SessionNotIdleError, type Store } from "@funky/agent";
 import { errorResponse } from "../http";
-import { ListQuery, NamespaceQuery, page, validate } from "./common";
+import { ListQuery, NamespaceQuery, page, validate, WireContent } from "./common";
 
 /** The slice of the harness Store this resource needs. */
 export type SessionStore = Pick<
@@ -62,12 +62,9 @@ const wire = ({ sessionId, ...rest }: Session) => ({ id: sessionId, ...rest });
 /** Same rule for items: the row, with its own qualified id as `id`. */
 const wireItem = ({ itemId, ...rest }: WorkItem) => ({ id: itemId, ...rest });
 
-// "Always an array; plain strings are normalized at intake"
-// (core/messages.ts) — this is the intake boundary, so the wire accepts
-// both spellings and the role is stamped, never sent.
-const WireMessage = z.object({
-  content: z.union([z.string(), UserMessage.shape.content]),
-});
+// The role is stamped, never sent; the content takes either spelling
+// (common.ts WireContent).
+const WireMessage = z.object({ content: WireContent });
 
 const EntriesQuery = NamespaceQuery.extend({
   after: z.coerce.number().int().nonnegative().optional(),
@@ -156,11 +153,7 @@ export function sessionRoutes(store: SessionStore) {
     async (c) => {
       const session = await owned(c, c.req.valid("query").namespace);
       if (!session) return notFound(c);
-      const { content } = c.req.valid("json");
-      const message: UserMessage = {
-        role: "user",
-        content: typeof content === "string" ? [{ type: "text", text: content }] : content,
-      };
+      const message: UserMessage = { role: "user", content: c.req.valid("json").content };
       try {
         return c.json(await store.intake(session, message), 202);
       } catch (err) {

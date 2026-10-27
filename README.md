@@ -104,6 +104,25 @@ one drain), so a small container serves many sessions while their steps wait on 
 a sandbox. Scale down the same way: a removed worker stops claiming, finishes a short step
 or hands a long one back, and exits.
 
+### Tasks
+
+A task is steps 2 and 3 in one call: it creates a session on an agent config and gives it
+its first message, together, so a failure never leaves an empty session behind.
+
+```bash
+TASK=$(curl -s localhost:3000/v1/tasks -H "$H" -H "$J" -d "{
+  \"agentConfigId\": \"$AID\",
+  \"content\": \"Run uname -a in your sandbox and tell me what you see.\"
+}")
+SID=$(echo "$TASK" | jq -r .sessionId)
+```
+
+The task answers `201` with its `id` and the `sessionId` it started; follow the log at
+`/v1/sessions/$SID/entries` as in step 4. The session is an ordinary one, so it takes
+follow-up messages too. A task pins its agent config version when it is created (or the
+`agentConfigVersion` you send). `GET /v1/tasks/:id` reads a task back, and
+`POST /v1/tasks/:id/cancel` cancels its session's run.
+
 ### Model providers
 
 A config's `inference.provider` picks the vendor that serves it. At boot the worker wires
