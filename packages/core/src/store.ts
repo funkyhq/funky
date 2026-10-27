@@ -35,6 +35,7 @@ import { InferenceConfig } from "./inference";
 
 export type ConfigId = string;
 export type SessionId = string;
+export type TaskId = string;
 export type ItemId = string;
 export type InputId = string;
 
@@ -178,6 +179,49 @@ export const Session = SessionRef.extend({
   archivedAt: z.iso.datetime().optional(),
 });
 export type Session = z.infer<typeof Session>;
+
+// --- tasks ---
+
+// A task is a piece of work handed to an agent config: its content
+// becomes the first message of a new session. Today a task starts the
+// moment it is created — the session, its first entry, and its first
+// item are born in the same transaction — so every task has a session.
+// A task is still its own row, not an alias for that session, because
+// deferral will let one wait before it starts, and a task cancelled while
+// waiting never gets a session at all.
+//
+// The session it starts is an ordinary session: follow-up messages,
+// cancel, and archive all work on it as they do on any other.
+
+/** A namespace-scoped reference to a task. */
+export const TaskRef = z.object({
+  namespace: z.string().min(1),
+  taskId: z.string().min(1),
+});
+export type TaskRef = z.infer<typeof TaskRef>;
+
+export const CreateTaskRequest = z.object({
+  namespace: z.string().min(1),
+  agentConfigId: z.string(),
+  // Omit to pin the latest version at creation time.
+  agentConfigVersion: z.number().int().min(1).optional(),
+  // The first message's content, stored on the task as well as logged:
+  // a task that waits to start must still say what it is.
+  content: UserMessage.shape.content,
+  metadata: JsonValue.optional(),
+});
+export type CreateTaskRequest = z.infer<typeof CreateTaskRequest>;
+
+// The row is its own ref, like Session. The pin is the task's decision,
+// made when it is created, not when its session starts.
+export const Task = TaskRef.extend({
+  ...CreateTaskRequest.omit({ namespace: true }).shape,
+  agentConfigVersion: z.number().int().min(1),
+  // The session the task started.
+  sessionId: z.string().min(1),
+  createdAt: z.iso.datetime(),
+});
+export type Task = z.infer<typeof Task>;
 
 // --- work items ---
 
