@@ -36,8 +36,6 @@ describe("loadConfig — valid input", () => {
       port: 3000,
       dbPoolMax: 10,
       authToken: BASE.FUNKY_AUTH_TOKEN,
-      streamPollMs: 1000,
-      streamHeartbeatMs: 15_000,
       infisical: null,
     });
   });
@@ -54,16 +52,6 @@ describe("loadConfig — valid input", () => {
   it("reads blank Infisical variables as unset, the way compose forwards unset ones", () => {
     const blank = Object.fromEntries(Object.keys(INFISICAL).map((key) => [key, ""]));
     expect(loadConfig({ ...BASE, ...blank }).infisical).toBeNull();
-  });
-
-  it("coerces the stream pacing overrides", () => {
-    const cfg = loadConfig({
-      ...BASE,
-      FUNKY_STREAM_POLL_MS: "250",
-      FUNKY_STREAM_HEARTBEAT_MS: "5000",
-    });
-    expect(cfg.streamPollMs).toBe(250);
-    expect(cfg.streamHeartbeatMs).toBe(5000);
   });
 
   it("FUNKY_AUTH=disabled yields a null token (and no token required)", () => {
@@ -86,16 +74,6 @@ describe("loadConfig — invalid input", () => {
 
   it("exits on a short token", () => {
     expect(() => loadConfig({ ...BASE, FUNKY_AUTH_TOKEN: "short" })).toThrow("process.exit(1)");
-  });
-
-  it("exits when the stream poll is slower than the heartbeat", () => {
-    expect(() =>
-      loadConfig({
-        ...BASE,
-        FUNKY_STREAM_POLL_MS: "60000",
-        FUNKY_STREAM_HEARTBEAT_MS: "15000",
-      }),
-    ).toThrow("process.exit(1)");
   });
 
   it("exits on part of an Infisical identity, naming each missing variable", () => {

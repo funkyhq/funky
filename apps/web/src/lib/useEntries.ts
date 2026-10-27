@@ -1,20 +1,18 @@
 // apps/web/src/lib/useEntries.ts
 // One session's log, loaded once and then followed: a read for what is
-// already there, an EventSource for what lands next.
+// already there, then the same read again, from the last seq on screen,
+// for what lands next.
 //
-// Two mechanisms because the api built each for its half. /entries answers
-// the whole log in one round trip, which is the right shape for a page
-// opening on a session that already has a hundred rows behind it, and
-// /stream replays from a cursor before it tails — so opening the stream at
-// the read's last seq loses nothing in the gap between the two calls.
-//
-// Following the log is the browser's job here rather than a poll of ours:
-// EventSource reconnects on its own and resumes with Last-Event-ID, which
-// the route honors over `after`. Every reconnect therefore picks up exactly
-// where the last delivered entry left off, with no cursor for this file to
-// keep.
+// Polling rather than a held connection because funky runs deferrable
+// batch work: a second's lag on a log is nothing, and a poll holds nothing
+// open between answers. The cursor is the last seq the poll has taken
+// in, so a poll that fails is simply asked again — nothing is lost, and
+// nothing arrives twice. Up to a point: after MAX_FAILURES in a row the
+// tail stops, since an api that has refused that often (a rotated token,
+// an api that is down) is not going to answer the next one either, and a
+// tab left open should not ask it once a second forever.
 import { useEffect, useState } from "react";
-import { type SessionEntry, entryStreamUrl, readEntries } from "./api";
+import { type SessionEntry, readEntries } from "./api";
 
 /** What the log is showing. `ready` is the only state with rows; entries
  *  arrive into it afterwards, so it is not a terminal state. */
@@ -25,20 +23,26 @@ export type LogState =
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** How long after one poll answers the next one goes out. */
+const POLL_MS = 1000;
+
+/** How many polls in a row may fail before the tail stops asking. About
+ *  ten seconds of trying: a redeploy's gap, not an outage. */
+const MAX_FAILURES = 10;
+
 /**
  * The log, appended to as it grows.
  *
  * `tail` is whether to follow it at all: an archived session takes no
- * further write, so there is nothing to wait for and the stream — which has
- * no server-side end — would sit open forever heartbeating at a log that
- * cannot change.
+ * further write, so there is nothing to wait for and a poll would ask
+ * forever after a log that cannot change.
  */
 export function useEntries(id: string, tail: boolean) {
   const [state, setState] = useState<LogState>({ status: "loading" });
-  // Whether the connection has failed since it was opened. The only part of
-  // being live that this can't work out for itself — a drop is news from
-  // outside — so it is the only part that is state.
-  const [dropped, setDropped] = useState(false);
+  // How many polls in a row have failed. The only part of being live that
+  // this can't work out for itself — a failure is news from outside — so it
+  // is the only part that is state.
+  const [failures, setFailures] = useState(0);
   // Where the tail starts, and the fact that the read has finished: an
   // object, because `after` is legitimately absent for an empty log and
   // that must not read as "not loaded yet".
@@ -48,12 +52,14 @@ export function useEntries(id: string, tail: boolean) {
   /**
    * Whether the log on screen is one that keeps up.
    *
-   * Attached, rather than "a byte has arrived": nothing reaches the client
-   * until the api writes one, and on a quiet session that is the keep-alive
-   * a whole heartbeat later — so a tail that works perfectly would report
+   * Answered, rather than "an entry has arrived": a quiet session answers
+   * every poll with nothing, and a tail that works perfectly would report
    * itself broken for as long as the session had nothing to say.
    */
-  const live = tail && start !== undefined && !dropped;
+  const live = tail && start !== undefined && failures === 0;
+
+  /** Whether the tail has given up: it asks again only through `refresh`. */
+  const stopped = failures >= MAX_FAILURES;
 
   /**
    * Read the log again, keeping the rows already on screen until the answer
@@ -63,14 +69,17 @@ export function useEntries(id: string, tail: boolean) {
    * What ARCHIVING needs. The transition can append — a message parked
    * behind a cancelled run is drained into the log by the same transaction
    * — and it closes the tail in the same move, since an archived session
-   * has nothing left to follow. The stream polls, so those last entries
-   * would be written just after the only thing watching for them went away,
-   * and the page would sit on a log one short of final with no way to ask
-   * again.
+   * has nothing left to follow. The poll stops with it, so those last
+   * entries could land just after the only thing watching for them went
+   * away, and the page would sit on a log one short of final with no way to
+   * ask again.
+   *
+   * And what restarts a tail that has stopped: the same read, so whatever
+   * landed while nothing was asking arrives with it.
    */
   function refresh() {
     setStart(undefined);
-    setDropped(false);
+    setFailures(0);
     setReloads((n) => n + 1);
   }
 
@@ -103,32 +112,72 @@ export function useEntries(id: string, tail: boolean) {
   }, [id, reloads]);
 
   useEffect(() => {
-    // Nothing to follow, or nothing to follow FROM: opening the stream
-    // before the read lands would replay the whole log over it.
+    // Nothing to follow, or nothing to follow FROM: polling before the read
+    // lands would ask for the whole log over it.
     if (!tail || start === undefined) return;
-    const source = new EventSource(entryStreamUrl(id, start.after));
-    // A reconnect that got through, after `error` below marked one as
-    // dropped.
-    source.onopen = () => setDropped(false);
-    source.onmessage = (event: MessageEvent<string>) => {
-      const entry = JSON.parse(event.data) as SessionEntry;
-      setState((prev) => {
-        if (prev.status !== "ready") return prev;
-        // A session's log is append-only and its seq gapless, so anything
-        // at or behind the tail is a replay — a reconnect resuming one
-        // entry early, say — and never news.
-        const last = prev.entries[prev.entries.length - 1];
-        if (last !== undefined && entry.seq <= last.seq) return prev;
-        return { ...prev, entries: [...prev.entries, entry] };
-      });
+    const abort = new AbortController();
+    let cursor = start.after;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let polling = false;
+    let failed = 0;
+
+    // One at a time: the next poll is scheduled when this one answers,
+    // never on a fixed beat, so a slow api is never asked twice at once.
+    async function poll() {
+      timer = undefined;
+      polling = true;
+      try {
+        const entries = await readEntries(id, { after: cursor, signal: abort.signal });
+        const sorted = [...entries].sort((a, b) => a.seq - b.seq);
+        cursor = sorted[sorted.length - 1]?.seq ?? cursor;
+        failed = 0;
+        setFailures(0);
+        if (sorted.length > 0) {
+          setState((prev) => {
+            if (prev.status !== "ready") return prev;
+            // A session's log is append-only and its seq gapless, so
+            // anything at or behind the tail is already on screen.
+            const last = prev.entries[prev.entries.length - 1];
+            const fresh =
+              last === undefined ? sorted : sorted.filter((entry) => entry.seq > last.seq);
+            return fresh.length === 0 ? prev : { ...prev, entries: [...prev.entries, ...fresh] };
+          });
+        }
+      } catch {
+        // The log on screen is still what the reads returned, so a failure
+        // dims the live mark rather than throwing the transcript away, and
+        // the next poll asks again from the same cursor.
+        if (!abort.signal.aborted) setFailures(++failed);
+      } finally {
+        polling = false;
+      }
+      schedule();
+    }
+
+    // A hidden tab is not polled: nobody is reading the log, so the next
+    // poll waits for the tab to come back and goes out the moment it does.
+    function schedule() {
+      if (abort.signal.aborted || document.hidden || failed >= MAX_FAILURES) return;
+      timer = setTimeout(poll, POLL_MS);
+    }
+
+    function onVisibility() {
+      if (document.hidden) {
+        clearTimeout(timer);
+        timer = undefined;
+      } else if (timer === undefined && !polling && failed < MAX_FAILURES) {
+        void poll();
+      }
+    }
+
+    schedule();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-    // A dropped connection is retried by EventSource itself; an http
-    // failure closes it for good. Either way the log on screen is still
-    // what the read returned, so this dims the live mark rather than
-    // throwing the transcript away.
-    source.onerror = () => setDropped(true);
-    return () => source.close();
   }, [id, tail, start]);
 
-  return { state, live, reload, refresh };
+  return { state, live, stopped, reload, refresh };
 }

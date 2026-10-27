@@ -28,10 +28,6 @@ const EnvSchema = z
     DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
     FUNKY_AUTH: z.enum(["enabled", "disabled"]).default("enabled"),
     FUNKY_AUTH_TOKEN: z.string().min(16, "FUNKY_AUTH_TOKEN must be ≥16 chars").optional(),
-    /** SSE tail pacing: how often /stream re-polls the entries cursor,
-     *  and how long a quiet stream goes before a keep-alive comment. */
-    FUNKY_STREAM_POLL_MS: z.coerce.number().int().min(1).default(1000),
-    FUNKY_STREAM_HEARTBEAT_MS: z.coerce.number().int().min(1).default(15_000),
     /** The secret store behind /v1/secrets (README "Secrets"): an
      *  Infisical Cloud machine identity. */
     INFISICAL_CLIENT_ID: unsetIfBlank(z.string()),
@@ -43,13 +39,6 @@ const EnvSchema = z
     message:
       "FUNKY_AUTH_TOKEN is required. Set it in the environment, " +
       "or set FUNKY_AUTH=disabled for local development (NOT for anything reachable).",
-  })
-  // The stream loop checks the heartbeat once per poll, so a poll slower
-  // than the heartbeat would silently stretch the keepalive past its
-  // schedule. Refuse the combination rather than complicate the loop.
-  .refine((e) => e.FUNKY_STREAM_POLL_MS <= e.FUNKY_STREAM_HEARTBEAT_MS, {
-    path: ["FUNKY_STREAM_POLL_MS"],
-    message: "FUNKY_STREAM_POLL_MS must not exceed FUNKY_STREAM_HEARTBEAT_MS",
   })
   // Part of an identity is a mistake, not a choice: refuse to boot
   // rather than run with secrets quietly off.
@@ -79,8 +68,6 @@ export type Config = {
   dbPoolMax: number;
   /** null = auth explicitly disabled (dev only) */
   authToken: string | null;
-  streamPollMs: number;
-  streamHeartbeatMs: number;
   /** null = no secret store configured; /v1/secrets says so */
   infisical: InfisicalConfig | null;
 };
@@ -103,8 +90,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     dbPoolMax: e.DB_POOL_MAX,
     authToken: e.FUNKY_AUTH === "disabled" ? null : e.FUNKY_AUTH_TOKEN!,
-    streamPollMs: e.FUNKY_STREAM_POLL_MS,
-    streamHeartbeatMs: e.FUNKY_STREAM_HEARTBEAT_MS,
     infisical:
       e.INFISICAL_CLIENT_ID === undefined
         ? null

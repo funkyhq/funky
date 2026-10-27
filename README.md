@@ -27,7 +27,7 @@ docker compose up --build
 You can interact with the Funky service through Web UI or CURL.
 
 **The console**, at <http://localhost:5173>. Define an agent and its sandbox, start a
-session, and watch the log stream live — all in the browser. It proxies the api and attaches
+session, and watch its log grow — all in the browser. It proxies the api and attaches
 the token itself, so no credential ever reaches the page.
 
 <img width="2270" height="1506" alt="funky_web_console" src="https://github.com/user-attachments/assets/3ab4b897-6d6d-434b-a651-1646a2febd2d" />
@@ -54,12 +54,20 @@ AID=$(curl -s localhost:3000/v1/agent-configs -H "$H" -H "$J" -d '{
 SID=$(curl -s localhost:3000/v1/sessions -H "$H" -H "$J" \
   -d "{\"agentConfigId\":\"$AID\"}" | jq -r .id)
 
-# 3. watch the log stream live (leave this running)
-curl -N -H "$H" localhost:3000/v1/sessions/$SID/stream &
-
-# 4. give it work
+# 3. give it work
 curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
   -d '{"content":"Run uname -a in your sandbox and tell me what you see."}'
+
+# 4. follow the log: each poll asks only for what is newer than the last seq seen
+#    (an answer that isn't a list of entries is an error: print it and stop)
+Q=""
+while sleep 1; do
+  NEW=$(curl -s -H "$H" "localhost:3000/v1/sessions/$SID/entries$Q")
+  echo "$NEW" | jq -e 'type == "array"' >/dev/null || { echo "$NEW" >&2; break; }
+  echo "$NEW" | jq -c '.[]'
+  LAST=$(echo "$NEW" | jq '.[-1].seq // empty')
+  [ -n "$LAST" ] && Q="?after=$LAST"
+done
 ```
 
 Agent configs can be updated with `POST /v1/agent-configs/$AID`. Send only the fields to
@@ -73,27 +81,21 @@ created — behavior and sandbox together — so an update reaches only sessions
 
 The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
 run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
-never pays for one), and every committed step lands on the stream as one SSE event — `id:`
-is the entry's `seq`, `data:` is the same JSON `GET /entries` returns:
+never pays for one), and every committed step lands in the session's log as one entry —
+`seq` is its place in the log, and `GET /entries?after=<seq>` answers everything after it, in
+order:
 
 ```
-id: 0
-data: {"seq":0,"type":"message","message":{"role":"user","content":[...]}}
-
-id: 1
-data: {"seq":1,"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash",...}],"stopReason":"tool_use"}}
-
-id: 2
-data: {"seq":2,"type":"message","message":{"role":"toolResult","toolCallId":"...","content":[...]}}
-
-id: 3
-data: {"seq":3,"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"It's a Linux system..."}],"stopReason":"end_turn"}}
+{"seq":0,"type":"message","message":{"role":"user","content":[...]}}
+{"seq":1,"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash",...}],"stopReason":"tool_use"}}
+{"seq":2,"type":"message","message":{"role":"toolResult","toolCallId":"...","content":[...]}}
+{"seq":3,"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"It's a Linux system..."}],"stopReason":"end_turn"}}
 ```
 
-Disconnect and reconnect any time: the stream replays from a cursor (`?after=`, or the
-SSE-native `Last-Event-ID` an auto-reconnecting EventSource sends), so a dropped client
-misses nothing. Ctrl-C the stream when done; `docker compose down` stops the stack (`-v`
-also wipes the database).
+There is no push: Funky runs deferrable work, so you poll as often as you care to, or check
+back hours later. The cursor is just the last `seq` you hold, so a client that stops and
+comes back misses nothing. Ctrl-C the loop when done; `docker compose down` stops the stack
+(`-v` also wipes the database).
 
 Scale workers with `docker compose up -d --scale worker=3` — claiming is the only
 scheduler; nothing else changes. A worker runs one step at a time by default;
@@ -214,7 +216,7 @@ in-flight work dies with it. Funky decouples them:
   the worker stops claiming, and a step that cannot finish in time is handed back at once
   (its lease released) instead of after the lease runs out.
 - **One rendezvous.** The api and the workers never talk to each other; Postgres is the
-  only coordination point. The SSE stream is the same log, delivered incrementally.
+  only coordination point. Clients follow a session by polling that same log from a cursor.
 - **Sandboxes outlive workers.** Commands run in a per-session [E2B](https://e2b.dev)
   sandbox, bound to the session in the store — any worker reconnects to the same box.
 
@@ -229,7 +231,7 @@ in-flight work dies with it. Funky decouples them:
 | `packages/core`     | The vocabulary: zod schemas for messages, entries, configs, and tool specs                             |
 | `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports       |
 | `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes, Infisical secrets |
-| `apps/api`          | The HTTP surface (Hono): configs, secrets, sessions, intake, cancel, inspection, the SSE stream        |
+| `apps/api`          | The HTTP surface (Hono): configs, secrets, sessions, intake, cancel, inspection                        |
 | `apps/worker`       | The runDriver host — the process a container runs; reads credentials' keys when a sandbox is created   |
 | `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                          |
 

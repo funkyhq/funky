@@ -57,7 +57,6 @@ beforeAll(async () => {
     secrets: null,
     authToken: null,
     ping: async () => ({}),
-    stream: { pollMs: 1000, heartbeatMs: 15_000 },
   });
 });
 

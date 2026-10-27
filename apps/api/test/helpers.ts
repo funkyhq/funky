@@ -15,7 +15,6 @@ export function makeApp(
     secrets: opts.secrets ?? null,
     authToken: opts.authToken ?? null,
     ping: async () => ({}),
-    stream: { pollMs: 1000, heartbeatMs: 15_000 },
   });
 }
 

@@ -180,7 +180,10 @@ export function SessionDetail({ id }: { id: string }) {
   const archived = session?.archivedAt !== undefined;
   // Follow the log only while there is something that could still write to
   // it, and only once the row that says so has arrived.
-  const { state, live, reload, refresh } = useEntries(id, session !== undefined && !archived);
+  const { state, live, stopped, reload, refresh } = useEntries(
+    id,
+    session !== undefined && !archived,
+  );
 
   const log = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -399,15 +402,26 @@ export function SessionDetail({ id }: { id: string }) {
         ) : (
           <>
             {/* Not the session's state — THIS CLIENT'S. The log follows a
-                stream, and this is shown only where that has come off:
-                while it is attached the transcript keeps itself current,
+                poll, and this is shown only where that has come off: while
+                the polls are answered the transcript keeps itself current,
                 and a mark saying so is a green light that is always on.
                 Held back until the log has loaded, too, since a tail not
-                opened yet is not a tail that dropped. */}
+                started yet is not a tail that dropped. Once the polls
+                have given up, nothing asks again by itself, so the mark
+                says so and carries the one way to. */}
             {state.status === "ready" && !live ? (
               <span className="live">
                 <span className="live-dot" aria-hidden="true" />
-                Reconnecting…
+                {stopped ? (
+                  <>
+                    Disconnected
+                    <button className="btn" type="button" onClick={refresh}>
+                      Reconnect
+                    </button>
+                  </>
+                ) : (
+                  "Reconnecting…"
+                )}
               </span>
             ) : null}
             {/* At the far end, away from the back link: this is the one
