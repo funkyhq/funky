@@ -26,13 +26,13 @@ docker compose up --build
 
 You can interact with the Funky service through Web UI or CURL.
 
-**The console**, at <http://localhost:5173>. Define an agent and its sandbox, start a
-session, and watch its log grow — all in the browser. It proxies the api and attaches
+**The console**, at <http://localhost:5173>. Define an agent and its sandbox, give it a
+task, and watch its log grow — all in the browser. It proxies the api and attaches
 the token itself, so no credential ever reaches the page.
 
 <img width="2270" height="1506" alt="funky_web_console" src="https://github.com/user-attachments/assets/3ab4b897-6d6d-434b-a651-1646a2febd2d" />
 
-**The api**, at `localhost:3000` — bearer-authed, and the same five steps with curl:
+**The api**, at `localhost:3000` — bearer-authed, and the same steps with curl:
 
 ```bash
 export TOKEN=<your FUNKY_AUTH_TOKEN>
@@ -50,15 +50,14 @@ AID=$(curl -s localhost:3000/v1/agent-configs -H "$H" -H "$J" -d '{
   "setupCommands": []
 }' | jq -r .id)
 
-# 2. a session: one pinned agent config version + a durable entry log
-SID=$(curl -s localhost:3000/v1/sessions -H "$H" -H "$J" \
-  -d "{\"agentConfigId\":\"$AID\"}" | jq -r .id)
+# 2. a task: the work, handed to the agent config. It starts a session running it, and the
+#    answer's sessionId is where that session's log lives
+SID=$(curl -s localhost:3000/v1/tasks -H "$H" -H "$J" -d "{
+  \"agentConfigId\": \"$AID\",
+  \"content\": \"Run uname -a in your sandbox and tell me what you see.\"
+}" | jq -r .sessionId)
 
-# 3. give it work
-curl -s localhost:3000/v1/sessions/$SID/messages -H "$H" -H "$J" \
-  -d '{"content":"Run uname -a in your sandbox and tell me what you see."}'
-
-# 4. follow the log: each poll asks only for what is newer than the last seq seen
+# 3. follow the log: each poll asks only for what is newer than the last seq seen
 #    (an answer that isn't a list of entries is an error: print it and stop)
 Q=""
 while sleep 1; do
@@ -73,17 +72,17 @@ done
 Agent configs can be updated with `POST /v1/agent-configs/$AID`. Send only the fields to
 replace; omitted fields are preserved. Responses include a monotonic `version`: include the
 current value in an update for optimistic concurrency (a stale value returns 409), or omit it
-for an unconditional last-write-wins update. A session pins the version current when it was
-created — behavior and sandbox together — so an update reaches only sessions created after it.
+for an unconditional last-write-wins update. A task pins the version current when it was
+created — behavior and sandbox together — so an update reaches only tasks created after it.
 `packages` are installed into the sandbox before the agent's first tool call; see
 [Packages](#packages). `credentials` let the agent use API keys it can't read; see
 [Credentials](#credentials).
 
-The message answers `202 {"kind":"started", ...}` — accepted, not done. A worker claims the
-run, provisions an E2B sandbox the moment a tool actually executes (an inference-only turn
-never pays for one), and every committed step lands in the session's log as one entry —
-`seq` is its place in the log, and `GET /entries?after=<seq>` answers everything after it, in
-order:
+The task answers `201` with its `id` and the `sessionId` it started — accepted, not done. A
+worker claims the run, provisions an E2B sandbox the moment a tool actually executes (an
+inference-only turn never pays for one), and every committed step lands in the session's log
+as one entry — `seq` is its place in the log, and `GET /entries?after=<seq>` answers
+everything after it, in order:
 
 ```
 {"seq":0,"type":"message","message":{"role":"user","content":[...]}}
@@ -106,22 +105,12 @@ or hands a long one back, and exits.
 
 ### Tasks
 
-A task is steps 2 and 3 in one call: it creates a session on an agent config and gives it
-its first message, together, so a failure never leaves an empty session behind.
-
-```bash
-TASK=$(curl -s localhost:3000/v1/tasks -H "$H" -H "$J" -d "{
-  \"agentConfigId\": \"$AID\",
-  \"content\": \"Run uname -a in your sandbox and tell me what you see.\"
-}")
-SID=$(echo "$TASK" | jq -r .sessionId)
-```
-
-The task answers `201` with its `id` and the `sessionId` it started; follow the log at
-`/v1/sessions/$SID/entries` as in step 4. The session is an ordinary one, so it takes
-follow-up messages too. A task pins its agent config version when it is created (or the
-`agentConfigVersion` you send). `GET /v1/tasks/:id` reads a task back, and
-`POST /v1/tasks/:id/cancel` cancels its session's run.
+A task creates a session on an agent config and gives it its first message in one call, so
+a failure never leaves an empty session behind. The session is an ordinary one: it takes
+follow-up messages with `POST /v1/sessions/$SID/messages`, and the log above is its log.
+`GET /v1/tasks` lists a namespace's tasks, newest first; `GET /v1/tasks/:id` reads one back;
+`POST /v1/tasks/:id/cancel` cancels its session's run. `POST /v1/sessions` still creates a
+bare session for experiments, but the console starts work only as tasks.
 
 ### Model providers
 
@@ -250,7 +239,7 @@ in-flight work dies with it. Funky decouples them:
 | `packages/core`     | The vocabulary: zod schemas for messages, entries, configs, and tool specs                             |
 | `packages/agent`    | The engine and driver: inference fold, tool execution, the claim → step → commit loop; the ports       |
 | `packages/adapters` | The port implementations: Postgres store (drizzle), AI SDK inference, E2B sandboxes, Infisical secrets |
-| `apps/api`          | The HTTP surface (Hono): configs, secrets, sessions, intake, cancel, inspection                        |
+| `apps/api`          | The HTTP surface (Hono): configs, secrets, tasks, sessions, intake, cancel, inspection                 |
 | `apps/worker`       | The runDriver host — the process a container runs; reads credentials' keys when a sandbox is created   |
 | `apps/web`          | The browser console over the api (React + Vite); compose serves it on `:5173`                          |
 

@@ -32,14 +32,12 @@ export const agentConfigCall = (input: CreateAgentConfigInput) =>
   `  -H "$H" -H "$J" \\\n` +
   `  -d ${quoted(JSON.stringify(input, null, 2))} | jq -r .id)`;
 
-/** Step 2: a session pinning $AID's latest version, its id kept as $SID. */
-export const sessionCall = () =>
-  `SID=$(curl -s ${API}/v1/sessions \\\n` +
+/** Step 2: the task — a session on $AID's latest version, started with
+ *  its content as the first message — keeping the session's id as $SID,
+ *  where its log is. The body is single-quoted pieces around "$AID", which
+ *  the shell joins into one word: the id expands, and the content pastes
+ *  as written. */
+export const taskCall = (text: string) =>
+  `SID=$(curl -s ${API}/v1/tasks \\\n` +
   `  -H "$H" -H "$J" \\\n` +
-  `  -d "{\\"agentConfigId\\":\\"$AID\\"}" | jq -r .id)`;
-
-/** Step 3: the first message, to $SID. */
-export const messageCall = (text: string) =>
-  `curl -s ${API}/v1/sessions/$SID/messages \\\n` +
-  `  -H "$H" -H "$J" \\\n` +
-  `  -d ${quoted(JSON.stringify({ content: text }))}`;
+  `  -d ${quoted('{"agentConfigId":"')}"$AID"${quoted(`","content":${JSON.stringify(text)}}`)} | jq -r .sessionId)`;

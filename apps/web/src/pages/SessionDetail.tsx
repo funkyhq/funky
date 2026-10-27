@@ -5,7 +5,9 @@
 // A page rather than a dialog, unlike the config editors. A config is a
 // form — a handful of fields you change and close — where a session is a
 // place you stay, reading a log that grows while you watch it, so it gets
-// the pane, the back link and its own route (`#/session/<id>`).
+// the pane and a back link. It is reached through a task: `#/task/<id>`
+// resolves the task to the session it started and shows it here
+// (pages/Tasks.tsx).
 //
 // The transcript is pages/Transcript.tsx; the loading and following of the
 // log is lib/useEntries.ts. What is left here is the session row itself,
@@ -40,7 +42,7 @@ import { Transcript } from "./Transcript";
 import "./SessionDetail.css";
 
 /** The section this page sits under — where its back link goes. */
-const SECTION = "#/session";
+const SECTION = "#/task";
 
 /** How tall the composer may grow before it scrolls instead. */
 const COMPOSE_MAX = 168;
@@ -161,7 +163,13 @@ function outstanding(entries: SessionEntry[], sent: Sent[]): Sent[] {
   return sent.filter((message) => !settled.has(message.id));
 }
 
-export function SessionDetail({ id }: { id: string }) {
+/**
+ * `id` is the session's. `taskId` is the task that started it — the id the
+ * reader came by, from the list and the URL — so it heads the page, and the
+ * session's own id moves into the line below, where the log's address is
+ * still there to copy.
+ */
+export function SessionDetail({ id, taskId }: { id: string; taskId: string }) {
   const [session, setSession] = useState<Session>();
   const [failure, setFailure] = useState<string>();
   const [draft, setDraft] = useState("");
@@ -192,8 +200,9 @@ export function SessionDetail({ id }: { id: string }) {
   const pinned = useRef(true);
 
   // No reset before the read: `id` never changes under this component —
-  // Sessions.tsx keys it by the route — so every id starts from a fresh
-  // mount, and there is no previous session's row to clear.
+  // Tasks.tsx keys the task's page by the route, and a task's session never
+  // changes — so every id starts from a fresh mount, and there is no
+  // previous session's row to clear.
   useEffect(() => {
     const abort = new AbortController();
     getSession(id, { signal: abort.signal }).then(setSession, (err: unknown) => {
@@ -388,7 +397,7 @@ export function SessionDetail({ id }: { id: string }) {
       <header className="chat-head">
         <a className="btn chat-back" href={SECTION}>
           <ArrowLeftIcon />
-          Sessions
+          Tasks
         </a>
         {session === undefined ? null : archived ? (
           // Only the ARCHIVED half of the lifecycle is marked here. The
@@ -455,7 +464,7 @@ export function SessionDetail({ id }: { id: string }) {
         </p>
       )}
 
-      <p className="chat-id">{id}</p>
+      <p className="chat-id">{taskId}</p>
 
       {session === undefined ? (
         // Nothing to say twice: a failure is reported in the log pane below,
@@ -468,6 +477,9 @@ export function SessionDetail({ id }: { id: string }) {
           <time dateTime={session.createdAt} title={absoluteTime(session.createdAt)}>
             Started {relativeTime(session.createdAt, now)}
           </time>
+          <span>
+            session <code>{id}</code>
+          </span>
           <span>
             agent <code>{session.agentConfigId}</code> v{session.agentConfigVersion}
           </span>
