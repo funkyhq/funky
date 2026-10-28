@@ -1,0 +1,55 @@
+/* apps/web/src/pages/Tasks.css
+   What only the task list draws: the task's text as the leading column, and
+   where the three columns land once the pane is too narrow for a table.
+   Everything else — the header, the table, the skeleton, the notices — is
+   pages/list.css. */
+
+/* The text takes whatever the id and the age leave, and ends in an ellipsis
+   rather than widening the table: max-width 0 with width 100% is what lets
+   an auto-layout cell shrink below its content. */
+.tasks .table td:first-child {
+  width: 100%;
+  max-width: 0;
+}
+
+.task-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.bar-task {
+  width: 70%;
+}
+
+/* Card layout: the text on its own line, then the id with the age opposite
+   it. */
+@container pane (max-width: 790px) {
+  .tasks .table tr {
+    grid-template-areas:
+      "task task"
+      "id when";
+    align-items: center;
+    gap: 7px 16px;
+  }
+
+  .tasks .table td:nth-child(1) {
+    grid-area: task;
+    /* A grid item is as wide as its content by default; zero lets the
+       ellipsis above apply inside the card too. */
+    min-width: 0;
+    max-width: none;
+  }
+
+  .tasks .table td:nth-child(2) {
+    grid-area: id;
+  }
+
+  .tasks .table td:nth-child(3) {
+    grid-area: when;
+    justify-self: end;
+    font-size: 12.5px;
+    color: var(--text-3);
+  }
+}

@@ -3,11 +3,11 @@
 // the router resolves a hash against it, so adding a section is one entry.
 // Kept free of JSX so it can hold both the data and the route resolver.
 import type { ReactElement, SVGProps } from "react";
-import { AgentIcon, BoltIcon, KeyIcon, SessionIcon } from "./components/Icons";
+import { AgentIcon, BoltIcon, KeyIcon, TaskIcon } from "./components/Icons";
 import { AgentConfigs } from "./pages/AgentConfigs";
 import { QuickStart } from "./pages/QuickStart";
 import { Secrets } from "./pages/Secrets";
-import { Sessions } from "./pages/Sessions";
+import { Tasks } from "./pages/Tasks";
 
 /** What a page is handed: the part of the route below its own section, so
  *  a section can address something inside itself (`#/agent/<id>`) without
@@ -37,8 +37,8 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     label: "Quick Start",
     Icon: BoltIcon,
     blurb:
-      "Walk the whole quickstart in one flow: define an agent and its sandbox, open a session, and send it the first message.",
-    chip: "agent → session → message",
+      "Walk the whole quickstart in one flow: define an agent and its sandbox, then give it a task.",
+    chip: "agent → task",
     // Takes no route below itself: the walk holds nothing durable until its
     // last step, so `#/quick-start/2` would be a link to a form that landed
     // empty. The step is state, not a place.
@@ -49,19 +49,19 @@ export const NAV_ITEMS: [NavItem, ...NavItem[]] = [
     label: "Agent",
     Icon: AgentIcon,
     blurb:
-      "Agent configs are the model, the system prompt, and the sandbox a session runs with. Versioned, so an update lands as a new version rather than a rewrite.",
+      "Agent configs are the model, the system prompt, and the sandbox a task runs with. Versioned, so an update lands as a new version rather than a rewrite.",
     chip: "/v1/agent-configs",
     groupLabel: "Resources",
     Page: AgentConfigs,
   },
   {
-    id: "session",
-    label: "Session",
-    Icon: SessionIcon,
+    id: "task",
+    label: "Task",
+    Icon: TaskIcon,
     blurb:
-      "A session is one pinned agent config version plus a durable, append-only entry log — the log a fresh worker resumes from with nothing lost.",
-    chip: "/v1/sessions",
-    Page: Sessions,
+      "A task is work handed to an agent config. Creating one starts a session with the task as its first message; the session holds the log, and takes follow-ups.",
+    chip: "/v1/tasks",
+    Page: Tasks,
   },
   {
     id: "secret",

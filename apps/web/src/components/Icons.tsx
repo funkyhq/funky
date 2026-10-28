@@ -53,6 +53,17 @@ export function SessionIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Task — a clipboard with a check. */
+export function TaskIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Stroke {...props}>
+      <path d="M9 4.5H6.5A1.5 1.5 0 0 0 5 6v13.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H15" />
+      <rect x="9" y="3" width="6" height="3" rx="1" />
+      <path d="m9 13.5 2 2 4-4" />
+    </Stroke>
+  );
+}
+
 /** Secret — a stored key. */
 export function KeyIcon(props: SVGProps<SVGSVGElement>) {
   return (
