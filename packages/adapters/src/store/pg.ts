@@ -730,12 +730,13 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         sql<number>`coalesce(sum((${usage}->>${field})::numeric), 0)`.mapWith(Number);
       // A run's items meet end to end (commitStep), so its span is the
       // sum of theirs, and the gaps between runs fall outside every
-      // item. The open item counts up to now — never below zero, since
-      // another host's clock may have stamped it a moment ahead of ours.
-      // An item closed before finished_at existed reads as NULL and adds
-      // nothing.
-      const end = sql`case when ${workItems.status} = 'done' then ${workItems.finishedAt} else greatest(${iso(now())}::timestamptz, ${workItems.createdAt}) end`;
-      const span = sql`${end} - ${workItems.createdAt}`;
+      // item. The open item counts up to now. An item closed before
+      // finished_at existed reads as NULL and adds nothing. Each span is
+      // held at zero or more: an item's two ends can be stamped by
+      // different hosts (the api's intake, a worker's commit, our read),
+      // and a step shorter than their clock skew would otherwise subtract.
+      const end = sql`case when ${workItems.status} = 'done' then ${workItems.finishedAt} else ${iso(now())}::timestamptz end`;
+      const span = sql`greatest(${end} - ${workItems.createdAt}, interval '0')`;
       const [[tokens], [runtime]] = await Promise.all([
         db
           .select({
