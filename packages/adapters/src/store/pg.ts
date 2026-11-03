@@ -971,9 +971,12 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           if (drained.length !== req.consumeInputs.length)
             throw new Error("commitStep: consumeInputs names an unknown or already-consumed input");
         }
+        // One instant closes this item and opens whatever follows it, so
+        // a run's items meet end to end, with no gap or overlap.
+        const at = now();
         await tx
           .update(workItems)
-          .set({ status: "done" })
+          .set({ status: "done", finishedAt: at })
           .where(
             and(
               eq(workItems.namespace, item.namespace),
@@ -988,7 +991,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             sessionId: item.sessionId,
             type: req.next.kind,
             status: "ready",
-            createdAt: now(),
+            createdAt: at,
           });
           return;
         }
@@ -1025,7 +1028,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           sessionId: item.sessionId,
           type: "inference",
           status: "ready",
-          createdAt: now(),
+          createdAt: at,
         });
       });
     },

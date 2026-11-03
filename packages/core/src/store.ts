@@ -259,10 +259,17 @@ export const WorkItem = WorkItemRef.extend({
 });
 export type WorkItem = z.infer<typeof WorkItem>;
 
-// --- pending inputs ---
+// What is a run? The work one user message sets off, as a chain of work
+// items. It starts when a message reaches a session with no open item:
+// intake (or createTask) logs the message and opens an inference item
+// in one transaction. Each commitStep closes the claimed item and opens
+// the next one at the same instant, and the run ends when a commit
+// closes an item and opens none (end_run: completed, max_tokens,
+// cancelled or error). A crash ends no run: the open item waits for a
+// re-claim. Messages that queued during the run start the next one in
+// the ending commit itself — unless it was cancelled.
 
-// What is a run? It starts from a ueser query to the completion of
-// the agent.
+// --- pending inputs ---
 
 // A user message that arrived while a run was active (or parked by a
 // cancelled run's terminal commit). Whether it steers or follows up is
