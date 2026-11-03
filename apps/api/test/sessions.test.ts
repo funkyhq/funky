@@ -411,7 +411,7 @@ describe("inspection", () => {
   });
 });
 
-describe("GET /v1/sessions/:id/usage", () => {
+describe("GET /v1/sessions/:id/usage and /usage/summary", () => {
   const usage = { input: 100, output: 20, cacheRead: 30, cacheWrite: 10, reasoning: 5 };
 
   /** One run, played by hand where a worker would: the message starts
@@ -469,6 +469,37 @@ describe("GET /v1/sessions/:id/usage", () => {
     const sessionId = await seedSession(app, "tenant-a");
     expect((await get(app, `/v1/sessions/${sessionId}/usage?namespace=tenant-b`)).status).toBe(404);
     expect((await get(app, "/v1/sessions/nope/usage")).status).toBe(404);
+  });
+
+  it("sums the tokens and the runs' seconds", async () => {
+    const sessionId = await seedSession(app);
+    await run(sessionId, reply({ usage }));
+    await run(sessionId, reply({ stopReason: "error", errorMessage: "boom" }));
+    await run(sessionId, reply({ usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } }));
+
+    const res = await get(app, `/v1/sessions/${sessionId}/usage/summary`);
+    expect(res.status).toBe(200);
+    // The runs took whatever the test's own steps took on the real clock.
+    expect(await res.json()).toEqual({
+      tokens: { input: 107, output: 23, cacheRead: 30, cacheWrite: 10 },
+      runtimeSeconds: expect.any(Number),
+    });
+  });
+
+  it("answers a session with nothing run yet with zeros", async () => {
+    const sessionId = await seedSession(app);
+    expect(await (await get(app, `/v1/sessions/${sessionId}/usage/summary`)).json()).toEqual({
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      runtimeSeconds: 0,
+    });
+  });
+
+  it("404s unknown and foreign sessions alike for the summary", async () => {
+    const sessionId = await seedSession(app, "tenant-a");
+    expect(
+      (await get(app, `/v1/sessions/${sessionId}/usage/summary?namespace=tenant-b`)).status,
+    ).toBe(404);
+    expect((await get(app, "/v1/sessions/nope/usage/summary")).status).toBe(404);
   });
 });
 
