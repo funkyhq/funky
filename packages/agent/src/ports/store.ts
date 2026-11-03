@@ -19,6 +19,7 @@ import type {
   Task,
   TaskRef,
   UpdateAgentConfigRequest,
+  UsageSummary,
   UserMessage,
   WorkItem,
   WorkItemRef,
@@ -160,6 +161,10 @@ export interface Store {
    *  order — readEntries narrowed in the store, so the tool results
    *  that make up most of a log never leave it. */
   readUsage(ref: SessionRef): Promise<EntryUsage[]>;
+  /** readUsage's tokens summed, with the seconds the session's runs
+   *  have taken (core/store.ts UsageSummary). An unknown or foreign
+   *  session reads as zero, like readUsage's empty list. */
+  readUsageSummary(ref: SessionRef): Promise<UsageSummary>;
   /** Inspection and audit; workers get items through claimItem. */
   listItems(ref: SessionRef): Promise<WorkItem[]>;
   pendingInputs(ref: SessionRef): Promise<PendingInput[]>;

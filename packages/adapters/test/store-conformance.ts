@@ -1459,6 +1459,10 @@ export function describeStoreConformance(
         expect(await store.getSession(foreign)).toBeUndefined();
         expect(await store.readEntries(foreign)).toEqual([]);
         expect(await store.readUsage(foreign)).toEqual([]);
+        expect(await store.readUsageSummary(foreign)).toEqual({
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          runtimeSeconds: 0,
+        });
         expect(await store.listItems(foreign)).toEqual([]);
         expect(await store.pendingInputs(foreign)).toEqual([]);
         await expect(store.intake(foreign, user("hi"))).rejects.toThrow("unknown session");
@@ -1971,6 +1975,52 @@ export function describeStoreConformance(
           { entryId: entries[1]!.id, usage },
           { entryId: entries[4]!.id, usage: later },
         ]);
+      });
+
+      it("sums a session's tokens, and its runs' seconds without the idle gaps between them", async () => {
+        const sessionRef = await newSession();
+        expect(await store.readUsageSummary(sessionRef)).toEqual({
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          runtimeSeconds: 0,
+        });
+
+        // Run 1: two steps, 5s then 3s.
+        const first = await startAndClaim(sessionRef);
+        clock.advance(5_000);
+        await store.commitStep({
+          ...first,
+          append: [
+            {
+              ...assistant("calling"),
+              stopReason: "tool_use",
+              usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 10, reasoning: 5 },
+            },
+          ],
+          next: { kind: "execute_tools" },
+        });
+        const second = await store.claimItem({ leaseMs: 60_000, session: sessionRef });
+        clock.advance(3_000);
+        await store.commitStep({
+          itemRef: second!.item,
+          token: second!.token,
+          append: [
+            { ...assistant("failed"), stopReason: "error", errorMessage: "boom" },
+            { ...assistant("done"), usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } },
+          ],
+          next: { kind: "end_run", status: "completed" },
+        });
+
+        // An hour idle, then run 2, still going 2s in.
+        clock.advance(3_600_000);
+        await store.intake(sessionRef, user("again"));
+        clock.advance(2_000);
+
+        expect(await store.readUsageSummary(sessionRef)).toEqual({
+          tokens: { input: 107, output: 23, cacheRead: 30, cacheWrite: 10 },
+          // The harness clock is real time plus the advances: the steps'
+          // own milliseconds ride along.
+          runtimeSeconds: expect.closeTo(10, 0),
+        });
       });
     });
   });

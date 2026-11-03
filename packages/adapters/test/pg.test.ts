@@ -108,5 +108,12 @@ describe("pg store: work item finished_at", () => {
       { created_at: at(5_000), finished_at: at(8_000) },
       { created_at: at(8_000), finished_at: null },
     ]);
+    expect((await store.readUsageSummary(session)).runtimeSeconds).toBe(8);
+
+    // An item closed before the column existed has no finished_at: it
+    // adds nothing, rather than counting up to now like the open one.
+    nowMs += 2_000;
+    await client.query("UPDATE work_items SET finished_at = NULL WHERE created_at = $1", [at(0)]);
+    expect((await store.readUsageSummary(session)).runtimeSeconds).toBe(5);
   });
 });

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Credentials, NetworkPolicy, Packages, SetupCommands } from "./environment";
-import { JsonValue, UserMessage } from "./messages";
+import { JsonValue, Usage, UserMessage } from "./messages";
 import { InferenceConfig } from "./inference";
 
 /**
@@ -268,6 +268,18 @@ export type WorkItem = z.infer<typeof WorkItem>;
 // cancelled or error). A crash ends no run: the open item waits for a
 // re-claim. Messages that queued during the run start the next one in
 // the ending commit itself — unless it was cancelled.
+
+// A session's usage, summed: the tokens of every assistant message that
+// carries usage (as EntryUsage; `input` includes the cache reads and
+// writes, and the reasoning breakdown is left to the per-message read),
+// and the seconds its runs have taken, each from its start to its end.
+// Idle time between runs is not counted; a run still going counts up to
+// now.
+export const UsageSummary = z.object({
+  tokens: Usage.omit({ reasoning: true }),
+  runtimeSeconds: z.number().nonnegative(),
+});
+export type UsageSummary = z.infer<typeof UsageSummary>;
 
 // --- pending inputs ---
 
