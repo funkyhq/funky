@@ -19,6 +19,8 @@ const SHIPPED: Record<string, string> = {
   "20261027225858_add_tasks": "506fc1f62cceec5019bf73e7f7ec7621e67ba327a30a67be53a10466515555be",
   "20261027233451_add_tasks_list_scan":
     "b9f5180374a4329f6f87d756afc469793aeebb7433699b765713d61e2ceba81c",
+  "20261103212230_add_work_item_finished_at":
+    "ede72e6082a55ff71a7a752d3b5f364cc885b047e2cca9628b946007db26fd81",
 };
 
 const hashes = new Map(migrations.map((m) => [m.name, m.hash]));

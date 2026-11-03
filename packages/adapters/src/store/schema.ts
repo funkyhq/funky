@@ -211,6 +211,10 @@ export const workItems = pgTable(
     // effects keys on attempt > 1.
     attempt: integer("attempt").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    // When commitStep closed the item: null while it is open. The next
+    // item of its run opens at the same instant, so a run spans its first
+    // item's createdAt to its last item's finishedAt.
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.namespace, t.sessionId, t.id] }),
