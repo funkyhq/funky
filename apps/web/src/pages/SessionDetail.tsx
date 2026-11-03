@@ -12,9 +12,9 @@
 // The transcript is pages/Transcript.tsx; the loading and following of the
 // log is lib/useEntries.ts. What is left here is the session row itself,
 // the composer, Archive — the one control on this page that changes the
-// session rather than adding to it — the session's token total, and the
-// one thing none of those can know: which of the messages this client has
-// sent are still missing from the log (Sent).
+// session rather than adding to it — the session's details in a fold
+// under the title, and the one thing none of those can know: which of the
+// messages this client has sent are still missing from the log (Sent).
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -37,7 +37,7 @@ import {
 import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
 import { useEntries } from "../lib/useEntries";
 import { useNow } from "../lib/useNow";
-import { ArrowLeftIcon, RefreshIcon, SendIcon } from "../components/Icons";
+import { ArrowLeftIcon, ChevronDownIcon, RefreshIcon, SendIcon } from "../components/Icons";
 import { Status } from "../components/Status";
 import { SESSION_STATUS } from "../lib/status";
 import { Transcript } from "./Transcript";
@@ -54,11 +54,22 @@ const COMPOSE_MAX = 168;
  *  yanked away. */
 const PINNED_PX = 64;
 
-/** "51.3K": a token total is read for its size, not its digits. */
+/** "51.3K": a token total at a glance is read for its size, not its
+ *  digits. The fold spells the digits out. */
 const TOKENS = new Intl.NumberFormat(undefined, {
   notation: "compact",
   maximumFractionDigits: 1,
 });
+
+const count = (n: number) => n.toLocaleString();
+
+/** "41.7s", "6m 52s", "2h 5m": as precise as a figure that size needs. */
+function duration(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${Math.floor(seconds % 60)}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -267,10 +278,12 @@ export function SessionDetail({ id, taskId }: { id: string; taskId: string }) {
 
   const entries = state.status === "ready" ? state.entries : EMPTY;
 
-  // The token total, read again whenever the log grows: usage arrives on
-  // assistant messages, so a total can only change with a new entry. A
-  // failed read leaves the last total standing, or none — it is a figure
-  // beside the conversation, not something the page needs to work.
+  // The usage, read again whenever the log grows: tokens arrive on
+  // assistant messages, so their total can only change with a new entry.
+  // Runtime moves between entries too while a run is going, so what is
+  // shown is as of the last one. A failed read leaves the last figures
+  // standing, or none — they sit beside the conversation, and the page
+  // does not need them to work.
   const [usage, setUsage] = useState<UsageSummary>();
   const tail = entries.length === 0 ? -1 : entries[entries.length - 1].seq;
   useEffect(() => {
@@ -493,29 +506,82 @@ export function SessionDetail({ id, taskId }: { id: string; taskId: string }) {
           <p className="chat-meta">Loading…</p>
         ) : null
       ) : (
-        <p className="chat-meta">
-          <time dateTime={session.createdAt} title={absoluteTime(session.createdAt)}>
-            Started {relativeTime(session.createdAt, now)}
-          </time>
-          <span>
-            session <code>{id}</code>
-          </span>
-          <span>
-            agent <code>{session.agentConfigId}</code> v{session.agentConfigVersion}
-          </span>
-          {session.sandboxId === undefined ? null : (
-            <span>
-              sandbox <code>{session.sandboxId}</code>
+        // Collapsed, the fold is one line — when, and how much — since the
+        // log below is what this page is for. Open, it is the session's
+        // whole row and its usage, the ids shown whole so they can be
+        // pasted back into a call. A native <details>, like the
+        // transcript's folds: the toggle, keyboard and state come free.
+        <details className="chat-details">
+          <summary className="chat-meta">
+            <time dateTime={session.createdAt} title={absoluteTime(session.createdAt)}>
+              Started {relativeTime(session.createdAt, now)}
+            </time>
+            {usage === undefined ? null : (
+              <span>
+                tokens <code>{TOKENS.format(usage.tokens.input + usage.tokens.output)}</code>
+              </span>
+            )}
+            <span className="chat-details-toggle">
+              Details
+              <ChevronDownIcon />
             </span>
-          )}
-          {usage === undefined ? null : (
-            <span
-              title={`${usage.tokens.input.toLocaleString()} input (cache reads and writes included) + ${usage.tokens.output.toLocaleString()} output`}
-            >
-              tokens <code>{TOKENS.format(usage.tokens.input + usage.tokens.output)}</code>
-            </span>
-          )}
-        </p>
+          </summary>
+          <dl className="chat-details-list">
+            <dt>Task</dt>
+            <dd>
+              <code>{taskId}</code>
+            </dd>
+            <dt>Session</dt>
+            <dd>
+              <code>{id}</code>
+            </dd>
+            <dt>Namespace</dt>
+            <dd>
+              <code>{session.namespace}</code>
+            </dd>
+            <dt>Agent</dt>
+            <dd>
+              <code>{session.agentConfigId}</code> v{session.agentConfigVersion}
+            </dd>
+            <dt>Sandbox</dt>
+            <dd>
+              {session.sandboxId === undefined ? (
+                "None yet: one is created at the first tool call"
+              ) : (
+                <code>{session.sandboxId}</code>
+              )}
+            </dd>
+            <dt>Started</dt>
+            <dd>{absoluteTime(session.createdAt)}</dd>
+            {session.archivedAt === undefined ? null : (
+              <>
+                <dt>Archived</dt>
+                <dd>{absoluteTime(session.archivedAt)}</dd>
+              </>
+            )}
+            {usage === undefined ? null : (
+              <>
+                <dt>Tokens</dt>
+                <dd>
+                  {count(usage.tokens.input + usage.tokens.output)}: {count(usage.tokens.input)}{" "}
+                  input ({count(usage.tokens.cacheRead)} cache read,{" "}
+                  {count(usage.tokens.cacheWrite)} cache write) and {count(usage.tokens.output)}{" "}
+                  output
+                </dd>
+                <dt>Runtime</dt>
+                <dd>{duration(usage.runtimeSeconds)}</dd>
+              </>
+            )}
+            {session.metadata === undefined ? null : (
+              <>
+                <dt>Metadata</dt>
+                <dd>
+                  <pre>{JSON.stringify(session.metadata, null, 2)}</pre>
+                </dd>
+              </>
+            )}
+          </dl>
+        </details>
       )}
 
       <div className="chat-card">
