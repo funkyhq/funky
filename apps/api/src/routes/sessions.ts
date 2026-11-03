@@ -35,6 +35,7 @@ export type SessionStore = Pick<
   | "requestCancel"
   | "readEntries"
   | "readUsage"
+  | "readUsageSummary"
   | "listItems"
 >;
 
@@ -201,6 +202,15 @@ export function sessionRoutes(store: SessionStore) {
     const session = await owned(c, c.req.valid("query").namespace);
     if (!session) return notFound(c);
     return c.json(await store.readUsage(session));
+  });
+
+  // The same tokens summed, with the seconds the session's runs have
+  // taken: each run from its first message to its end, idle time
+  // between runs left out, a run still going counted up to now.
+  r.get("/:id/usage/summary", validate("query", NamespaceQuery), async (c) => {
+    const session = await owned(c, c.req.valid("query").namespace);
+    if (!session) return notFound(c);
+    return c.json(await store.readUsageSummary(session));
   });
 
   r.get("/:id/items", validate("query", NamespaceQuery), async (c) => {

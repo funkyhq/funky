@@ -59,6 +59,7 @@ import {
   Task,
   TaskRef,
   UpdateAgentConfigRequest,
+  UsageSummary,
   UserMessage,
   WorkItem,
   WorkItemRef,
@@ -720,6 +721,47 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         )
         .orderBy(asc(sessionEntries.seq));
       return rows.map((r) => EntryUsage.parse(r));
+    },
+
+    async readUsageSummary(ref) {
+      const { namespace, sessionId } = SessionRef.parse(ref);
+      const usage = sql`${sessionEntries.entry}->'message'->'usage'`;
+      const total = (field: string) =>
+        sql<number>`coalesce(sum((${usage}->>${field})::numeric), 0)`.mapWith(Number);
+      // A run's items meet end to end (commitStep), so its span is the
+      // sum of theirs, and the gaps between runs fall outside every
+      // item. The open item counts up to now. An item closed before
+      // finished_at existed reads as NULL and adds nothing. Each span is
+      // held at zero or more: an item's two ends can be stamped by
+      // different hosts (the api's intake, a worker's commit, our read),
+      // and a step shorter than their clock skew would otherwise subtract.
+      const end = sql`case when ${workItems.status} = 'done' then ${workItems.finishedAt} else ${iso(now())}::timestamptz end`;
+      const span = sql`greatest(${end} - ${workItems.createdAt}, interval '0')`;
+      const [[tokens], [runtime]] = await Promise.all([
+        db
+          .select({
+            input: total("input"),
+            output: total("output"),
+            cacheRead: total("cacheRead"),
+            cacheWrite: total("cacheWrite"),
+          })
+          .from(sessionEntries)
+          .where(
+            and(
+              eq(sessionEntries.namespace, namespace),
+              eq(sessionEntries.sessionId, sessionId),
+              sql`${sessionEntries.entry}->>'type' = 'message'`,
+              sql`${sessionEntries.entry}->'message'->>'role' = 'assistant'`,
+            ),
+          ),
+        db
+          .select({
+            seconds: sql<number>`coalesce(sum(extract(epoch from ${span})), 0)`.mapWith(Number),
+          })
+          .from(workItems)
+          .where(and(eq(workItems.namespace, namespace), eq(workItems.sessionId, sessionId))),
+      ]);
+      return UsageSummary.parse({ tokens, runtimeSeconds: runtime!.seconds });
     },
 
     async listItems(ref) {

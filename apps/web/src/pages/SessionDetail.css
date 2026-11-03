@@ -142,6 +142,84 @@
   overflow-wrap: anywhere;
 }
 
+/* The session's details, folded. The summary IS the meta line above, so
+   collapsed it reads as it always did, with a toggle on the end; the
+   margins move out to the fold so opening it pushes the log down rather
+   than wedging the list between the line and its gap. */
+.chat-details {
+  flex: none;
+  margin-top: 5px;
+  margin-bottom: 14px;
+}
+
+.chat-details > .chat-meta {
+  align-items: center;
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Safari still draws the disclosure triangle on a flex summary. */
+.chat-details > .chat-meta::-webkit-details-marker {
+  display: none;
+}
+
+.chat-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.chat-details > .chat-meta:hover .chat-details-toggle {
+  color: var(--text-2);
+}
+
+.chat-details-toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+
+.chat-details[open] .chat-details-toggle svg {
+  transform: rotate(180deg);
+}
+
+/* Label and value side by side, the labels one column wide: a key/value
+   list is read down the left edge for the row you want. */
+.chat-details-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 18px;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.chat-details-list dt {
+  color: var(--text-3);
+}
+
+.chat-details-list dd {
+  margin: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.chat-details-list code,
+.chat-details-list pre {
+  font: 500 12px var(--mono);
+  color: var(--text);
+}
+
+.chat-details-list pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 /* Card ------------------------------------------------------------------- */
 
 /* min-height: 0, or the log refuses to shrink below its content and pushes

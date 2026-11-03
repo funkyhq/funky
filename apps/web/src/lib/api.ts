@@ -546,6 +546,27 @@ export function readEntries(
   );
 }
 
+/** A session's usage, summed. `tokens` is the usage of every assistant
+ *  message that carries one (`input` includes the cache reads and
+ *  writes); `runtimeSeconds` is how long its runs have taken, each from
+ *  its first message to its end, with the idle time between them left
+ *  out. */
+export type UsageSummary = {
+  tokens: Omit<Usage, "reasoning">;
+  runtimeSeconds: number;
+};
+
+export function getUsageSummary(
+  id: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<UsageSummary> {
+  return get<UsageSummary>(
+    `/v1/sessions/${encodeURIComponent(id)}/usage/summary`,
+    { namespace: DEFAULT_NAMESPACE },
+    opts.signal,
+  );
+}
+
 /**
  * Sends a user message. 202 either way — the answer says what intake did
  * with it, never what the agent will do about it, which happens in a worker
