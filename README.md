@@ -112,6 +112,23 @@ follow-up messages with `POST /v1/sessions/$SID/messages`, and the log above is 
 `POST /v1/tasks/:id/cancel` cancels its session's run. `POST /v1/sessions` still creates a
 bare session for experiments, but the console starts work only as tasks.
 
+### Usage
+
+`GET /v1/sessions/$SID/usage/summary` answers what a session has used so far:
+
+```
+{"tokens":{"input":50320,"output":2262,"cacheRead":38000,"cacheWrite":4000},"runtimeSeconds":41.7}
+```
+
+`tokens` sums the usage the provider reported on each assistant message; `input` includes
+the cache reads and writes. An errored or aborted message carries none, so it adds nothing.
+`GET /v1/sessions/$SID/usage` lists the same counts per message. `runtimeSeconds` is how
+long the session's runs have taken, each from its first message to its end. Idle time
+between runs isn't counted, and a run still going counts up to now. It measures Funky
+working on the session, not what the sandbox provider bills: an E2B sandbox keeps running
+after a run ends, until its idle timeout (`FUNKY_SANDBOX_TIMEOUT_MS`, 30 minutes by
+default). The console shows a session's token total beside its log.
+
 ### Model providers
 
 A config's `inference.provider` picks the vendor that serves it. At boot the worker wires

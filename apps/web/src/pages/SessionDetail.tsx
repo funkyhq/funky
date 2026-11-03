@@ -12,9 +12,9 @@
 // The transcript is pages/Transcript.tsx; the loading and following of the
 // log is lib/useEntries.ts. What is left here is the session row itself,
 // the composer, Archive — the one control on this page that changes the
-// session rather than adding to it — and the one thing none of those can
-// know: which of the messages this client has sent are still missing from
-// the log (Sent).
+// session rather than adding to it — the session's token total, and the
+// one thing none of those can know: which of the messages this client has
+// sent are still missing from the log (Sent).
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -27,9 +27,11 @@ import {
   ApiError,
   type Session,
   type SessionEntry,
+  type UsageSummary,
   type UserMessage,
   archiveSession,
   getSession,
+  getUsageSummary,
   sendMessage,
 } from "../lib/api";
 import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
@@ -51,6 +53,12 @@ const COMPOSE_MAX = 168;
  *  scrolls into view; further up is reading history, which must not be
  *  yanked away. */
 const PINNED_PX = 64;
+
+/** "51.3K": a token total is read for its size, not its digits. */
+const TOKENS = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -258,6 +266,18 @@ export function SessionDetail({ id, taskId }: { id: string; taskId: string }) {
   }
 
   const entries = state.status === "ready" ? state.entries : EMPTY;
+
+  // The token total, read again whenever the log grows: usage arrives on
+  // assistant messages, so a total can only change with a new entry. A
+  // failed read leaves the last total standing, or none — it is a figure
+  // beside the conversation, not something the page needs to work.
+  const [usage, setUsage] = useState<UsageSummary>();
+  const tail = entries.length === 0 ? -1 : entries[entries.length - 1].seq;
+  useEffect(() => {
+    const abort = new AbortController();
+    getUsageSummary(id, { signal: abort.signal }).then(setUsage, () => {});
+    return () => abort.abort();
+  }, [id, tail]);
 
   // A sent message stops being this client's business the moment the log
   // holds it, so which ones are still outstanding is READ from the log
@@ -486,6 +506,13 @@ export function SessionDetail({ id, taskId }: { id: string; taskId: string }) {
           {session.sandboxId === undefined ? null : (
             <span>
               sandbox <code>{session.sandboxId}</code>
+            </span>
+          )}
+          {usage === undefined ? null : (
+            <span
+              title={`${usage.tokens.input.toLocaleString()} input (cache reads and writes included) + ${usage.tokens.output.toLocaleString()} output`}
+            >
+              tokens <code>{TOKENS.format(usage.tokens.input + usage.tokens.output)}</code>
             </span>
           )}
         </p>
