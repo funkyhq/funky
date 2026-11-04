@@ -146,6 +146,15 @@ the session's config names, so one stack runs sessions on different vendors side
 Inference goes through the [Vercel AI SDK](https://ai-sdk.dev) behind a vendor-neutral
 port.
 
+Every Anthropic call opts into prompt caching (Anthropic's automatic caching, 5-minute
+lifetime). A run resends its conversation on each step, so when steps follow within five
+minutes, most of a step's input is a cache read, which Anthropic bills at a small fraction
+of the input price. Writing the cache costs more than plain input (1.25x), so a single-step
+run, or a step after a gap of more than five minutes, pays a little more, not less. Prompts
+under the model's minimum cacheable length (512 tokens on the 5.5 models) are not cached.
+The usage counts above show it as `cacheRead` and `cacheWrite`. OpenAI and Gemini cache
+repeated prefixes on their own.
+
 ### Packages
 
 `packages` maps a package manager to specs in its own syntax:

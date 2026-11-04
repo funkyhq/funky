@@ -54,11 +54,19 @@ import type {
 } from "@funky/core";
 import type { InferenceProvider, StreamRequest } from "@funky/agent";
 
+/** streamText's per-call vendor options, keyed by vendor namespace. The
+ *  `ai` package uses the type but does not export it. */
+export type AiSdkCallOptions = NonNullable<Parameters<typeof streamText>[0]["providerOptions"]>;
+
 export interface AiSdkProviderOptions {
   /** The request's model string → an AI SDK model. This injection IS the
    *  composition root's vendor choice — a vendor package's provider
    *  function (`createAnthropic({ apiKey })`) fits directly. */
   languageModel: (modelId: string) => LanguageModel;
+  /** Vendor options sent on every call, keyed by vendor namespace, from
+   *  the same composition root: Anthropic's prompt caching, for one.
+   *  Each SDK reads only its own namespace. */
+  providerOptions?: AiSdkCallOptions;
 }
 
 export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvider {
@@ -74,6 +82,7 @@ export function createAiSdkProvider(opts: AiSdkProviderOptions): InferenceProvid
         temperature: req.temperature,
         abortSignal: signal,
         maxRetries: 0,
+        providerOptions: opts.providerOptions,
       });
 
       interface Block {
