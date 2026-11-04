@@ -1,5 +1,5 @@
 export { createAiSdkProvider } from "./inference/aisdk";
-export type { AiSdkProviderOptions } from "./inference/aisdk";
+export type { AiSdkCallOptions, AiSdkProviderOptions } from "./inference/aisdk";
 export { createE2bProvider } from "./sandbox/e2b";
 export type { E2bProviderOptions } from "./sandbox/e2b";
 export { createInfisicalSecretProvider } from "./secrets/infisical";

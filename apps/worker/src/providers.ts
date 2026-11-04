@@ -17,7 +17,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createTogetherAI } from "@ai-sdk/togetherai";
 import { createXai } from "@ai-sdk/xai";
 import type { LanguageModel } from "ai";
-import { createAiSdkProvider } from "@funky/adapters";
+import { type AiSdkCallOptions, createAiSdkProvider } from "@funky/adapters";
 import type { InferenceProvider } from "@funky/agent";
 
 export interface Vendor {
@@ -28,6 +28,8 @@ export interface Vendor {
   /** The vendor's AI SDK provider function bound to a key: the model
    *  factory the adapter calls with each request's model id. */
   languageModel: (apiKey: string) => (modelId: string) => LanguageModel;
+  /** Options the adapter sends on every call to this vendor. */
+  providerOptions?: AiSdkCallOptions;
 }
 
 /** Ids follow the AI SDK package suffix (`@ai-sdk/togetherai` → `togetherai`)
@@ -38,6 +40,16 @@ export const VENDORS: readonly Vendor[] = [
     id: "anthropic",
     envKey: "ANTHROPIC_API_KEY",
     languageModel: (apiKey) => createAnthropic({ apiKey }),
+    // Anthropic caches a prompt only when the request opts in. One
+    // top-level cache_control is its automatic caching: each call caches
+    // up to its last cacheable block and reads back the longest prefix an
+    // earlier call wrote, so a run's steps, which resend the conversation
+    // so far, pay full price only for what is new since the last one.
+    // The default 5-minute lifetime, refreshed on every hit, usually
+    // outlasts the gap between a run's steps; a longer gap (a long bash
+    // command, a late follow-up) misses and rewrites the prefix at the
+    // write price, 1.25x input. OpenAI and Gemini cache on their own.
+    providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
   },
   {
     id: "openai",
@@ -71,7 +83,13 @@ export function wireProviders(keys: ReadonlyMap<string, string>): Map<string, In
   for (const vendor of VENDORS) {
     const apiKey = keys.get(vendor.id);
     if (apiKey === undefined) continue;
-    providers.set(vendor.id, createAiSdkProvider({ languageModel: vendor.languageModel(apiKey) }));
+    providers.set(
+      vendor.id,
+      createAiSdkProvider({
+        languageModel: vendor.languageModel(apiKey),
+        providerOptions: vendor.providerOptions,
+      }),
+    );
   }
   return providers;
 }

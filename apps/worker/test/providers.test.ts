@@ -6,6 +6,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createTogetherAI } from "@ai-sdk/togetherai";
 import { createXai } from "@ai-sdk/xai";
+import { createAiSdkProvider } from "@funky/adapters";
 import { VENDORS, wireProviders } from "../src/providers";
 
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: vi.fn(() => () => "anthropic-model") }));
@@ -15,6 +16,10 @@ vi.mock("@ai-sdk/google", () => ({
 vi.mock("@ai-sdk/openai", () => ({ createOpenAI: vi.fn(() => () => "openai-model") }));
 vi.mock("@ai-sdk/togetherai", () => ({ createTogetherAI: vi.fn(() => () => "together-model") }));
 vi.mock("@ai-sdk/xai", () => ({ createXai: vi.fn(() => () => "xai-model") }));
+vi.mock("@funky/adapters", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@funky/adapters")>();
+  return { ...actual, createAiSdkProvider: vi.fn(actual.createAiSdkProvider) };
+});
 
 const ALL_KEYS = new Map([
   ["anthropic", "k-anthropic"],
@@ -30,6 +35,24 @@ describe("VENDORS", () => {
     const envKeys = VENDORS.map((vendor) => vendor.envKey);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(envKeys).size).toBe(envKeys.length);
+  });
+});
+
+describe("prompt caching", () => {
+  it("opts every Anthropic call into automatic caching, and sends the other vendors nothing extra", () => {
+    const options = new Map(VENDORS.map((vendor) => [vendor.id, vendor.providerOptions]));
+    expect(options.get("anthropic")).toEqual({
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    });
+    for (const id of ["openai", "google", "togetherai", "xai"])
+      expect(options.get(id)).toBeUndefined();
+  });
+
+  it("hands each vendor's options to its adapter", () => {
+    vi.mocked(createAiSdkProvider).mockClear();
+    wireProviders(ALL_KEYS);
+    const handed = vi.mocked(createAiSdkProvider).mock.calls.map(([opts]) => opts.providerOptions);
+    expect(handed).toEqual(VENDORS.map((vendor) => vendor.providerOptions));
   });
 });
 

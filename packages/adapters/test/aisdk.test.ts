@@ -405,6 +405,26 @@ describe("aisdk adapter: request mapping", () => {
     expect((call.tools?.[0] as { inputSchema: unknown }).inputSchema).toMatchObject(inputSchema);
   });
 
+  it("sends the composition root's vendor options on every call, and none unless given", async () => {
+    const cache = { anthropic: { cacheControl: { type: "ephemeral" } } };
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: convertArrayToReadableStream<SpecPart>([
+          { type: "stream-start", warnings: [] },
+          finish("stop"),
+        ]),
+      }),
+    });
+    const provider = createAiSdkProvider({ languageModel: () => model, providerOptions: cache });
+    await collect(provider, request());
+    await collect(provider, request());
+    expect(model.doStreamCalls.map((call) => call.providerOptions)).toEqual([cache, cache]);
+
+    const { provider: plain, model: plainModel } = providerWith([finish("stop")]);
+    await collect(plain, request());
+    expect(plainModel.doStreamCalls[0]!.providerOptions).toBeUndefined();
+  });
+
   it("leaves absent sampling fields absent — the vendor's defaults, never a harness default", async () => {
     const { provider, model } = providerWith([finish("stop")]);
     await collect(provider, request());
