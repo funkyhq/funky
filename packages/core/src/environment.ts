@@ -47,6 +47,19 @@ export const SetupCommands = z.array(
 );
 export type SetupCommands = z.infer<typeof SetupCommands>;
 
+// The compute a sandbox gets: how many vCPUs and how much memory, in
+// MiB. A field left out is the provider's default size, so {} asks for
+// nothing and a config can set memory alone. Sizes are whole numbers; a
+// provider's own limits (a ceiling, an even number) belong to its
+// adapter, which MUST reject create() for a size it cannot give — never
+// hand back a smaller sandbox than asked. Strict, so a misspelt field
+// is refused rather than quietly read as the default.
+export const Resources = z.strictObject({
+  cpuCount: z.number().int().min(1).optional(),
+  memoryMB: z.number().int().min(1).optional(),
+});
+export type Resources = z.infer<typeof Resources>;
+
 /** A key's name in the namespace's secret store (/v1/secrets). */
 export const SecretName = z
   .string()
