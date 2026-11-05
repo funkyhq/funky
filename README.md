@@ -195,9 +195,10 @@ out for the default, or send `{}` for both:
 
 - On E2B the size is built into the template, like packages, so changing it means one new
   build before the next session starts.
-- The defaults are 2 vCPUs and 512 MiB without packages or setup commands, or 1024 MiB with
-  them. A Deno or Node build, or a large `git` checkout, can outgrow that; when memory runs
-  out, commands hang until they time out (exit code 124).
+- A sandbox that needs no template (no packages, setup commands or size) gets 2 vCPUs and
+  512 MiB. Otherwise a field left out is 2 vCPUs or 1024 MiB, so `{ "cpuCount": 4 }` alone
+  also gets 1024 MiB. A Deno or Node build, or a large `git` checkout, can outgrow that; when
+  memory runs out, commands hang until they time out (exit code 124).
 - E2B wants memory in even MiB and vCPUs as 1 or an even number, and caps both by plan
   (8192 MiB on the plan tested). A size it refuses ends the run as `"error"` with its reason.
 
