@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Credentials, NetworkPolicy, Packages, SetupCommands } from "./environment";
+import { Credentials, NetworkPolicy, Packages, Resources, SetupCommands } from "./environment";
 import { JsonValue, Usage, UserMessage } from "./messages";
 import { InferenceConfig } from "./inference";
 
@@ -64,7 +64,7 @@ export const DEFAULT_NAMESPACE = "default";
 // Agent configs are mutable, with a monotonic version used for optional
 // optimistic concurrency. Every version is an immutable snapshot of both
 // the behavior (inference, system prompt) and the sandbox (network,
-// packages, credentials, setup commands). A session PINS one concrete
+// packages, credentials, setup commands, resources). A session PINS one concrete
 // version at creation, so a later edit cannot reshape a run already under
 // way.
 //
@@ -103,6 +103,7 @@ export const CreateAgentConfigRequest = z.object({
   packages: Packages,
   credentials: Credentials,
   setupCommands: SetupCommands,
+  resources: Resources,
   metadata: JsonValue.optional(),
 });
 export type CreateAgentConfigRequest = z.infer<typeof CreateAgentConfigRequest>;
@@ -114,6 +115,7 @@ export const UpdateAgentConfigRequest = z.object({
   packages: Packages.optional(),
   credentials: Credentials.optional(),
   setupCommands: SetupCommands.optional(),
+  resources: Resources.optional(),
   metadata: JsonValue.optional(),
   // Optional optimistic-concurrency precondition: version 3 updates only if 3 is current.
   version: z.number().int().min(1).optional(),

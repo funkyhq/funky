@@ -154,6 +154,7 @@ async function newSession(inference = inferenceConfig): Promise<SessionRef> {
     packages: {},
     credentials: [],
     setupCommands: [],
+    resources: {},
   });
   return store.createSession({
     namespace: DEFAULT_NAMESPACE,

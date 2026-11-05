@@ -36,6 +36,7 @@ async function seedConfig(namespace = "default"): Promise<string> {
     packages: {},
     credentials: [],
     setupCommands: [],
+    resources: {},
   });
   return (await res.json()).id;
 }

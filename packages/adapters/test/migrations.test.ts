@@ -21,6 +21,8 @@ const SHIPPED: Record<string, string> = {
     "b9f5180374a4329f6f87d756afc469793aeebb7433699b765713d61e2ceba81c",
   "20261103212230_add_work_item_finished_at":
     "ede72e6082a55ff71a7a752d3b5f364cc885b047e2cca9628b946007db26fd81",
+  "20261105195729_add_agent_config_resources":
+    "78a3911f821c913f94507d7acdde4d2883cc4f733c369cf28d6b506f2168ac22",
 };
 
 const hashes = new Map(migrations.map((m) => [m.name, m.hash]));
@@ -88,5 +90,43 @@ describe("20261026180444_add_agent_config_setup_commands", () => {
           VALUES ('default', 'a1', 2, '{}', 's', '{}', '{}', '[]', now());
       `),
     ).rejects.toThrow(/setup_commands/);
+  });
+});
+
+describe("20261105195729_add_agent_config_resources", () => {
+  // As above: one database, booted once, at the migration before this one
+  // and holding one agent config version saved there.
+  let db: PGlite;
+  beforeAll(async () => {
+    db = new PGlite();
+    const at = migrations.findIndex((m) => m.name === "20261105195729_add_agent_config_resources");
+    for (const migration of migrations.slice(0, at)) {
+      for (const chunk of migration.sql) await db.exec(chunk);
+    }
+    await db.exec(`
+      INSERT INTO agent_configs VALUES ('default', 'a1', 1, now(), NULL);
+      INSERT INTO agent_config_versions
+        (namespace, agent_config_id, version, inference, system_prompt, network, packages, credentials, setup_commands, updated_at)
+        VALUES ('default', 'a1', 1, '{}', 's', '{}', '{}', '[]', '[]', now());
+    `);
+    for (const chunk of migrations[at]!.sql) await db.exec(chunk);
+  }, 60_000);
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  it("gives versions saved before it the provider's default size", async () => {
+    const { rows } = await db.query("SELECT resources FROM agent_config_versions");
+    expect(rows).toEqual([{ resources: {} }]);
+  });
+
+  it("leaves no default behind: a write without resources is refused", async () => {
+    await expect(
+      db.exec(`
+        INSERT INTO agent_config_versions
+          (namespace, agent_config_id, version, inference, system_prompt, network, packages, credentials, setup_commands, updated_at)
+          VALUES ('default', 'a1', 2, '{}', 's', '{}', '{}', '[]', '[]', now());
+      `),
+    ).rejects.toThrow(/resources/);
   });
 });

@@ -86,6 +86,7 @@ export function describeStoreConformance(
         packages: {},
         credentials: [],
         setupCommands: [],
+        resources: {},
         ...overrides,
       });
     }
@@ -135,6 +136,7 @@ export function describeStoreConformance(
           packages: {},
           credentials: [],
           setupCommands: [],
+          resources: {},
           metadata: { team: "growth" },
         });
         const config = await store.getAgentConfig(ref);
@@ -178,6 +180,7 @@ export function describeStoreConformance(
             packages: {},
             credentials: [],
             setupCommands: [],
+            resources: {},
           }),
         ).rejects.toThrow();
       });
@@ -327,7 +330,7 @@ export function describeStoreConformance(
         ).rejects.toThrow();
       });
 
-      it("requires network, packages, credentials and setup commands at agent config create — no default to resolve", async () => {
+      it("requires network, packages, credentials, setup commands and resources at agent config create — no default to resolve", async () => {
         const base = {
           namespace: DEFAULT_NAMESPACE,
           inference: { provider: "fake", model: "m" },
@@ -335,10 +338,11 @@ export function describeStoreConformance(
         };
         const network = { type: "unrestricted" };
         for (const req of [
-          { ...base, packages: {}, credentials: [], setupCommands: [] },
-          { ...base, network, credentials: [], setupCommands: [] },
-          { ...base, network, packages: {}, setupCommands: [] },
-          { ...base, network, packages: {}, credentials: [] },
+          { ...base, packages: {}, credentials: [], setupCommands: [], resources: {} },
+          { ...base, network, credentials: [], setupCommands: [], resources: {} },
+          { ...base, network, packages: {}, setupCommands: [], resources: {} },
+          { ...base, network, packages: {}, credentials: [], resources: {} },
+          { ...base, network, packages: {}, credentials: [], setupCommands: [] },
         ]) {
           // biome-ignore lint/suspicious/noExplicitAny: deliberately incomplete
           await expect(store.createAgentConfig(req as any)).rejects.toThrow();
@@ -354,12 +358,14 @@ export function describeStoreConformance(
           packages: { pip: ["pandas==2.2.0"] },
           credentials: [STRIPE, GITHUB],
           setupCommands: [MONID_KEY, SKILL_FILE],
+          resources: { cpuCount: 4, memoryMB: 4096 },
         });
         expect(await store.getAgentConfig(ref)).toMatchObject({
           network: { type: "allowlist", domains: ["pypi.org"] },
           packages: { pip: ["pandas==2.2.0"] },
           credentials: [STRIPE, GITHUB],
           setupCommands: [MONID_KEY, SKILL_FILE],
+          resources: { cpuCount: 4, memoryMB: 4096 },
         });
       });
 
@@ -412,7 +418,19 @@ export function describeStoreConformance(
           version: 7,
         });
         const v8 = await store.updateAgentConfig(ref, { systemPrompt: "behavior once more" });
-        expect(v8).toMatchObject({ setupCommands: [MONID_KEY], version: 8 });
+        expect(v8).toMatchObject({ setupCommands: [MONID_KEY], resources: {}, version: 8 });
+
+        const v9 = await store.updateAgentConfig(ref, { resources: { memoryMB: 4096 } });
+        expect(v9).toMatchObject({
+          network: { type: "none" },
+          packages: { npm: ["zod@4"] },
+          credentials: [GITHUB],
+          setupCommands: [MONID_KEY],
+          resources: { memoryMB: 4096 },
+          version: 9,
+        });
+        const v10 = await store.updateAgentConfig(ref, { systemPrompt: "behavior at last" });
+        expect(v10).toMatchObject({ resources: { memoryMB: 4096 }, version: 10 });
 
         // Every snapshot is whole: a pinned version keeps the world it had.
         expect(await store.getAgentConfig({ ...ref, version: 1 })).toEqual(v1);
@@ -430,6 +448,7 @@ export function describeStoreConformance(
           newAgent({ credentials: [{ ...GITHUB, type: "unsafe" }] as any }),
         ).rejects.toThrow();
         await expect(newAgent({ setupCommands: [" "] })).rejects.toThrow();
+        await expect(newAgent({ resources: { memoryMB: 0 } })).rejects.toThrow();
         const ref = await newAgent();
         await expect(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
@@ -441,6 +460,10 @@ export function describeStoreConformance(
         await expect(
           // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
           store.updateAgentConfig(ref, { setupCommands: MONID_KEY } as any),
+        ).rejects.toThrow();
+        await expect(
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed
+          store.updateAgentConfig(ref, { resources: { memoryMb: 4096 } } as any),
         ).rejects.toThrow();
         expect((await store.getAgentConfig(ref))?.version).toBe(1);
       });
@@ -506,6 +529,7 @@ export function describeStoreConformance(
           { packages: { pip: ["numpy"] } },
           { credentials: [GITHUB] },
           { setupCommands: [MONID_KEY] },
+          { resources: { memoryMB: 4096 } },
           { systemPrompt: "after", version: 1 },
         ]) {
           await expect(store.updateAgentConfig(ref, req)).rejects.toMatchObject({
@@ -756,6 +780,7 @@ export function describeStoreConformance(
           packages: { pip: ["numpy"] },
           credentials: [GITHUB],
           setupCommands: [MONID_KEY],
+          resources: { memoryMB: 2048 },
         });
         const before = await newSessionOn(agentConfigRef);
         await store.updateAgentConfig(agentConfigRef, {
@@ -763,6 +788,7 @@ export function describeStoreConformance(
           packages: { npm: ["zod"] },
           credentials: [STRIPE],
           setupCommands: [SKILL_FILE],
+          resources: { cpuCount: 4, memoryMB: 4096 },
         });
         const after = await newSessionOn(agentConfigRef);
 
@@ -777,6 +803,7 @@ export function describeStoreConformance(
             packages: config?.packages,
             credentials: config?.credentials,
             setupCommands: config?.setupCommands,
+            resources: config?.resources,
           };
         };
         expect(await environmentOf(before)).toEqual({
@@ -784,12 +811,14 @@ export function describeStoreConformance(
           packages: { pip: ["numpy"] },
           credentials: [GITHUB],
           setupCommands: [MONID_KEY],
+          resources: { memoryMB: 2048 },
         });
         expect(await environmentOf(after)).toEqual({
           network: { type: "allowlist", domains: ["example.com"] },
           packages: { npm: ["zod"] },
           credentials: [STRIPE],
           setupCommands: [SKILL_FILE],
+          resources: { cpuCount: 4, memoryMB: 4096 },
         });
       });
 

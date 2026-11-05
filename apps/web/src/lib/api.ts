@@ -34,6 +34,7 @@ export type AgentConfig = {
   packages: Packages;
   credentials: Credential[];
   setupCommands: string[];
+  resources: Resources;
   /** Monotonic; an update lands as the next version rather than a rewrite. */
   version: number;
   createdAt: string;
@@ -64,6 +65,10 @@ export type Credential = {
   /** The header's value, with `{secret}` where the key goes. */
   value: string;
 };
+
+/** The sandbox's size: vCPUs and memory in MiB. A field left out is the
+ *  provider's default, so {} asks for nothing. */
+export type Resources = { cpuCount?: number; memoryMB?: number };
 
 /** The envelope every collection route returns (api routes/common.ts). */
 export type Page<T> = {
@@ -200,9 +205,9 @@ export function listAgentConfigs(
 }
 
 /** The create body, minus the namespace this console pins for every call.
- *  Network, packages, credentials and setup commands are required: the
- *  request says what the sandbox is, rather than leaving it to an api
- *  default. */
+ *  Network, packages, credentials, setup commands and resources are
+ *  required: the request says what the sandbox is, rather than leaving it
+ *  to an api default. */
 export type CreateAgentConfigInput = {
   inference: InferenceConfig;
   systemPrompt: string;
@@ -211,6 +216,8 @@ export type CreateAgentConfigInput = {
   credentials: Credential[];
   /** Shell commands that finish the sandbox after its packages install. */
   setupCommands: string[];
+  /** The sandbox's size; {} is the provider's default. */
+  resources: Resources;
   metadata?: unknown;
 };
 
@@ -257,6 +264,7 @@ export type UpdateAgentConfigInput = {
   packages?: Packages;
   credentials?: Credential[];
   setupCommands?: string[];
+  resources?: Resources;
   /** Optimistic concurrency: the version this edit was made against. The
    *  api answers 409 if it is no longer the current one. */
   version?: number;

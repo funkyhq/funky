@@ -51,6 +51,7 @@ describe("configs", () => {
         },
       ],
       setupCommands: ["monid keys add --key monid_funky_injected --label funky"],
+      resources: { cpuCount: 4, memoryMB: 4096 },
       namespace: "tenant-a",
       metadata: { team: "growth" },
       version: 3,
@@ -69,6 +70,7 @@ describe("configs", () => {
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
     });
     expect(result.success).toBe(true);
   });
@@ -118,6 +120,7 @@ describe("configs", () => {
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",
@@ -175,8 +178,12 @@ describe("configs", () => {
     const environment = { network: { type: "none" }, packages: {}, credentials: [] };
     expect(AgentConfig.safeParse({ ...config, ...environment }).success).toBe(false);
     expect(AgentConfig.safeParse({ ...config, ...environment, setupCommands: [] }).success).toBe(
-      true,
+      false,
     );
+    expect(
+      AgentConfig.safeParse({ ...config, ...environment, setupCommands: [], resources: {} })
+        .success,
+    ).toBe(true);
   });
 
   it("requires the environment on agent config create, accepts it on update, and validates it", () => {
@@ -197,10 +204,18 @@ describe("configs", () => {
         },
       ],
       setupCommands: ["monid keys add --key monid_funky_injected --label funky"],
+      resources: { memoryMB: 4096 },
     };
     expect(CreateAgentConfigRequest.safeParse(create).success).toBe(true);
     expect(CreateAgentConfigRequest.safeParse({ ...create, setupCommands: [] }).success).toBe(true);
-    for (const field of ["network", "packages", "credentials", "setupCommands"] as const) {
+    expect(CreateAgentConfigRequest.safeParse({ ...create, resources: {} }).success).toBe(true);
+    for (const field of [
+      "network",
+      "packages",
+      "credentials",
+      "setupCommands",
+      "resources",
+    ] as const) {
       const { [field]: _, ...missing } = create;
       expect(CreateAgentConfigRequest.safeParse(missing).success, field).toBe(false);
     }
@@ -220,6 +235,8 @@ describe("configs", () => {
     expect(UpdateAgentConfigRequest.safeParse({ setupCommands: [] }).success).toBe(true);
     expect(UpdateAgentConfigRequest.safeParse({ setupCommands: ["  "] }).success).toBe(false);
     expect(UpdateAgentConfigRequest.safeParse({ setupCommands: "npm i" }).success).toBe(false);
+    expect(UpdateAgentConfigRequest.safeParse({ resources: { cpuCount: 2 } }).success).toBe(true);
+    expect(UpdateAgentConfigRequest.safeParse({ resources: { memoryMB: -1 } }).success).toBe(false);
   });
 
   it("round-trips an archived agent config — the mark is a timestamp, not a flag", () => {
@@ -231,6 +248,7 @@ describe("configs", () => {
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
       namespace: "default",
       version: 2,
       createdAt: "2026-08-11T12:00:00Z",
@@ -249,6 +267,7 @@ describe("configs", () => {
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
       namespace: "default",
       version: 1,
       createdAt: "2026-08-11T12:00:00Z",

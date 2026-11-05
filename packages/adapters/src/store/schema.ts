@@ -34,6 +34,7 @@ import type {
   NetworkPolicy,
   Packages,
   SessionEntry,
+  Resources,
   SetupCommands,
   UserMessage,
 } from "@funky/core";
@@ -78,6 +79,7 @@ export const agentConfigVersions = pgTable(
     packages: jsonb("packages").$type<Packages>().notNull(),
     credentials: jsonb("credentials").$type<Credentials>().notNull(),
     setupCommands: jsonb("setup_commands").$type<SetupCommands>().notNull(),
+    resources: jsonb("resources").$type<Resources>().notNull(),
     metadata: jsonb("metadata").$type<WrappedJson>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
