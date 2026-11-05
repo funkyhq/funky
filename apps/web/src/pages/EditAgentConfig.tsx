@@ -41,12 +41,14 @@ import {
 } from "../lib/network";
 import { compact, samePackages } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
+import { resourceFieldsOf, sameResources, toResources } from "../lib/resources";
 import { sameSetupCommands, toSetupCommands } from "../lib/setup-commands";
 import { CredentialsFields } from "../components/CredentialsFields";
 import { Field, type FieldOption } from "../components/Field";
 import { Modal } from "../components/Modal";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { PackagesFields } from "../components/PackagesFields";
+import { ResourcesFields } from "../components/ResourcesFields";
 import { SetupCommandsFields } from "../components/SetupCommandsFields";
 import { absoluteTime } from "../lib/format";
 
@@ -166,6 +168,7 @@ function EditForm({
     credentialFieldsOf(config.credentials),
   );
   const [setupCards, setSetupCards] = useState(config.setupCommands);
+  const [resourceFields, setResourceFields] = useState(() => resourceFieldsOf(config.resources));
   const [failure, setFailure] = useState<string>();
   // WHICH write is in flight, not merely whether one is. The two paths out
   // of this dialog are mutually exclusive and every control is disabled by
@@ -209,15 +212,22 @@ function EditForm({
   const setupCommands = toSetupCommands(setupCards);
   const setupChanged =
     setupCommands !== undefined && !sameSetupCommands(setupCommands, config.setupCommands);
+  // Absent while a size isn't a whole number (see toResources).
+  const resources = toResources(resourceFields);
+  const resourcesChanged = resources !== undefined && !sameResources(resources, config.resources);
   const incomplete =
-    network === undefined || credentials === undefined || setupCommands === undefined;
+    network === undefined ||
+    credentials === undefined ||
+    setupCommands === undefined ||
+    resources === undefined;
   const changed =
     inferenceChanged ||
     promptChanged ||
     networkChanged ||
     packagesChanged ||
     credentialsChanged ||
-    setupChanged;
+    setupChanged ||
+    resourcesChanged;
 
   // The offered provider, when it is one; otherwise the config's own, whose
   // models this console can't enumerate — so the model it already has is
@@ -262,6 +272,7 @@ function EditForm({
       packages: packagesChanged ? compact(packages) : undefined,
       credentials: credentialsChanged ? credentials : undefined,
       setupCommands: setupChanged ? setupCommands : undefined,
+      resources: resourcesChanged ? resources : undefined,
       version: config.version,
     };
 
@@ -373,6 +384,12 @@ function EditForm({
           <SetupCommandsFields
             commands={setupCards}
             onChange={setSetupCards}
+            disabled={archived || busy}
+          />
+
+          <ResourcesFields
+            fields={resourceFields}
+            onChange={setResourceFields}
             disabled={archived || busy}
           />
         </div>
