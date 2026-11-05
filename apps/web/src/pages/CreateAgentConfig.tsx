@@ -2,10 +2,10 @@
 // The Create Agent dialog: the POST /v1/agent-configs body as a form.
 //
 // The form is the request's REQUIRED shape: provider, model, system prompt,
-// network, packages, credentials, setup commands — no packages typed is {},
-// install nothing, and no credential or command added is [], none, each
-// said explicitly. Resources, also required, have no field yet, so the body
-// says {}, the provider's default size. The body's optional parts — maxTokens, temperature, metadata —
+// network, packages, credentials, setup commands, resources — no packages
+// typed is {}, install nothing, no credential or command added is [], none,
+// and no size typed is {}, the provider's default, each said explicitly.
+// The body's optional parts — maxTokens, temperature, metadata —
 // are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
@@ -33,11 +33,13 @@ import { type CredentialFields, toCredentials } from "../lib/credentials";
 import { type NetworkFields, toPolicy } from "../lib/network";
 import { compact } from "../lib/packages";
 import { PROVIDERS } from "../lib/providers";
+import { type ResourceFields, toResources } from "../lib/resources";
 import { toSetupCommands } from "../lib/setup-commands";
 import { AgentFields as AgentFieldset } from "../components/AgentFields";
 import { CredentialsFields } from "../components/CredentialsFields";
 import { NetworkFields as NetworkFieldset } from "../components/NetworkFields";
 import { PackagesFields } from "../components/PackagesFields";
+import { ResourcesFields } from "../components/ResourcesFields";
 import { SetupCommandsFields } from "../components/SetupCommandsFields";
 import { Modal } from "../components/Modal";
 import { ProviderKeys } from "../components/ProviderKeys";
@@ -118,19 +120,28 @@ function Form({
   const [packages, setPackages] = useState<Packages>({});
   const [credentialFields, setCredentialFields] = useState<CredentialFields[]>([]);
   const [setupCards, setSetupCards] = useState<string[]>([]);
+  const [resourceFields, setResourceFields] = useState<ResourceFields>({
+    cpuCount: "",
+    memoryMB: "",
+  });
   const [busy, setBusy] = useState(false);
   // The api's refusal — a 400, or an api that isn't there. What the fields
   // themselves refuse is a request that isn't one yet (below).
   const [failure, setFailure] = useState<string>();
 
   // Absent while the allowlist has no domain on it, a credential has an
-  // empty field, or a setup command is blank — the states of this form that
-  // aren't a request yet (see toPolicy, toCredentials, toSetupCommands).
+  // empty field, a setup command is blank, or a size isn't a whole number —
+  // the states of this form that aren't a request yet (see toPolicy,
+  // toCredentials, toSetupCommands, toResources).
   const network = toPolicy(networkFields);
   const credentials = toCredentials(credentialFields);
   const setupCommands = toSetupCommands(setupCards);
+  const resources = toResources(resourceFields);
   const incomplete =
-    network === undefined || credentials === undefined || setupCommands === undefined;
+    network === undefined ||
+    credentials === undefined ||
+    setupCommands === undefined ||
+    resources === undefined;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -143,7 +154,7 @@ function Form({
       packages: compact(packages),
       credentials,
       setupCommands,
-      resources: {},
+      resources,
     };
 
     setFailure(undefined);
@@ -165,8 +176,8 @@ function Form({
       title="Create agent config"
       description={
         <>
-          The model, system prompt, network, packages, credentials and setup commands a session runs
-          with. Lands as version 1 in the <code>{DEFAULT_NAMESPACE}</code> namespace.
+          The model, system prompt, network, packages, credentials, setup commands and size a
+          session runs with. Lands as version 1 in the <code>{DEFAULT_NAMESPACE}</code> namespace.
         </>
       }
       dismissible={!busy}
@@ -184,6 +195,7 @@ function Form({
           <PackagesFields packages={packages} onChange={setPackages} />
           <CredentialsFields credentials={credentialFields} onChange={setCredentialFields} />
           <SetupCommandsFields commands={setupCards} onChange={setSetupCards} />
+          <ResourcesFields fields={resourceFields} onChange={setResourceFields} />
         </div>
 
         <footer className="modal-foot">

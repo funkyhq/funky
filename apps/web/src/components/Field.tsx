@@ -43,6 +43,8 @@ export function Field({
   spellCheck?: boolean;
   /** The id of a <datalist> whose options an input suggests. */
   list?: string;
+  /** The keyboard a touch device offers: "numeric" for a number. */
+  inputMode?: "numeric";
 }) {
   const props = {
     id: name,

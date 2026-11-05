@@ -184,6 +184,23 @@ and shared by every session that uses it, so packages work under any `network` p
 - They run once per build, not per session, so they see no credentials.
 - A command that fails ends the run as `"error"`, naming it. Give downloads their own retries.
 
+### Resources
+
+`resources` sizes the sandbox: `cpuCount` vCPUs and `memoryMB` MiB of memory. Leave a field
+out for the default, or send `{}` for both:
+
+```json
+"resources": { "cpuCount": 4, "memoryMB": 4096 }
+```
+
+- On E2B the size is built into the template, like packages, so changing it means one new
+  build before the next session starts.
+- The defaults are 2 vCPUs and 512 MiB without packages or setup commands, or 1024 MiB with
+  them. A Deno or Node build, or a large `git` checkout, can outgrow that; when memory runs
+  out, commands hang until they time out (exit code 124).
+- E2B wants memory in even MiB and vCPUs as 1 or an even number, and caps both by plan
+  (8192 MiB on the plan tested). A size it refuses ends the run as `"error"` with its reason.
+
 ### Secrets
 
 Most setups skip this. It's only for API keys your agent's tools use, such as a Stripe or
