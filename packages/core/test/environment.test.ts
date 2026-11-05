@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Credentials, SetupCommands } from "../src/environment";
+import { Credentials, Resources, SetupCommands } from "../src/environment";
 
 const STRIPE = {
   type: "injected",
@@ -147,5 +147,40 @@ describe("setup commands", () => {
   it("takes a list of strings, not one string", () => {
     expect(setupProblems("monid keys add")).toHaveLength(1);
     expect(setupProblems([["monid", "keys", "add"]])).toHaveLength(1);
+  });
+});
+
+/** The issues a resources object draws, each as "path: message". */
+const resourceProblems = (resources: unknown) => {
+  const result = Resources.safeParse(resources);
+  return result.success
+    ? []
+    : result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
+};
+
+describe("resources", () => {
+  it("takes a size, either half of one, and none at all", () => {
+    expect(Resources.parse({ cpuCount: 4, memoryMB: 4096 })).toEqual({
+      cpuCount: 4,
+      memoryMB: 4096,
+    });
+    expect(Resources.parse({ memoryMB: 2048 })).toEqual({ memoryMB: 2048 });
+    expect(Resources.parse({ cpuCount: 1 })).toEqual({ cpuCount: 1 });
+    expect(Resources.parse({})).toEqual({});
+  });
+
+  it("refuses sizes that are not whole and positive", () => {
+    for (const memoryMB of [0, -512, 1.5]) {
+      expect(resourceProblems({ memoryMB })).toHaveLength(1);
+    }
+    for (const cpuCount of [0, -1, 0.5]) {
+      expect(resourceProblems({ cpuCount })).toHaveLength(1);
+    }
+    expect(resourceProblems({ memoryMB: "4096" })).toHaveLength(1);
+  });
+
+  it("refuses a field it doesn't take, so a typo is never read as the default", () => {
+    expect(resourceProblems({ memoryMb: 4096 })).toHaveLength(1);
+    expect(resourceProblems({ diskMB: 10_240 })).toHaveLength(1);
   });
 });
