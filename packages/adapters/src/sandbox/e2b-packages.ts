@@ -59,7 +59,10 @@ export const BASE_TEMPLATE = "base";
 /** The size of a sandbox whose config leaves a field out — the SDK's
  *  own build default, stated here so it is Funky's rule, not a default
  *  an SDK upgrade could move. Not part of a template's name: a template
- *  built before resources existed was built at exactly this. */
+ *  built before resources existed was built at exactly this. So a
+ *  template's name doesn't move when this does, and every template
+ *  already built keeps the old size — change it only together with a
+ *  RECIPE_VERSION bump, which renames (and so rebuilds) them all. */
 export const DEFAULT_RESOURCES = { cpuCount: 2, memoryMB: 1024 } as const;
 
 /** `npm root -g` in BASE_TEMPLATE (probed). Global installs land here,
@@ -102,36 +105,35 @@ export function assertInstallable(canonical: CanonicalPackages): void {
   }
 }
 
-/** A size in one canonical form: the fields set, in a fixed order, so
- *  equal sizes hash alike however they were written. */
+/** A size in one canonical form: the fields that differ from
+ *  DEFAULT_RESOURCES, in a fixed order, so equal sizes hash alike however
+ *  they were written — {cpuCount: 2} is {}, and shares its template. */
 export function canonicalResources(resources: Resources): Resources {
+  const { cpuCount, memoryMB } = resources;
   return {
-    ...(resources.cpuCount === undefined ? {} : { cpuCount: resources.cpuCount }),
-    ...(resources.memoryMB === undefined ? {} : { memoryMB: resources.memoryMB }),
+    ...(cpuCount === undefined || cpuCount === DEFAULT_RESOURCES.cpuCount ? {} : { cpuCount }),
+    ...(memoryMB === undefined || memoryMB === DEFAULT_RESOURCES.memoryMB ? {} : { memoryMB }),
   };
 }
 
-/** Whether a size asks for anything — {} is the provider's default. */
-export function isSized(resources: Resources): boolean {
-  return resources.cpuCount !== undefined || resources.memoryMB !== undefined;
-}
-
 /** The template a package set, setup list and size build into, named by
- *  the hash of everything that shapes the build. Setup and size join the
- *  hash only when there is some, so a package set without them keeps the
- *  name — and the build — it had before either existed. Setup is never
+ *  the hash of everything that shapes the build. Setup joins the hash
+ *  only when there is some, and size only when it isn't the default, so
+ *  a package set without them keeps the name — and the build — it had
+ *  before either existed. Setup is never
  *  canonicalized: its order is the order it runs in. */
 export function templateName(
   canonical: CanonicalPackages,
   setup: SetupCommands = [],
   resources: Resources = {},
 ): string {
+  const size = canonicalResources(resources);
   const inputs = {
     recipe: RECIPE_VERSION,
     base: BASE_TEMPLATE,
     packages: canonical,
     ...(setup.length > 0 ? { setup } : {}),
-    ...(isSized(resources) ? { resources: canonicalResources(resources) } : {}),
+    ...(Object.keys(size).length > 0 ? { resources: size } : {}),
   };
   const hash = createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
   return `funky-pkgs-${hash.slice(0, 24)}`;

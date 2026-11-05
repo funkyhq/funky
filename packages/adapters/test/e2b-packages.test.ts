@@ -72,6 +72,10 @@ describe("canonical package sets", () => {
     expect(templateName(numpy, [], { memoryMB: 4096, cpuCount: 4 })).toBe(
       templateName(numpy, [], { cpuCount: 4, memoryMB: 4096 }),
     );
+    // The default, however much of it is spelt out, is no size at all.
+    expect(templateName(numpy, [], { cpuCount: 2 })).toBe(templateName(numpy));
+    expect(templateName(numpy, [], { cpuCount: 2, memoryMB: 1024 })).toBe(templateName(numpy));
+    expect(templateName(numpy, [], { cpuCount: 2, memoryMB: 4096 })).toBe(four);
     // A size alone is a template of its own, and so is a size with setup.
     expect(templateName([], [], { memoryMB: 4096 })).not.toBe(templateName([]));
     expect(templateName([], ["true"], { memoryMB: 4096 })).not.toBe(templateName([], ["true"]));
