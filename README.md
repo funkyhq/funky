@@ -186,8 +186,8 @@ and shared by every session that uses it, so packages work under any `network` p
 
 ### Resources
 
-`resources` sizes the sandbox: `cpuCount` vCPUs and `memoryMB` MiB of memory. Leave a field
-out for the default, or send `{}` for both:
+`resources` sizes the sandbox: `cpuCount` vCPUs and `memoryMB` MiB of memory. A field left
+out is the default, **2 vCPUs and 1024 MiB**, so `{}` is 2 and 1024:
 
 ```json
 "resources": { "cpuCount": 4, "memoryMB": 4096 }
@@ -195,10 +195,8 @@ out for the default, or send `{}` for both:
 
 - On E2B the size is built into the template, like packages, so changing it means one new
   build before the next session starts.
-- A sandbox that needs no template (no packages, setup commands or size) gets 2 vCPUs and
-  512 MiB. Otherwise a field left out is 2 vCPUs or 1024 MiB, so `{ "cpuCount": 4 }` alone
-  also gets 1024 MiB. A Deno or Node build, or a large `git` checkout, can outgrow that; when
-  memory runs out, commands hang until they time out (exit code 124).
+- A Deno or Node build, or a large `git` checkout, can outgrow the default. When memory runs
+  out, commands hang until they time out (exit code 124).
 - E2B wants memory in even MiB and vCPUs as 1 or an even number, and caps both by plan
   (8192 MiB on the plan tested). A size it refuses ends the run as `"error"` with its reason.
 
