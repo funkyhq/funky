@@ -19,6 +19,10 @@
 //   (idempotent on a running one), so find-or-revive needs no state
 //   check between list and connect. It throws only when the sandbox is
 //   unknown or killed.
+// - The provider's `pause` pauses by id WITHOUT reattaching — a no-op on
+//   a sandbox already paused, where connect-then-pause would revive it
+//   only to pause it again. It throws SandboxNotFoundError on the same
+//   terms connect does.
 // - `run` executes through a shell; a non-zero exit is a result, never
 //   a throw. Throwing means the sandbox itself was unreachable, after
 //   one transparent recovery attempt. File content moves through
@@ -61,6 +65,9 @@ export interface SandboxProvider {
   /** Reattach, reviving a paused sandbox. Rejects with
    *  SandboxNotFoundError when the sandbox is unknown or killed. */
   connect(sandboxId: string): Promise<Sandbox>;
+  /** Pause without reattaching; already paused is a no-op. Rejects with
+   *  SandboxNotFoundError when the sandbox is unknown or killed. */
+  pause(sandboxId: string): Promise<void>;
   /** Every non-killed sandbox, optionally filtered by metadata equality. */
   list(filter?: { metadata?: Record<string, string> }): Promise<SandboxInfo[]>;
 }

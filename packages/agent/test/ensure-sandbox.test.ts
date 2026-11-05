@@ -38,6 +38,7 @@ function fakeProvider(opts?: { deadIds?: string[]; connectError?: Error }) {
       }
       return { sandboxId } as Sandbox;
     },
+    pause: async () => {},
     list: async () => [],
   };
   return { provider, calls, killed: () => killed };

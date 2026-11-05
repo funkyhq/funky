@@ -67,6 +67,7 @@ import {
 import {
   ArchivedError,
   type CommitStepRequest,
+  type CommitStepResult,
   FencedError,
   SessionNotIdleError,
   type Store,
@@ -964,10 +965,10 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       });
     },
 
-    async commitStep(req: CommitStepRequest) {
+    async commitStep(req: CommitStepRequest): Promise<CommitStepResult> {
       const { namespace, sessionId, itemId } = WorkItemRef.parse(req.itemRef);
       const messages = req.append.map((m) => AgentMessage.parse(m));
-      await db.transaction(async (tx) => {
+      return db.transaction(async (tx): Promise<CommitStepResult> => {
         const [item] = await tx
           .select()
           .from(workItems)
@@ -987,7 +988,21 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             throw new FencedError(
               `commitStep: fenced — ${itemId} was finished under another claim`,
             );
-          return; // idempotent re-commit (crash-after-commit recovery)
+          // Idempotent re-commit (crash-after-commit recovery): the first
+          // commit's next item may be done by now, so idle is read, not
+          // derived.
+          const [open] = await tx
+            .select({ id: workItems.id })
+            .from(workItems)
+            .where(
+              and(
+                eq(workItems.namespace, namespace),
+                eq(workItems.sessionId, sessionId),
+                ne(workItems.status, "done"),
+              ),
+            )
+            .limit(1);
+          return { idle: open === undefined };
         }
         if (item.status !== "leased" || item.leaseToken !== req.token)
           throw new FencedError(`commitStep: fenced — stale token for ${itemId}`);
@@ -1035,12 +1050,12 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             status: "ready",
             createdAt: at,
           });
-          return;
+          return { idle: false };
         }
         // end_run: the run's end is the atomic NON-creation of a next item.
         // Pending inputs auto-chain a new run in this same transaction —
         // except after a cancel, which parks them for the next intake.
-        if (req.next.status === "cancelled") return;
+        if (req.next.status === "cancelled") return { idle: true };
         const parked = await tx
           .select()
           .from(pendingInputs)
@@ -1048,7 +1063,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             and(eq(pendingInputs.namespace, namespace), eq(pendingInputs.sessionId, sessionId)),
           )
           .orderBy(asc(pendingInputs.ord));
-        if (parked.length === 0) return;
+        if (parked.length === 0) return { idle: true };
         await appendEntries(
           tx,
           { namespace, sessionId },
@@ -1072,6 +1087,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           status: "ready",
           createdAt: at,
         });
+        return { idle: false };
       });
     },
   };

@@ -23,6 +23,7 @@ import {
   createSandboxTools,
   type DriverDeps,
   ensureSandbox,
+  pauseSessionSandbox,
   resolveCredentials,
   runDriver,
   sandboxToolSpecs,
@@ -40,7 +41,10 @@ const cfg = loadConfig();
 
 const pool = new Pool({ connectionString: cfg.databaseUrl, max: cfg.dbPoolMax });
 const store = createPgStore(drizzle({ client: pool }) as unknown as StoreDb);
-const sandboxes = createE2bProvider({ apiKey: cfg.e2bApiKey });
+// One TTL for create and connect alike: a revive (every run after the
+// first, since a run's end pauses the sandbox) gets the same time as a
+// fresh sandbox, not the SDK's 5-minute default.
+const sandboxes = createE2bProvider({ apiKey: cfg.e2bApiKey, timeoutMs: cfg.sandboxTimeoutMs });
 // Where credentials' keys come from: the store the api's /v1/secrets
 // writes to. None configured fails only the runs whose config has
 // credentials.
@@ -77,6 +81,12 @@ const deps: DriverDeps = {
     }));
     return createSandboxTools(sandbox);
   },
+  // A run's end pauses its sandbox at once instead of at the TTL, which
+  // stays as the backstop — so a failure here only costs the idle time.
+  pauseSandbox: (ref) =>
+    pauseSessionSandbox(store, sandboxes, ref).catch((error) =>
+      console.error(`worker: pausing the sandbox of session ${ref.sessionId} failed:`, error),
+    ),
   // A bind failure the driver rides out: logged to stderr, so an outage
   // of the sandbox provider or the secret store shows while it lasts.
   onBindRetry: (ref, error, retryInMs) =>

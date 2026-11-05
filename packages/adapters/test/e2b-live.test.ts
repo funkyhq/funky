@@ -1,9 +1,10 @@
 // The e2b adapter against real sandboxes — the behavior a mock can only
 // assert by fiat: exit codes settling as results, byte round-trips,
 // in-sandbox timeouts, metadata listing, the pause → connect-revives
-// → filesystem-survives cycle, an allowlist fencing egress, a
-// credential's key set on requests outside the sandbox, and E2B's
-// refusal of a create arriving typed. Runs only when E2B_API_KEY is set
+// → filesystem-survives cycle, pause by id staying a no-op on a paused
+// sandbox, an allowlist fencing egress, a credential's key set on
+// requests outside the sandbox, and E2B's refusal of a create arriving
+// typed. Runs only when E2B_API_KEY is set
 // (deliberate opt-in — every run creates a real sandbox):
 //
 //   E2B_API_KEY=... pnpm --filter @funky/adapters test e2b-live
@@ -14,6 +15,7 @@
 // made-up key and httpbin.org, which echoes the headers it receives.
 
 import { randomUUID } from "node:crypto";
+import { Sandbox as E2bSandbox } from "e2b";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import {
   type ResolvedCredential,
@@ -25,6 +27,8 @@ import {
 import { CREDENTIAL_PLACEHOLDER, createE2bProvider } from "../src/sandbox/e2b";
 
 const apiKey = process.env.E2B_API_KEY;
+/** The suite provider's connect TTL: 10 minutes, twice the SDK's default. */
+const CONNECT_TTL_MS = 600_000;
 
 /** A made-up key, sent as X-Api-Key to `domains`. */
 function probeCredential(domains: string[], key: string): ResolvedCredential {
@@ -52,7 +56,9 @@ if (!apiKey) {
     let sandbox: Sandbox;
 
     beforeAll(async () => {
-      provider = createE2bProvider({ apiKey });
+      // A connect TTL apart from the SDK's 5-minute default, so a revive
+      // that dropped it shows (the pause-by-id test).
+      provider = createE2bProvider({ apiKey, timeoutMs: CONNECT_TTL_MS });
       sandbox = await provider.create({
         timeoutMs: 300_000,
         lifecycle: "kill",
@@ -110,12 +116,23 @@ if (!apiKey) {
       expect(infos[0]?.metadata.funkySuite).toBe(marker);
     }, 60_000);
 
+    /** The suite sandbox's state per list, polled until it reads `want`
+     *  or 10s pass: E2B's list can still say "running" a moment after a
+     *  pause has returned. */
+    async function listedState(want: "running" | "paused"): Promise<string | undefined> {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const [info] = await provider.list({ metadata: { funkySuite: marker } });
+        if (info?.state === want || Date.now() > deadline) return info?.state;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+
     test("pause keeps the filesystem and connect revives", async () => {
       await sandbox.writeFile("/home/user/persist.txt", "survives pause\n");
       await sandbox.pause();
 
-      const paused = await provider.list({ metadata: { funkySuite: marker } });
-      expect(paused[0]?.state).toBe("paused");
+      expect(await listedState("paused")).toBe("paused");
 
       const revived = await provider.connect(sandbox.sandboxId);
       expect(revived.sandboxId).toBe(sandbox.sandboxId);
@@ -126,6 +143,23 @@ if (!apiKey) {
       const again = await provider.connect(sandbox.sandboxId);
       expect((await again.getInfo()).state).toBe("running");
       sandbox = revived;
+    }, 240_000);
+
+    test("the provider's pause goes by id, and leaves a paused sandbox paused", async () => {
+      await provider.pause(sandbox.sandboxId);
+      expect(await listedState("paused")).toBe("paused");
+
+      // Already paused: a no-op, not a revive-then-pause.
+      await provider.pause(sandbox.sandboxId);
+      const [still] = await provider.list({ metadata: { funkySuite: marker } });
+      expect(still?.state).toBe("paused");
+
+      // The revive's TTL is the provider's, not the SDK's 5 minutes.
+      const t0 = Date.now();
+      sandbox = await provider.connect(sandbox.sandboxId);
+      expect((await sandbox.getInfo()).state).toBe("running");
+      const { endAt } = await E2bSandbox.getInfo(sandbox.sandboxId, { apiKey });
+      expect(endAt.getTime() - t0).toBeGreaterThan(CONNECT_TTL_MS - 60_000);
     }, 240_000);
 
     test("kill removes the sandbox from list, and connect rejects as gone", async () => {

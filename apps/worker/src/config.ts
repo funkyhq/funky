@@ -36,7 +36,9 @@ const EnvSchema = z.object({
   // How long a sandbox bind (create, or a package template build) may
   // take before the claim is handed back for a re-claim.
   FUNKY_BIND_TIMEOUT_MS: intKnob(1_000, 10 * 60_000),
-  // Idle TTL before a session's sandbox auto-pauses (revived on the next connect).
+  // TTL before a session's sandbox auto-pauses (revived on the next
+  // connect). A run's end pauses it at once; this is the backstop for a
+  // pause that never happened (driver/pause-sandbox.ts).
   FUNKY_SANDBOX_TIMEOUT_MS: intKnob(10_000, 30 * 60_000),
   // Drivers this worker hosts — claim loops run side by side in one
   // process over one pool and one drain, so the steps it runs at once;
