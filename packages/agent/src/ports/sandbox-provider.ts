@@ -34,7 +34,7 @@
 //   simply never committed, and the fence rejects late work.
 // - `kill` destroys the sandbox including its workspace.
 
-import type { Credential, NetworkPolicy, Packages, SetupCommands } from "@funky/core";
+import type { Credential, NetworkPolicy, Packages, Resources, SetupCommands } from "@funky/core";
 
 /**
  * connect()'s "definitively gone" rejection: the sandbox no longer
@@ -50,8 +50,8 @@ export class SandboxNotFoundError extends Error {}
  * create()'s "never, as asked" rejection: the sandbox this request
  * describes cannot be provisioned — a package that does not install, a
  * setup command that fails, a package manager the adapter cannot serve,
- * a request the provider refuses outright — so the same request fails
- * the same way every time.
+ * a size the provider won't give, a request the provider refuses
+ * outright — so the same request fails the same way every time.
  * resolveCredentials throws it too, before any create, for a key the
  * secret store doesn't have, or a deployment with no store. The driver
  * ends the run on it, so adapters MUST NOT throw it for a transient
@@ -96,6 +96,12 @@ export interface CreateSandboxOptions {
    *  credentials, so an adapter may run them once and reuse the result.
    *  Absent or empty = none. */
   setupCommands?: SetupCommands;
+  /** The vCPUs and memory to give the sandbox (core/environment.ts).
+   *  Adapters MUST give the size asked or reject create() with
+   *  SandboxProvisionError — never hand back a smaller sandbox. A field
+   *  left out is the adapter's default size. Absent or {} = the
+   *  adapter's default. */
+  resources?: Resources;
   /** Keys to deliver, each with its credential (core/environment.ts),
    *  read from the secret store by resolveCredentials. Adapters MUST
    *  deliver each as its type says or reject create() with

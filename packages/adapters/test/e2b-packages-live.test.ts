@@ -1,18 +1,19 @@
-// Agent-config packages and setup commands against real E2B: template
-// builds, and what a mock cannot vouch for — that every package is usable
-// where the agent runs (the sandbox's default user, at the workspace
-// root), that two sessions asking at once share one template instead of
-// failing on the build collision, that setup commands run as that user,
-// each in its own shell, and leave their files to every sandbox, and that
-// a spec which does not install or a setup command that fails surfaces
-// as SandboxProvisionError. Runs only when E2B_API_KEY is set; every run
+// Agent-config packages, setup commands and resources against real E2B:
+// template builds, and what a mock cannot vouch for — that every package
+// is usable where the agent runs (the sandbox's default user, at the
+// workspace root), that two sessions asking at once share one template
+// instead of failing on the build collision, that setup commands run as
+// that user, each in its own shell, and leave their files to every
+// sandbox, that a sized template's sandboxes have that size, and that a
+// spec which does not install, a setup command that fails or a size E2B
+// won't give surfaces as SandboxProvisionError. Runs only when E2B_API_KEY is set; every run
 // deletes and rebuilds its templates, so expect minutes:
 //
 //   E2B_API_KEY=... pnpm --filter @funky/adapters test e2b-packages-live
 
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import { ApiClient, ConnectionConfig } from "e2b";
-import type { Packages, SetupCommands } from "@funky/core";
+import type { Packages, Resources, SetupCommands } from "@funky/core";
 import { type Sandbox, SandboxProvisionError, type SandboxProvider } from "@funky/agent";
 import { createE2bProvider } from "../src/sandbox/e2b";
 import { canonicalPackages, templateName } from "../src/sandbox/e2b-packages";
@@ -36,12 +37,21 @@ const SETUP: SetupCommands = [
   "pwd > ~/setup-pwd",
 ];
 const BROKEN_SETUP: SetupCommands = ["true", "exit 3"];
+// No packages or setup: a size alone builds a template. Neither half is
+// a default (base is 2 vCPUs and 512 MiB, a build's default 2 and 1024).
+const SIZED: Resources = { cpuCount: 4, memoryMB: 2048 };
+// Odd memory, which E2B refuses at the build request (probed).
+const REFUSED_SIZE: Resources = { memoryMB: 1023 };
 
 /** Deletes a build's template if it exists, so the run builds it. */
-async function deleteTemplate(packages: Packages, setup: SetupCommands = []): Promise<void> {
+async function deleteTemplate(
+  packages: Packages,
+  setup: SetupCommands = [],
+  resources: Resources = {},
+): Promise<void> {
   const api = new ApiClient(new ConnectionConfig({ apiKey })).api;
   const alias = await api.GET("/templates/aliases/{alias}", {
-    params: { path: { alias: templateName(canonicalPackages(packages), setup) } },
+    params: { path: { alias: templateName(canonicalPackages(packages), setup, resources) } },
   });
   if (!alias.data) return;
   await api.DELETE("/templates/{templateID}", {
@@ -57,14 +67,22 @@ if (!apiKey) {
   describe("e2b package templates (live)", () => {
     let provider: SandboxProvider;
     const sandboxes: Sandbox[] = [];
-    const create = (packages: Packages, setupCommands?: SetupCommands) =>
-      provider.create({ packages, setupCommands, timeoutMs: 300_000, lifecycle: "kill" });
+    const create = (packages: Packages, setupCommands?: SetupCommands, resources?: Resources) =>
+      provider.create({
+        packages,
+        setupCommands,
+        resources,
+        timeoutMs: 300_000,
+        lifecycle: "kill",
+      });
     const templates = (): Promise<void[]> =>
       Promise.all([
         deleteTemplate(USABLE),
         deleteTemplate(BROKEN),
         deleteTemplate({}, SETUP),
         deleteTemplate({}, BROKEN_SETUP),
+        deleteTemplate({}, [], SIZED),
+        deleteTemplate({}, [], REFUSED_SIZE),
       ]);
 
     beforeAll(async () => {
@@ -124,5 +142,25 @@ if (!apiKey) {
       await expect(created).rejects.toBeInstanceOf(SandboxProvisionError);
       await expect(created).rejects.toThrow(/^setupCommands\.1 failed: /);
     }, 600_000);
+
+    test("a size alone builds a template, and its sandboxes have that size", async () => {
+      const sandbox = await create({}, [], SIZED);
+      sandboxes.push(sandbox);
+      const size = await sandbox.run("nproc && free -m | awk '/^Mem:/ {print $2}'");
+      expect(size.exitCode).toBe(0);
+      const [cpus, memory] = size.stdout.trim().split("\n").map(Number);
+      expect(cpus).toBe(4);
+      // free reports less than the VM was given: the kernel keeps some.
+      expect(memory).toBeGreaterThan(1536);
+      expect(memory).toBeLessThanOrEqual(2048);
+    }, 600_000);
+
+    test("a size E2B won't give rejects as SandboxProvisionError, with E2B's reason", async () => {
+      const created = create({}, [], REFUSED_SIZE);
+      await expect(created).rejects.toBeInstanceOf(SandboxProvisionError);
+      await expect(created).rejects.toThrow(
+        /^E2B refused the template build: 400: Memory must be divisible by 2/,
+      );
+    }, 120_000);
   });
 }

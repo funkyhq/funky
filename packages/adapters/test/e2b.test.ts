@@ -135,7 +135,7 @@ describe("createE2bProvider", () => {
     const provider = createE2bProvider();
 
     await provider.create({ packages: {} });
-    await provider.create({ packages: { pip: [] }, setupCommands: [] });
+    await provider.create({ packages: { pip: [] }, setupCommands: [], resources: {} });
     for (const call of mocks.create.mock.calls) {
       expect(call).toHaveLength(1); // opts only — no template name
       expect(call[0]).not.toHaveProperty("envs");
@@ -182,6 +182,7 @@ describe("createE2bProvider", () => {
         }),
         expect.objectContaining({ command: "pip install 'it'\\''s>=1'", user: "root" }),
       ],
+      {},
     );
     expect(mocks.create).toHaveBeenCalledTimes(2);
   });
@@ -197,10 +198,44 @@ describe("createE2bProvider", () => {
     const [template, opts] = mocks.create.mock.calls[0] ?? [];
     expect(template).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
     expect(opts).not.toHaveProperty("envs"); // no npm, no NODE_PATH
-    expect(mocks.ensureTemplate).toHaveBeenCalledWith({ fake: "builds" }, template, [
-      { command: setup[0], user: "user", label: "setupCommands.0" },
-    ]);
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith(
+      { fake: "builds" },
+      template,
+      [{ command: setup[0], user: "user", label: "setupCommands.0" }],
+      {},
+    );
     expect(mocks.create.mock.calls[1]?.[0]).toBe(template);
+  });
+
+  test("create with a size builds a template even without packages or setup", async () => {
+    mocks.create
+      .mockRejectedValueOnce(new mocks.SandboxError("404: tag 'default' does not exist"))
+      .mockResolvedValueOnce(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: {}, setupCommands: [], resources: { memoryMB: 4096 } });
+    const [template, opts] = mocks.create.mock.calls[0] ?? [];
+    expect(template).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
+    expect(opts).not.toHaveProperty("resources"); // E2B sizes by template, not at create
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith({ fake: "builds" }, template, [], {
+      memoryMB: 4096,
+    });
+    expect(mocks.create.mock.calls[1]?.[0]).toBe(template);
+  });
+
+  test("create names another template for the same packages at another size", async () => {
+    mocks.create.mockResolvedValue(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: { pip: ["numpy"] } });
+    await provider.create({ packages: { pip: ["numpy"] }, resources: {} });
+    await provider.create({ packages: { pip: ["numpy"] }, resources: { memoryMB: 4096 } });
+    await provider.create({ packages: { pip: ["numpy"] }, resources: { memoryMB: 8192 } });
+    const [bare, empty, four, eight] = mocks.create.mock.calls.map((call) => call[0]);
+    expect(empty).toBe(bare);
+    expect(four).not.toBe(bare);
+    expect(eight).not.toBe(four);
+    expect(mocks.ensureTemplate).not.toHaveBeenCalled();
   });
 
   test("create names another template for the same packages with setup", async () => {
