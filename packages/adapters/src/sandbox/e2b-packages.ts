@@ -20,8 +20,11 @@
 // E2B sizes a sandbox by its template alone — create takes no size — so
 // resources are the build's, and every sandbox from the template gets
 // exactly them (probed 2026-11-05: 1 vCPU/256 MiB and 8/8192 both came
-// through to nproc and free). A field left out is the SDK's build
-// default, 2 vCPUs and 1024 MiB; `base` itself is 2 and 512. E2B refuses
+// through to nproc and free). A field left out is DEFAULT_RESOURCES'.
+// Every sandbox comes from a template built here, even one that asks
+// for nothing (a build with no steps is accepted and takes seconds;
+// probed), so that default is the only one: `base` itself is 2 vCPUs
+// and 512 MiB, and starting from it would make a second. E2B refuses
 // a size it won't give when the build is requested (400: "Memory must be
 // divisible by 2", "CPU count must be 1 or an even number", "Memory
 // can't be higher than 8192 MiB" on that plan), and the same size is
@@ -49,9 +52,15 @@ import { SandboxProvisionError } from "@funky/agent";
  *  way. */
 const RECIPE_VERSION = 1;
 
-/** The E2B template every package image builds on — the same one a
- *  sandbox with no packages starts from. */
+/** The E2B template every image builds on. No sandbox starts from it
+ *  directly: its size (2 vCPUs, 512 MiB) is not DEFAULT_RESOURCES. */
 export const BASE_TEMPLATE = "base";
+
+/** The size of a sandbox whose config leaves a field out — the SDK's
+ *  own build default, stated here so it is Funky's rule, not a default
+ *  an SDK upgrade could move. Not part of a template's name: a template
+ *  built before resources existed was built at exactly this. */
+export const DEFAULT_RESOURCES = { cpuCount: 2, memoryMB: 1024 } as const;
 
 /** `npm root -g` in BASE_TEMPLATE (probed). Global installs land here,
  *  and require() only finds them through NODE_PATH, which the template
@@ -289,6 +298,7 @@ export function e2bTemplateBuilds(connection: { apiKey?: string }): TemplateBuil
       try {
         const { templateId, buildId } = await Template.buildInBackground(template, name, {
           ...connection,
+          ...DEFAULT_RESOURCES,
           ...canonicalResources(resources),
         });
         return { templateId, buildId };

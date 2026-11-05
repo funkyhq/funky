@@ -39,10 +39,10 @@
 // packages builds a template too, and every later sandbox starts with
 // the setup done.
 //
-// So do resources: E2B sizes a sandbox by its template, so a config that
-// sets a size builds a template even with no packages or setup. One that
-// sets none starts from `base` as before, at 2 vCPUs and 512 MiB; with
-// packages or setup but no size, the build's default, 2 and 1024.
+// So do resources: E2B sizes a sandbox by its template, so every sandbox
+// comes from one built here — a config with no packages, setup or size
+// too, from the one template every such config shares — and a field
+// left out is one default, 2 vCPUs and 1024 MiB (DEFAULT_RESOURCES).
 //
 // Credentials become network rules: on requests to a credential's
 // domains, E2B's egress proxy, outside the sandbox, sets the credential's
@@ -85,7 +85,6 @@ import {
   canonicalPackages,
   e2bTemplateBuilds,
   ensureTemplate,
-  isSized,
   NPM_GLOBAL_ROOT,
   templateName,
 } from "./e2b-packages";
@@ -174,10 +173,6 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
     };
     const keys = credentials.map(({ key }) => key);
     const refused = (error: unknown) => rethrowRefusal(error, keys);
-    if (canonical.length === 0 && setup.length === 0 && !isSized(resources)) {
-      return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connectOpts);
-    }
-
     const template = templateName(canonical, setup, resources);
     try {
       return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connectOpts);

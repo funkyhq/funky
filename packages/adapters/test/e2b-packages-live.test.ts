@@ -4,10 +4,12 @@
 // workspace root), that two sessions asking at once share one template
 // instead of failing on the build collision, that setup commands run as
 // that user, each in its own shell, and leave their files to every
-// sandbox, that a sized template's sandboxes have that size, and that a
-// spec which does not install, a setup command that fails or a size E2B
-// won't give surfaces as SandboxProvisionError. Runs only when E2B_API_KEY is set; every run
-// deletes and rebuilds its templates, so expect minutes:
+// sandbox, that a sandbox asking for no size gets the default and a sized
+// template's sandboxes get theirs, and that a spec which does not
+// install, a setup command that fails or a size E2B won't give surfaces
+// as SandboxProvisionError. Runs only when E2B_API_KEY is set; every run
+// deletes and rebuilds its templates (all but the shared one), so expect
+// minutes:
 //
 //   E2B_API_KEY=... pnpm --filter @funky/adapters test e2b-packages-live
 
@@ -38,7 +40,7 @@ const SETUP: SetupCommands = [
 ];
 const BROKEN_SETUP: SetupCommands = ["true", "exit 3"];
 // No packages or setup: a size alone builds a template. Neither half is
-// a default (base is 2 vCPUs and 512 MiB, a build's default 2 and 1024).
+// the default (2 vCPUs, 1024 MiB).
 const SIZED: Resources = { cpuCount: 4, memoryMB: 2048 };
 // Odd memory, which E2B refuses at the build request (probed).
 const REFUSED_SIZE: Resources = { memoryMB: 1023 };
@@ -141,6 +143,18 @@ if (!apiKey) {
       const created = create({}, BROKEN_SETUP);
       await expect(created).rejects.toBeInstanceOf(SandboxProvisionError);
       await expect(created).rejects.toThrow(/^setupCommands\.1 failed: /);
+    }, 600_000);
+
+    test("a config asking for nothing gets the one default size, not base's", async () => {
+      // The template every such config shares is left in place: the
+      // other live suites start sandboxes from it while this one runs.
+      const sandbox = await create({});
+      sandboxes.push(sandbox);
+      const size = await sandbox.run("nproc && free -m | awk '/^Mem:/ {print $2}'");
+      const [cpus, memory] = size.stdout.trim().split("\n").map(Number);
+      expect(cpus).toBe(2);
+      expect(memory).toBeGreaterThan(768); // base's 512 would show under 512
+      expect(memory).toBeLessThanOrEqual(1024);
     }, 600_000);
 
     test("a size alone builds a template, and its sandboxes have that size", async () => {
