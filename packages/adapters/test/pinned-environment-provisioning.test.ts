@@ -85,6 +85,7 @@ async function provision(
     network: config.network,
     packages: config.packages,
     setupCommands: config.setupCommands,
+    resources: config.resources,
     credentials: await resolveCredentials(secrets, session.namespace, config.credentials),
   }));
   return { sandboxId: sandbox.sandboxId, network: config.network };
@@ -100,7 +101,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       packages: { pip: ["numpy"] },
       credentials: [],
       setupCommands: ["echo v1 > ~/version"],
-      resources: {},
+      resources: { memoryMB: 2048 },
     });
     const newSession = (agentConfigVersion?: number) =>
       store.createSession({
@@ -118,6 +119,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       network: { type: "none" },
       packages: { pip: ["numpy"] },
       setupCommands: ["echo v1 > ~/version"],
+      resources: { memoryMB: 2048 },
     });
 
     // 2. the agent config is updated underneath it — a new version 2.
@@ -125,6 +127,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       network: { type: "allowlist", domains: ["example.com"] },
       packages: { npm: ["zod"] },
       setupCommands: ["echo v2 > ~/version"],
+      resources: { cpuCount: 4, memoryMB: 4096 },
     });
 
     // 3. session 1's sandbox dies; the next claim must replace it. The
@@ -136,6 +139,7 @@ describe("provisioning from the session's pinned agent config version", () => {
       network: { type: "none" },
       packages: { pip: ["numpy"] },
       setupCommands: ["echo v1 > ~/version"],
+      resources: { memoryMB: 2048 },
     });
     expect((await store.getSession(s1))?.agentConfigVersion).toBe(1);
 

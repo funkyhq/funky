@@ -1,15 +1,18 @@
 // Package templates on E2B, without E2B: the canonical form and the name
 // it hashes to, the quoting E2B's own installers lack, the build's steps
-// (installs as root, then setup as the sandbox's user), and ensureTemplate's
+// (installs as root, then setup as the sandbox's user), which build-start
+// errors are E2B refusing the build, and ensureTemplate's
 // state machine against a scripted TemplateBuilds — above all the
 // concurrency rules the live probes forced (wait on an in-flight build,
 // never start a rival; only our own failed step is permanent). The
 // real API is exercised by the key-gated live suite in e2b-live.test.ts.
 
+import { BuildError } from "e2b";
 import { describe, expect, test, vi } from "vitest";
 import { SandboxProvisionError } from "@funky/agent";
 import {
   assertInstallable,
+  buildRefusal,
   type BuildState,
   type BuildStep,
   buildSteps,
@@ -56,6 +59,26 @@ describe("canonical package sets", () => {
     // Setup alone is a template of its own.
     expect(templateName([], setup)).not.toBe(templateName([]));
     expect(templateName([], setup)).not.toBe(templateName(numpy, setup));
+  });
+
+  test("a size joins the name only when it asks for something — older templates keep theirs", () => {
+    const numpy = canonicalPackages({ pip: ["numpy"] });
+    expect(templateName(numpy, [], {})).toBe("funky-pkgs-b2fb9f11e388088f3dae1471");
+
+    const four = templateName(numpy, [], { memoryMB: 4096 });
+    expect(four).not.toBe(templateName(numpy));
+    expect(templateName(numpy, [], { memoryMB: 4096, cpuCount: 4 })).not.toBe(four);
+    // Written in another order, the same size.
+    expect(templateName(numpy, [], { memoryMB: 4096, cpuCount: 4 })).toBe(
+      templateName(numpy, [], { cpuCount: 4, memoryMB: 4096 }),
+    );
+    // The default, however much of it is spelt out, is no size at all.
+    expect(templateName(numpy, [], { cpuCount: 2 })).toBe(templateName(numpy));
+    expect(templateName(numpy, [], { cpuCount: 2, memoryMB: 1024 })).toBe(templateName(numpy));
+    expect(templateName(numpy, [], { cpuCount: 2, memoryMB: 4096 })).toBe(four);
+    // A size alone is a template of its own, and so is a size with setup.
+    expect(templateName([], [], { memoryMB: 4096 })).not.toBe(templateName([]));
+    expect(templateName([], ["true"], { memoryMB: 4096 })).not.toBe(templateName([], ["true"]));
   });
 
   test("setup is not canonicalized: another order is another build", () => {
@@ -106,6 +129,29 @@ describe("build steps", () => {
     expect(buildSteps([], ["true"])).toEqual([
       { command: "true", user: "user", label: "setupCommands.0" },
     ]);
+  });
+});
+
+describe("build refusals", () => {
+  test("E2B's 400 on a build request is a refusal, with E2B's reason", () => {
+    // The reasons E2B gave in the probe of 2026-11-05.
+    for (const message of [
+      "400: Memory must be divisible by 2",
+      "400: CPU count must be 1 or an even number",
+      "400: CPU count must be at most 32",
+      "400: Memory can't be higher than 8192 MiB (if you need to increase this limit, please contact support)",
+    ]) {
+      const refusal = buildRefusal(new BuildError(message));
+      expect(refusal).toBeInstanceOf(SandboxProvisionError);
+      expect(refusal?.message).toBe(`E2B refused the template build: ${message}`);
+    }
+  });
+
+  test("a collision's 400, another status, or another error is no refusal", () => {
+    expect(buildRefusal(new BuildError("400: build is not in waiting state"))).toBeUndefined();
+    expect(buildRefusal(new BuildError("500: duplicate alias"))).toBeUndefined();
+    expect(buildRefusal(new Error("400: Memory must be divisible by 2"))).toBeUndefined();
+    expect(buildRefusal("400: Memory must be divisible by 2")).toBeUndefined();
   });
 });
 
@@ -185,7 +231,26 @@ describe("ensureTemplate", () => {
       settles: { ours: { status: "ready" } },
     });
     await ensureTemplate(builds, NAME, STEPS);
-    expect(builds.start).toHaveBeenCalledWith(NAME, STEPS);
+    expect(builds.start).toHaveBeenCalledWith(NAME, STEPS, {});
+  });
+
+  test("builds at the size asked", async () => {
+    const builds = scripted({
+      latest: [undefined],
+      starts: ["ours"],
+      settles: { ours: { status: "ready" } },
+    });
+    await ensureTemplate(builds, NAME, STEPS, { cpuCount: 4, memoryMB: 4096 });
+    expect(builds.start).toHaveBeenCalledWith(NAME, STEPS, { cpuCount: 4, memoryMB: 4096 });
+  });
+
+  test("E2B refusing the build is permanent — not waited on as a collision", async () => {
+    const refused = new SandboxProvisionError(
+      "E2B refused the template build: 400: Memory must be divisible by 2",
+    );
+    const builds = scripted({ latest: [undefined], starts: [refused, "never"] });
+    await expect(ensureTemplate(builds, NAME, STEPS, { memoryMB: 1023 })).rejects.toBe(refused);
+    expect(builds.start).toHaveBeenCalledTimes(1);
   });
 
   test("our own failed install is permanent", async () => {

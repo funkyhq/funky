@@ -39,6 +39,11 @@
 // packages builds a template too, and every later sandbox starts with
 // the setup done.
 //
+// So do resources: E2B sizes a sandbox by its template, so every sandbox
+// comes from one built here — a config with no packages, setup or size
+// too, from the one template every such config shares — and a field
+// left out is one default, 2 vCPUs and 1024 MiB (DEFAULT_RESOURCES).
+//
 // Credentials become network rules: on requests to a credential's
 // domains, E2B's egress proxy, outside the sandbox, sets the credential's
 // header with the key in its value (see toRules). The sandbox gets a
@@ -149,6 +154,7 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
     const canonical = canonicalPackages(opts?.packages ?? {});
     assertInstallable(canonical);
     const setup = opts?.setupCommands ?? [];
+    const resources = opts?.resources ?? {};
     const credentials = opts?.credentials ?? [];
     // Sandbox-level envs, set here because a template's envs never
     // reach runtime commands; they survive connect and pause/resume.
@@ -167,17 +173,13 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
     };
     const keys = credentials.map(({ key }) => key);
     const refused = (error: unknown) => rethrowRefusal(error, keys);
-    if (canonical.length === 0 && setup.length === 0) {
-      return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connectOpts);
-    }
-
-    const template = templateName(canonical, setup);
+    const template = templateName(canonical, setup, resources);
     try {
       return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connectOpts);
     } catch (error) {
       if (!isUnbuilt(error)) throw error;
     }
-    await ensureTemplate(builds, template, buildSteps(canonical, setup));
+    await ensureTemplate(builds, template, buildSteps(canonical, setup), resources);
     return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connectOpts);
   }
 }
@@ -282,10 +284,10 @@ function isUnbuilt(error: unknown): boolean {
  *  time, so it is the port's SandboxProvisionError, and the driver ends
  *  the run with E2B's reason. Rethrown untyped it would be retried until
  *  the bind deadline, refused the same way each time, and the batch
- *  then interrupted. Only Sandbox.create's 400 means this (a template
- *  build's 400 is a collision that waiting serves, e2b-packages.ts),
- *  and, as with isUnbuilt, the SDK types it only by the status leading
- *  the message. Anything else is rethrown as is.
+ *  then interrupted. A template build's 400s are told apart in
+ *  e2b-packages.ts (buildRefusal), as one is a collision that waiting
+ *  serves; here, as with isUnbuilt, the SDK types the refusal only by
+ *  the status leading the message. Anything else is rethrown as is.
  *
  *  The reason is written into the session, so the request's keys are
  *  scrubbed from it. E2B's reasons name headers and domains, not values,

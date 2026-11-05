@@ -91,11 +91,13 @@ describe("createE2bProvider", () => {
 
     await provider.create();
     expect(mocks.create).toHaveBeenLastCalledWith(
+      expect.any(String),
       expect.objectContaining({ lifecycle: { onTimeout: "pause" } }),
     );
 
     await provider.create({ timeoutMs: 60_000, lifecycle: "kill", metadata: { sessionId: "s1" } });
     expect(mocks.create).toHaveBeenLastCalledWith(
+      expect.any(String),
       expect.objectContaining({
         timeoutMs: 60_000,
         lifecycle: { onTimeout: "kill" },
@@ -109,37 +111,49 @@ describe("createE2bProvider", () => {
     const provider = createE2bProvider();
 
     await provider.create({ network: { type: "unrestricted" } });
-    expect(mocks.create.mock.lastCall?.[0]).not.toHaveProperty("allowInternetAccess");
-    expect(mocks.create.mock.lastCall?.[0]).not.toHaveProperty("network");
+    expect(mocks.create.mock.lastCall?.[1]).not.toHaveProperty("allowInternetAccess");
+    expect(mocks.create.mock.lastCall?.[1]).not.toHaveProperty("network");
 
     await provider.create({ network: { type: "none" } });
-    expect(mocks.create.mock.lastCall?.[0]).toMatchObject({ allowInternetAccess: false });
+    expect(mocks.create.mock.lastCall?.[1]).toMatchObject({ allowInternetAccess: false });
 
     // The domains over a deny-all: E2B's egress is open unless denied, so
     // allowOut alone fences nothing, and E2B refuses it (400).
     await provider.create({ network: { type: "allowlist", domains: ["api.example.com"] } });
-    expect(mocks.create.mock.lastCall?.[0]).toMatchObject({
+    expect(mocks.create.mock.lastCall?.[1]).toMatchObject({
       network: { allowOut: ["api.example.com"], denyOut: ["0.0.0.0/0"] },
     });
-    expect(mocks.create.mock.lastCall?.[0]).not.toHaveProperty("allowInternetAccess");
+    expect(mocks.create.mock.lastCall?.[1]).not.toHaveProperty("allowInternetAccess");
 
     // An allowlist of nothing reaches nothing.
     await provider.create({ network: { type: "allowlist", domains: [] } });
-    expect(mocks.create.mock.lastCall?.[0]).toMatchObject({
+    expect(mocks.create.mock.lastCall?.[1]).toMatchObject({
       network: { allowOut: [], denyOut: ["0.0.0.0/0"] },
     });
   });
 
-  test("create with no packages starts from the default template", async () => {
+  test("create asking for nothing starts from the one template every such config shares", async () => {
     mocks.create.mockResolvedValue(fakeSandbox());
     const provider = createE2bProvider();
 
+    await provider.create();
     await provider.create({ packages: {} });
-    await provider.create({ packages: { pip: [] }, setupCommands: [] });
-    for (const call of mocks.create.mock.calls) {
-      expect(call).toHaveLength(1); // opts only — no template name
-      expect(call[0]).not.toHaveProperty("envs");
-    }
+    await provider.create({ packages: { pip: [] }, setupCommands: [], resources: {} });
+    const names = mocks.create.mock.calls.map((call) => call[0]);
+    // Never `base`: its 512 MiB would be a second default.
+    expect(names[0]).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
+    expect(new Set(names).size).toBe(1);
+    for (const call of mocks.create.mock.calls) expect(call[1]).not.toHaveProperty("envs");
+  });
+
+  test("create builds the shared template on first use, with no steps", async () => {
+    mocks.create
+      .mockRejectedValueOnce(new mocks.SandboxError("404: template not found"))
+      .mockResolvedValueOnce(fakeSandbox());
+    await createE2bProvider().create();
+    const template = mocks.create.mock.calls[0]?.[0];
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith({ fake: "builds" }, template, [], {});
+    expect(mocks.create.mock.calls[1]?.[0]).toBe(template);
   });
 
   test("create goes straight to a built package template — no build lookups", async () => {
@@ -182,6 +196,7 @@ describe("createE2bProvider", () => {
         }),
         expect.objectContaining({ command: "pip install 'it'\\''s>=1'", user: "root" }),
       ],
+      {},
     );
     expect(mocks.create).toHaveBeenCalledTimes(2);
   });
@@ -197,10 +212,44 @@ describe("createE2bProvider", () => {
     const [template, opts] = mocks.create.mock.calls[0] ?? [];
     expect(template).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
     expect(opts).not.toHaveProperty("envs"); // no npm, no NODE_PATH
-    expect(mocks.ensureTemplate).toHaveBeenCalledWith({ fake: "builds" }, template, [
-      { command: setup[0], user: "user", label: "setupCommands.0" },
-    ]);
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith(
+      { fake: "builds" },
+      template,
+      [{ command: setup[0], user: "user", label: "setupCommands.0" }],
+      {},
+    );
     expect(mocks.create.mock.calls[1]?.[0]).toBe(template);
+  });
+
+  test("create with a size builds a template even without packages or setup", async () => {
+    mocks.create
+      .mockRejectedValueOnce(new mocks.SandboxError("404: tag 'default' does not exist"))
+      .mockResolvedValueOnce(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: {}, setupCommands: [], resources: { memoryMB: 4096 } });
+    const [template, opts] = mocks.create.mock.calls[0] ?? [];
+    expect(template).toMatch(/^funky-pkgs-[0-9a-f]{24}$/);
+    expect(opts).not.toHaveProperty("resources"); // E2B sizes by template, not at create
+    expect(mocks.ensureTemplate).toHaveBeenCalledWith({ fake: "builds" }, template, [], {
+      memoryMB: 4096,
+    });
+    expect(mocks.create.mock.calls[1]?.[0]).toBe(template);
+  });
+
+  test("create names another template for the same packages at another size", async () => {
+    mocks.create.mockResolvedValue(fakeSandbox());
+    const provider = createE2bProvider();
+
+    await provider.create({ packages: { pip: ["numpy"] } });
+    await provider.create({ packages: { pip: ["numpy"] }, resources: {} });
+    await provider.create({ packages: { pip: ["numpy"] }, resources: { memoryMB: 4096 } });
+    await provider.create({ packages: { pip: ["numpy"] }, resources: { memoryMB: 8192 } });
+    const [bare, empty, four, eight] = mocks.create.mock.calls.map((call) => call[0]);
+    expect(empty).toBe(bare);
+    expect(four).not.toBe(bare);
+    expect(eight).not.toBe(four);
+    expect(mocks.ensureTemplate).not.toHaveBeenCalled();
   });
 
   test("create names another template for the same packages with setup", async () => {
@@ -242,7 +291,7 @@ describe("createE2bProvider", () => {
     const provider = createE2bProvider();
     const refusal = () => new mocks.SandboxError("400: Timeout cannot be greater than 1 hours");
 
-    // From the default template.
+    // From the template a config asking for nothing shares.
     mocks.create.mockRejectedValueOnce(refusal());
     const plain = provider.create({ timeoutMs: 30 * 24 * 3_600_000 });
     await expect(plain).rejects.toBeInstanceOf(SandboxProvisionError);
@@ -338,7 +387,7 @@ describe("createE2bProvider", () => {
     const unauthorized = () =>
       new mocks.AuthenticationError("Unauthorized, please check your credentials.");
 
-    // From the default template, and from a package template's build.
+    // From the shared template, and from a package template's build.
     mocks.create.mockRejectedValueOnce(unauthorized());
     const plain = provider.create();
     await expect(plain).rejects.toBeInstanceOf(ProviderConfigError);
@@ -422,7 +471,7 @@ describe("create with credentials", () => {
       ],
     });
 
-    const opts = mocks.create.mock.lastCall?.[0];
+    const opts = mocks.create.mock.lastCall?.[1];
     expect(opts.envs).toEqual({
       STRIPE_API_KEY: CREDENTIAL_PLACEHOLDER,
       GH_TOKEN: CREDENTIAL_PLACEHOLDER,
@@ -458,7 +507,7 @@ describe("create with credentials", () => {
 
     // E2B applies one rule per request, the closest, so each must be whole:
     // api.example.com's own rule would otherwise drop WILD's X-A there.
-    expect(mocks.create.mock.lastCall?.[0].network.rules).toEqual({
+    expect(mocks.create.mock.lastCall?.[1].network.rules).toEqual({
       "a.example.com": [{ transform: { headers: { "X-A": "short-ks" } } }],
       "*.example.com": [{ transform: { headers: { "X-A": "wild-kw" } } }],
       "api.example.com": [{ transform: { headers: { "X-A": "wild-kw", "X-B": "ko" } } }],
@@ -474,7 +523,7 @@ describe("create with credentials", () => {
         injected("ODD", ["odd.example.com"], "k$&$'$$1", { value: "{secret}:{secret}" }),
       ],
     });
-    expect(mocks.create.mock.lastCall?.[0].network.rules).toEqual({
+    expect(mocks.create.mock.lastCall?.[1].network.rules).toEqual({
       "odd.example.com": [{ transform: { headers: { Authorization: "k$&$'$$1:k$&$'$$1" } } }],
     });
   });
@@ -491,18 +540,18 @@ describe("create with credentials", () => {
       network: { type: "allowlist", domains: ["api.example.com"] },
       credentials,
     });
-    expect(mocks.create.mock.lastCall?.[0].network).toEqual({
+    expect(mocks.create.mock.lastCall?.[1].network).toEqual({
       allowOut: ["api.example.com"],
       denyOut: ["0.0.0.0/0"],
       rules,
     });
 
     await provider.create({ network: { type: "none" }, credentials });
-    expect(mocks.create.mock.lastCall?.[0]).toMatchObject({
+    expect(mocks.create.mock.lastCall?.[1]).toMatchObject({
       allowInternetAccess: false,
       network: { rules },
     });
-    expect(mocks.create.mock.lastCall?.[0].network).not.toHaveProperty("allowOut");
+    expect(mocks.create.mock.lastCall?.[1].network).not.toHaveProperty("allowOut");
   });
 
   test("the adapter's own envs win over a credential env of the same name", async () => {

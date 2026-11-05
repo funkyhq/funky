@@ -77,6 +77,7 @@ const deps: DriverDeps = {
       network: config.network,
       packages: config.packages,
       setupCommands: config.setupCommands,
+      resources: config.resources,
       credentials: await resolveCredentials(secrets, session.namespace, config.credentials),
     }));
     return createSandboxTools(sandbox);

@@ -1,11 +1,11 @@
-// Agent-config packages and setup commands on E2B: one template per
-// distinct package set and setup list, built on first use and shared by
-// every session that asks for the same pair — across namespaces, which
-// is safe exactly because the template's name hashes every input of its
-// build (the specs, the setup commands, the base template, the recipe
-// version). Anything else that ever shapes a build — a private index, a
-// credential — must join the hash, or the cache must become
-// per-namespace.
+// Agent-config packages, setup commands and resources on E2B: one
+// template per distinct package set, setup list and size, built on first
+// use and shared by every session that asks for the same three — across
+// namespaces, which is safe exactly because the template's name hashes
+// every input of its build (the specs, the setup commands, the size, the
+// base template, the recipe version). Anything else that ever shapes a
+// build — a private index, a credential — must join the hash, or the
+// cache must become per-namespace.
 //
 // The hash names the request, not the resolved versions: an unpinned
 // spec ("pandas") resolves once, at the first build, and every later
@@ -16,6 +16,19 @@
 // sandbox's default user that every later command runs as, so what they
 // write lands in its home (/home/user, the build's working directory for
 // that user; probed).
+//
+// E2B sizes a sandbox by its template alone — create takes no size — so
+// resources are the build's, and every sandbox from the template gets
+// exactly them (probed 2026-11-05: 1 vCPU/256 MiB and 8/8192 both came
+// through to nproc and free). A field left out is DEFAULT_RESOURCES'.
+// Every sandbox comes from a template built here, even one that asks
+// for nothing (a build with no steps is accepted and takes seconds;
+// probed), so that default is the only one: `base` itself is 2 vCPUs
+// and 512 MiB, and starting from it would make a second. E2B refuses
+// a size it won't give when the build is requested (400: "Memory must be
+// divisible by 2", "CPU count must be 1 or an even number", "Memory
+// can't be higher than 8192 MiB" on that plan), and the same size is
+// refused every time — see buildRefusal.
 //
 // What E2B does with same-name builds (probed live, 2026-10-19) shapes
 // ensureTemplate:
@@ -30,8 +43,8 @@
 //   each other's builds forever.
 
 import { createHash } from "node:crypto";
-import { ApiClient, ConnectionConfig, Template } from "e2b";
-import type { Packages, SetupCommands } from "@funky/core";
+import { ApiClient, BuildError, ConnectionConfig, Template } from "e2b";
+import type { Packages, Resources, SetupCommands } from "@funky/core";
 import { SandboxProvisionError } from "@funky/agent";
 
 /** Bump when the recipe below changes how an image is built: every
@@ -39,9 +52,18 @@ import { SandboxProvisionError } from "@funky/agent";
  *  way. */
 const RECIPE_VERSION = 1;
 
-/** The E2B template every package image builds on — the same one a
- *  sandbox with no packages starts from. */
+/** The E2B template every image builds on. No sandbox starts from it
+ *  directly: its size (2 vCPUs, 512 MiB) is not DEFAULT_RESOURCES. */
 export const BASE_TEMPLATE = "base";
+
+/** The size of a sandbox whose config leaves a field out — the SDK's
+ *  own build default, stated here so it is Funky's rule, not a default
+ *  an SDK upgrade could move. Not part of a template's name: a template
+ *  built before resources existed was built at exactly this. So a
+ *  template's name doesn't move when this does, and every template
+ *  already built keeps the old size — change it only together with a
+ *  RECIPE_VERSION bump, which renames (and so rebuilds) them all. */
+export const DEFAULT_RESOURCES = { cpuCount: 2, memoryMB: 1024 } as const;
 
 /** `npm root -g` in BASE_TEMPLATE (probed). Global installs land here,
  *  and require() only finds them through NODE_PATH, which the template
@@ -83,17 +105,35 @@ export function assertInstallable(canonical: CanonicalPackages): void {
   }
 }
 
-/** The template a package set and setup list build into, named by the
- *  hash of everything that shapes the build. Setup joins the hash only
- *  when there is some, so a package set without it keeps the name — and
- *  the build — it had before setup commands existed. Setup is never
+/** A size in one canonical form: the fields that differ from
+ *  DEFAULT_RESOURCES, in a fixed order, so equal sizes hash alike however
+ *  they were written — {cpuCount: 2} is {}, and shares its template. */
+export function canonicalResources(resources: Resources): Resources {
+  const { cpuCount, memoryMB } = resources;
+  return {
+    ...(cpuCount === undefined || cpuCount === DEFAULT_RESOURCES.cpuCount ? {} : { cpuCount }),
+    ...(memoryMB === undefined || memoryMB === DEFAULT_RESOURCES.memoryMB ? {} : { memoryMB }),
+  };
+}
+
+/** The template a package set, setup list and size build into, named by
+ *  the hash of everything that shapes the build. Setup joins the hash
+ *  only when there is some, and size only when it isn't the default, so
+ *  a package set without them keeps the name — and the build — it had
+ *  before either existed. Setup is never
  *  canonicalized: its order is the order it runs in. */
-export function templateName(canonical: CanonicalPackages, setup: SetupCommands = []): string {
+export function templateName(
+  canonical: CanonicalPackages,
+  setup: SetupCommands = [],
+  resources: Resources = {},
+): string {
+  const size = canonicalResources(resources);
   const inputs = {
     recipe: RECIPE_VERSION,
     base: BASE_TEMPLATE,
     packages: canonical,
     ...(setup.length > 0 ? { setup } : {}),
+    ...(Object.keys(size).length > 0 ? { resources: size } : {}),
   };
   const hash = createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
   return `funky-pkgs-${hash.slice(0, 24)}`;
@@ -150,8 +190,10 @@ export interface BuildState {
 export interface TemplateBuilds {
   /** The template's newest build, or undefined if it was never built. */
   latest(name: string): Promise<(BuildRef & BuildState) | undefined>;
-  /** Start a build. Rejects when the start collides with another. */
-  start(name: string, steps: BuildStep[]): Promise<BuildRef>;
+  /** Start a build of `steps` at `resources`. Rejects when the start
+   *  collides with another, and with SandboxProvisionError when E2B
+   *  refuses the build itself. */
+  start(name: string, steps: BuildStep[], resources: Resources): Promise<BuildRef>;
   /** Resolves once the build is ready or in error. */
   settle(build: BuildRef): Promise<BuildState>;
 }
@@ -163,17 +205,18 @@ const MAX_ROUNDS = 5;
 /**
  * Make sure the template has a ready build — waiting on one already in
  * flight rather than starting a rival, since a second build would cancel
- * it. Called after a create found the template unready. Only a build of
- * our own failing on its own command is permanent (SandboxProvisionError);
- * a collision or a cancellation means another worker is building, so the
- * next round waits on that build instead. A previous session's failed
- * build is retried, not remembered: the next session may get past what
- * was only a registry hiccup.
+ * it. Called after a create found the template unready. Only E2B refusing
+ * our build, or a build of our own failing on its own command, is
+ * permanent (SandboxProvisionError); a collision or a cancellation means
+ * another worker is building, so the next round waits on that build
+ * instead. A previous session's failed build is retried, not remembered:
+ * the next session may get past what was only a registry hiccup.
  */
 export async function ensureTemplate(
   builds: TemplateBuilds,
   name: string,
   steps: BuildStep[],
+  resources: Resources = {},
 ): Promise<void> {
   let lastError: unknown;
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -185,8 +228,9 @@ export async function ensureTemplate(
     }
     let ours: BuildRef;
     try {
-      ours = await builds.start(name, steps);
+      ours = await builds.start(name, steps, resources);
     } catch (error) {
+      if (error instanceof SandboxProvisionError) throw error; // refused: so is every retry
       lastError = error; // collided with another worker's start: wait on theirs
       continue;
     }
@@ -201,6 +245,22 @@ export async function ensureTemplate(
     // Cancelled — superseded by another worker's build; wait on that one.
   }
   throw lastError ?? new Error(`template ${name}: no ready build after ${MAX_ROUNDS} rounds`);
+}
+
+/** A build start's error as the port's permanent rejection, when it is
+ *  E2B refusing the request: a 400 other than the one a collision draws
+ *  ("build is not in waiting state", which waiting serves). The SDK
+ *  types both only as a BuildError with the status leading the message.
+ *  Anything else is no refusal, and stays as it was. */
+export function buildRefusal(error: unknown): SandboxProvisionError | undefined {
+  if (
+    error instanceof BuildError &&
+    error.message.startsWith("400:") &&
+    !error.message.includes("not in waiting state")
+  ) {
+    return new SandboxProvisionError(`E2B refused the template build: ${error.message}`);
+  }
+  return undefined;
 }
 
 /** How often a waiting worker polls a build's status. */
@@ -234,11 +294,19 @@ export function e2bTemplateBuilds(connection: { apiKey?: string }): TemplateBuil
       return newest && { templateId, buildId: newest.buildID, status: newest.status };
     },
 
-    async start(name, steps) {
+    async start(name, steps, resources) {
       let template = Template().fromTemplate(BASE_TEMPLATE);
       for (const { command, user } of steps) template = template.runCmd(command, { user });
-      const { templateId, buildId } = await Template.buildInBackground(template, name, connection);
-      return { templateId, buildId };
+      try {
+        const { templateId, buildId } = await Template.buildInBackground(template, name, {
+          ...connection,
+          ...DEFAULT_RESOURCES,
+          ...canonicalResources(resources),
+        });
+        return { templateId, buildId };
+      } catch (error) {
+        throw buildRefusal(error) ?? error;
+      }
     },
 
     async settle(build) {
