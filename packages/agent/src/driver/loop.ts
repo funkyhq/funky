@@ -89,6 +89,12 @@ export interface StepDeps {
   /** Decoration taps forwarded to the engine steps. Fire-and-forget. */
   onDelta?: (event: ProviderEvent) => void;
   onUpdate?: (update: ToolUpdate) => void;
+  /** Told of a commit that left the session idle — the run over, nothing
+   *  chained — so the host can pause the session's sandbox now rather
+   *  than at its TTL (see driver/pause-sandbox.ts). Not awaited: the
+   *  next claim never waits on it, and a failure is the host's to log —
+   *  the driver drops it, the TTL being the backstop. */
+  pauseSandbox?: (ref: SessionRef) => Promise<void>;
 }
 
 export interface DriverDeps extends StepDeps {
@@ -436,12 +442,13 @@ export async function runStep(
     // results whenever the log is next read. "cancelled" parks pending
     // inputs for the next intake instead of chaining.
     if (cancelRequested(entries)) {
-      await store.commitStep({
+      const committed = await store.commitStep({
         itemRef: item,
         token,
         append: [],
         next: { kind: "end_run", status: "cancelled" },
       });
+      if (committed.idle) pauseIdle(deps, item);
       return;
     }
 
@@ -531,19 +538,30 @@ export async function runStep(
         ? { kind: "error" }
         : nextAction(tail, cancelled);
 
-    await store.commitStep({
+    const committed = await store.commitStep({
       itemRef: item,
       token,
       append,
       consumeInputs,
       next: toNext(action),
     });
+    if (committed.idle) pauseIdle(deps, item);
   } catch (err) {
     if (err instanceof FencedError) return; // reclaimed elsewhere — drop, claim again
     throw err;
   } finally {
     heartbeat.stop();
     abort?.removeEventListener("abort", onAbort);
+  }
+}
+
+/** Hand an idle session to the host's pauseSandbox, without waiting. */
+function pauseIdle(deps: StepDeps, ref: SessionRef): void {
+  if (!deps.pauseSandbox) return;
+  try {
+    deps.pauseSandbox(ref).catch(() => {});
+  } catch {
+    // The host's tap: a synchronous throw must not fail a landed commit.
   }
 }
 

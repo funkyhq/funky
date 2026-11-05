@@ -1760,12 +1760,13 @@ export function describeStoreConformance(
       it("appends output and chains the next item atomically", async () => {
         const sessionRef = await newSession();
         const { itemRef, token } = await startAndClaim(sessionRef);
-        await store.commitStep({
+        const committed = await store.commitStep({
           itemRef,
           token,
           append: [assistant("thinking…")],
           next: { kind: "execute_tools" },
         });
+        expect(committed).toEqual({ idle: false });
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => e.seq)).toEqual([0, 1]);
         const items = await store.listItems(sessionRef);
@@ -1777,12 +1778,13 @@ export function describeStoreConformance(
       it("end_run with no pending inputs leaves the session idle", async () => {
         const sessionRef = await newSession();
         const { itemRef, token } = await startAndClaim(sessionRef);
-        await store.commitStep({
+        const committed = await store.commitStep({
           itemRef,
           token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
+        expect(committed).toEqual({ idle: true });
         const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(1); // the run's end is the NON-creation of a next item
         expect(items[0]?.status).toBe("done");
@@ -1795,12 +1797,13 @@ export function describeStoreConformance(
         const { itemRef, token } = await startAndClaim(sessionRef);
         await store.intake(sessionRef, user("follow-up 1"));
         await store.intake(sessionRef, user("follow-up 2"));
-        await store.commitStep({
+        const committed = await store.commitStep({
           itemRef,
           token,
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
+        expect(committed).toEqual({ idle: false }); // the chained run is open
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => (e.type === "message" ? e.message : e.type))).toEqual([
           user("go"),
@@ -1818,12 +1821,13 @@ export function describeStoreConformance(
         const sessionRef = await newSession();
         const { itemRef, token } = await startAndClaim(sessionRef);
         await store.intake(sessionRef, user("queued during run"));
-        await store.commitStep({
+        const committed = await store.commitStep({
           itemRef,
           token,
           append: [],
           next: { kind: "end_run", status: "cancelled" },
         });
+        expect(committed).toEqual({ idle: true }); // parked inputs open no item
         expect(await store.listItems(sessionRef)).toHaveLength(1); // no chain
         expect(await store.pendingInputs(sessionRef)).toHaveLength(1); // parked
       });
@@ -1870,9 +1874,33 @@ export function describeStoreConformance(
           next: { kind: "end_run", status: "completed" },
         };
         await store.commitStep(commit);
-        await store.commitStep(commit); // crash-after-commit recovery
+        // crash-after-commit recovery
+        expect(await store.commitStep(commit)).toEqual({ idle: true });
         expect(await store.readEntries(sessionRef)).toHaveLength(2);
         expect(await store.listItems(sessionRef)).toHaveLength(1);
+      });
+
+      it("answers a re-commit with the session as it is now", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef);
+        const commit: CommitStepRequest = {
+          itemRef,
+          token,
+          append: [assistant("calling")],
+          next: { kind: "execute_tools" },
+        };
+        await store.commitStep(commit);
+        // The item it chained is still open…
+        expect(await store.commitStep(commit)).toEqual({ idle: false });
+        // …and once that one ends the run, the same re-commit reads idle.
+        const next = await store.claimItem({ leaseMs: 60_000, session: sessionRef });
+        await store.commitStep({
+          itemRef: next!.item,
+          token: next!.token,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(await store.commitStep(commit)).toEqual({ idle: true });
       });
 
       it("rejects a commit for an unknown item", async () => {

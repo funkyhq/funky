@@ -60,6 +60,7 @@ function fakeProvider() {
       if (dead.has(sandboxId)) throw new SandboxNotFoundError(`${sandboxId} is gone`);
       return { sandboxId } as Sandbox;
     },
+    pause: async () => {},
     list: async () => [],
   };
   return { provider, created, kill: (id: string) => dead.add(id) };

@@ -1,6 +1,7 @@
 export { cancelRequested, runDriver, runStep } from "./driver/loop";
 export type { DriverDeps, DriverOptions, StepDeps } from "./driver/loop";
 export { ensureSandbox } from "./driver/ensure-sandbox";
+export { pauseSessionSandbox } from "./driver/pause-sandbox";
 export { resolveCredentials } from "./driver/resolve-credentials";
 export { buildContext } from "./engine/build-context";
 export { inference } from "./engine/inference";
@@ -41,6 +42,7 @@ export type {
   ArchivedResourceKind,
   Claim,
   CommitStepRequest,
+  CommitStepResult,
   LeaseToken,
   Store,
 } from "./ports/store";

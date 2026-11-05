@@ -3,9 +3,10 @@
 // mapping, the package-template path (its build state machine has its own
 // suite, e2b-packages.test.ts), credentials as header rules beside
 // placeholder envs, a refused create typed as a provision error, a
-// rejected API key typed as a config error,
-// exit/timeout errors settling as results, the one-reconnect
-// recovery, and the Uint8Array → ArrayBuffer copy. The real SDK is
+// rejected API key typed as a config error, pause by id without a
+// connect, the provider's TTL on every connect, exit/timeout errors
+// settling as results, the one-reconnect recovery, and the Uint8Array →
+// ArrayBuffer copy. The real SDK is
 // exercised by the key-gated live suite in e2b-live.test.ts.
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -42,6 +43,7 @@ const mocks = vi.hoisted(() => {
     connect: vi.fn(),
     getInfo: vi.fn(),
     list: vi.fn(),
+    pause: vi.fn(),
   };
 });
 
@@ -57,6 +59,7 @@ vi.mock("e2b", () => ({
     static connect = mocks.connect;
     static getInfo = mocks.getInfo;
     static list = mocks.list;
+    static pause = mocks.pause;
   },
 }));
 
@@ -279,6 +282,30 @@ describe("createE2bProvider", () => {
     expect(mocks.connect).toHaveBeenCalledWith("sbx_1", expect.anything());
   });
 
+  test("every connect sets the provider's TTL, not the SDK's 5-minute default", async () => {
+    // A run's end pauses the sandbox, so each later run's bind is a revive,
+    // and a revive's TTL is whatever the connect asks for.
+    const provider = createE2bProvider({ apiKey: "e2b_test", timeoutMs: 1_800_000 });
+    const run = vi.fn().mockRejectedValue(new Error("fetch failed"));
+    mocks.connect.mockResolvedValueOnce(fakeSandbox({ run }));
+    const sandbox = await provider.connect("sbx_1");
+    expect(mocks.connect).toHaveBeenLastCalledWith("sbx_1", {
+      apiKey: "e2b_test",
+      timeoutMs: 1_800_000,
+    });
+
+    // run()'s reconnect too: it revives a sandbox paused under a command.
+    mocks.connect.mockResolvedValueOnce(
+      fakeSandbox({ run: vi.fn().mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 }) }),
+    );
+    await sandbox.run("echo hi");
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    expect(mocks.connect).toHaveBeenLastCalledWith("sbx_1", {
+      apiKey: "e2b_test",
+      timeoutMs: 1_800_000,
+    });
+  });
+
   test("connect maps a missing sandbox to the port's typed rejection", async () => {
     const provider = createE2bProvider();
     mocks.connect.mockRejectedValue(new mocks.SandboxNotFoundError("sandbox sbx_gone not found"));
@@ -290,7 +317,23 @@ describe("createE2bProvider", () => {
     await expect(provider.connect("sbx_1")).rejects.toThrow("fetch failed");
   });
 
-  test("a rejected API key is the port's config error, on create, connect and list", async () => {
+  test("pause goes by id, never through connect, which would revive the sandbox", async () => {
+    const provider = createE2bProvider({ apiKey: "e2b_test" });
+    mocks.pause.mockResolvedValueOnce(true);
+    await provider.pause("sbx_1");
+    // Already paused: the SDK's 409 comes back as false, the port's no-op.
+    mocks.pause.mockResolvedValueOnce(false);
+    await expect(provider.pause("sbx_1")).resolves.toBeUndefined();
+    expect(mocks.pause).toHaveBeenCalledWith("sbx_1", { apiKey: "e2b_test" });
+    expect(mocks.connect).not.toHaveBeenCalled();
+
+    mocks.pause.mockRejectedValueOnce(new mocks.SandboxNotFoundError("sandbox sbx_gone not found"));
+    await expect(provider.pause("sbx_gone")).rejects.toBeInstanceOf(SandboxNotFoundError);
+    mocks.pause.mockRejectedValueOnce(new Error("fetch failed"));
+    await expect(provider.pause("sbx_1")).rejects.toThrow("fetch failed");
+  });
+
+  test("a rejected API key is the port's config error, on create, connect, pause and list", async () => {
     const provider = createE2bProvider();
     const unauthorized = () =>
       new mocks.AuthenticationError("Unauthorized, please check your credentials.");
@@ -308,6 +351,9 @@ describe("createE2bProvider", () => {
 
     mocks.connect.mockRejectedValueOnce(unauthorized());
     await expect(provider.connect("sbx_1")).rejects.toBeInstanceOf(ProviderConfigError);
+
+    mocks.pause.mockRejectedValueOnce(unauthorized());
+    await expect(provider.pause("sbx_1")).rejects.toBeInstanceOf(ProviderConfigError);
 
     mocks.list.mockImplementationOnce(() => {
       throw unauthorized(); // the SDK checks a missing key before any request

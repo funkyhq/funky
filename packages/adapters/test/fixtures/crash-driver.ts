@@ -55,9 +55,10 @@ const wrapped: Store = {
   commitStep: async (req) => {
     const n = commits++;
     if (spec?.class === "before-commit" && spec.n === n) await stallForever(onStall);
-    await store.commitStep(req);
+    const committed = await store.commitStep(req);
     send({ t: "committed", n, next: req.next.kind });
     if (spec?.class === "after-commit" && spec.n === n) await stallForever(onStall);
+    return committed;
   },
 };
 

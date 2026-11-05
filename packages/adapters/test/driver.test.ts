@@ -311,6 +311,77 @@ describe("driver steps over the pg store", () => {
     expect(provider.requests[0]?.context.map((m) => m.role)).toEqual(["user", "user", "user"]);
   });
 
+  it("hands the session to pauseSandbox on the commit that leaves it idle, and only that one", async () => {
+    const sessionRef = await newSession();
+    const paused: string[] = [];
+    const provider = scriptedProvider([callEcho("hi")]);
+    const deps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+      pauseSandbox: async (ref) => {
+        paused.push(ref.sessionId);
+      },
+    };
+
+    await store.intake(sessionRef, user("go"));
+    await runStep(deps, await claim(sessionRef), 60_000); // inference → tool call
+    await runStep(deps, await claim(sessionRef), 60_000, echoOnly); // execute_tools
+    expect(paused).toEqual([]); // the run goes on: its sandbox is in use
+
+    // A follow-up that arrives mid-step chains a new run on the terminal
+    // commit: not idle, so nothing is paused.
+    const gate = deferred();
+    const gated = scriptedProvider([
+      [...sayText("done").slice(0, 3), { wait: gate.promise }, sayText("done")[3] as Step],
+      sayText("again"),
+    ]);
+    const gatedDeps: StepDeps = { ...deps, providers: serving(gated) };
+    const inFlight = runStep(gatedDeps, await claim(sessionRef), 60_000);
+    await until(() => gated.requests.length === 1);
+    expect((await store.intake(sessionRef, user("follow-up"))).kind).toBe("queued");
+    gate.resolve();
+    await inFlight;
+    expect(paused).toEqual([]);
+
+    // The chained run ends with nothing queued: idle, paused once.
+    await runStep(gatedDeps, await claim(sessionRef), 60_000);
+    expect(paused).toEqual([sessionRef.sessionId]);
+  });
+
+  it("pauses after a cancel at the claim boundary, and survives a pauseSandbox that fails", async () => {
+    const sessionRef = await newSession();
+    await store.intake(sessionRef, user("go"));
+    await store.requestCancel(sessionRef);
+    let calls = 0;
+    const deps: StepDeps = {
+      store,
+      providers: serving(scriptedProvider([])),
+      toolSpecs: [],
+      pauseSandbox: () => {
+        calls++;
+        throw new Error("host exploded"); // a synchronous throw, not even a promise
+      },
+    };
+
+    await runStep(deps, await claim(sessionRef), 60_000);
+    expect(calls).toBe(1);
+    // The commit landed regardless: the session is idle.
+    expect((await store.intake(sessionRef, user("next"))).kind).toBe("started");
+
+    // A rejection is dropped the same way.
+    const rejecting: StepDeps = {
+      ...deps,
+      providers: serving(scriptedProvider([sayText("ok")])),
+      pauseSandbox: async () => {
+        calls++;
+        throw new Error("provider down");
+      },
+    };
+    await runStep(rejecting, await claim(sessionRef), 60_000);
+    expect(calls).toBe(2);
+  });
+
   it("commits a provider failure and ends the run as error — no retry", async () => {
     const sessionRef = await newSession();
     await store.intake(sessionRef, user("go"));

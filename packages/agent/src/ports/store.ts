@@ -242,8 +242,14 @@ export interface Store {
    * is discarded, never merged: after expiry the item's fate belongs
    * to its next claimer. Re-committing a done item resolves
    * idempotently (crash-after-commit recovery).
+   *
+   * The result says whether the commit left the session idle — no open
+   * item — read inside the same transaction: an end_run that chained
+   * parked inputs into a new run, like any next item, is not idle. A
+   * re-commit answers with the session as it is now. The driver pauses
+   * an idle session's sandbox on it (driver/pause-sandbox.ts).
    */
-  commitStep(req: CommitStepRequest): Promise<void>;
+  commitStep(req: CommitStepRequest): Promise<CommitStepResult>;
 
   // P4 adds reaper operations (lease expiry, interrupted-result synthesis).
 }
@@ -365,4 +371,10 @@ export interface CommitStepRequest {
     | { kind: "inference" }
     | { kind: "execute_tools" }
     | { kind: "end_run"; status: RunEndStatus | "error" };
+}
+
+export interface CommitStepResult {
+  /** No open item once the commit landed: the run ended and nothing
+   *  chained, so the session waits on its next intake. */
+  idle: boolean;
 }

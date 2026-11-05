@@ -1,9 +1,12 @@
 // The SandboxProvider port over E2B — every method a thin veneer on the
-// SDK call it names. `connect` needs no translation at all: e2b's
-// `Sandbox.connect` already has the port's contract — reattach, reviving
-// a paused sandbox in place, with the TTL only extended. Three spots do
-// translate:
+// SDK call it names. These spots translate:
 //
+// - e2b's `Sandbox.connect` already has the port's contract — reattach,
+//   reviving a paused sandbox in place — but sets the TTL to its own
+//   timeoutMs, 5 minutes unless given one. A sandbox is paused at every
+//   run's end, so every later run revives it: without the provider's
+//   `timeoutMs` passed on every connect (run()'s reconnect too), a
+//   revived sandbox would pause again 5 minutes into the run.
 // - The SDK's own `lifecycle.onTimeout` default is "kill", the port's is
 //   "pause", so create always passes the action explicitly.
 // - `Sandbox.create` throws a plain SandboxError when E2B refuses the
@@ -11,8 +14,8 @@
 //   the port wants SandboxProvisionError (see rethrowRefusal).
 // - The SDK throws AuthenticationError when E2B rejects the API key (a
 //   401, or a key missing or malformed before any request). That is the
-//   worker's configuration, so create, connect and list throw the port's
-//   ProviderConfigError (see rethrowUnauthorized).
+//   worker's configuration, so create, connect, pause and list throw the
+//   port's ProviderConfigError (see rethrowUnauthorized).
 // - `commands.run` throws CommandExitError on a non-zero exit; the port
 //   wants a result. The catch converts. A command-deadline TimeoutError
 //   also settles as a result (see settledResult for the discrimination).
@@ -84,10 +87,15 @@ import {
 export interface E2bProviderOptions {
   /** Defaults to the E2B_API_KEY environment variable. */
   apiKey?: string;
+  /** The TTL a connect sets — on a revive, the time until the sandbox
+   *  pauses again; a running one's is only ever extended. Pass create's
+   *  timeoutMs. Default: the SDK's, 5 minutes. */
+  timeoutMs?: number;
 }
 
 export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider {
   const connection = { apiKey: options?.apiKey };
+  const connectOpts = { ...connection, timeoutMs: options?.timeoutMs };
   const builds = e2bTemplateBuilds(connection);
 
   return {
@@ -95,10 +103,24 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
 
     async connect(sandboxId: string): Promise<Sandbox> {
       try {
-        return wrap(await E2bSandbox.connect(sandboxId, connection), connection);
+        return wrap(await E2bSandbox.connect(sandboxId, connectOpts), connectOpts);
       } catch (error) {
         // e2b's own SandboxNotFoundError is the provider confirming the
         // sandbox is gone — the port's typed rejection, not a transient.
+        if (error instanceof E2bSandboxNotFoundError) {
+          throw new SandboxNotFoundError(error.message);
+        }
+        return rethrowUnauthorized(error);
+      }
+    },
+
+    async pause(sandboxId: string): Promise<void> {
+      // By id, not through connect: connect revives a paused sandbox. The
+      // SDK answers an already-paused one (its 409) with false, which is
+      // the port's no-op.
+      try {
+        await E2bSandbox.pause(sandboxId, connection);
+      } catch (error) {
         if (error instanceof E2bSandboxNotFoundError) {
           throw new SandboxNotFoundError(error.message);
         }
@@ -146,21 +168,23 @@ export function createE2bProvider(options?: E2bProviderOptions): SandboxProvider
     const keys = credentials.map(({ key }) => key);
     const refused = (error: unknown) => rethrowRefusal(error, keys);
     if (canonical.length === 0 && setup.length === 0) {
-      return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connection);
+      return wrap(await E2bSandbox.create(sandboxOpts).catch(refused), connectOpts);
     }
 
     const template = templateName(canonical, setup);
     try {
-      return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
+      return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connectOpts);
     } catch (error) {
       if (!isUnbuilt(error)) throw error;
     }
     await ensureTemplate(builds, template, buildSteps(canonical, setup));
-    return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connection);
+    return wrap(await E2bSandbox.create(template, sandboxOpts).catch(refused), connectOpts);
   }
 }
 
-function wrap(initial: E2bSandbox, connection: { apiKey?: string }): Sandbox {
+/** `connectOpts` is the provider's: what getInfo needs to reach E2B,
+ *  plus the TTL run()'s reconnect sets. */
+function wrap(initial: E2bSandbox, connectOpts: { apiKey?: string; timeoutMs?: number }): Sandbox {
   let sandbox = initial;
   const sandboxId = initial.sandboxId;
 
@@ -168,7 +192,7 @@ function wrap(initial: E2bSandbox, connection: { apiKey?: string }): Sandbox {
     sandboxId,
 
     async getInfo(): Promise<SandboxInfo> {
-      return toInfo(await E2bSandbox.getInfo(sandboxId, connection));
+      return toInfo(await E2bSandbox.getInfo(sandboxId, connectOpts));
     },
 
     async run(command: string, opts?: RunOptions): Promise<CommandResult> {
@@ -177,7 +201,7 @@ function wrap(initial: E2bSandbox, connection: { apiKey?: string }): Sandbox {
       } catch (error) {
         const settled = settledResult(error);
         if (settled) return settled;
-        sandbox = await E2bSandbox.connect(sandboxId, connection);
+        sandbox = await E2bSandbox.connect(sandboxId, connectOpts);
         try {
           return toResult(await exec(sandbox, command, opts));
         } catch (retryError) {

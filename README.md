@@ -125,9 +125,10 @@ the cache reads and writes. An errored or aborted message carries none, so it ad
 `GET /v1/sessions/$SID/usage` lists the same counts per message. `runtimeSeconds` is how
 long the session's runs have taken, each from its first message to its end. Idle time
 between runs isn't counted, and a run still going counts up to now. It measures Funky
-working on the session, not what the sandbox provider bills: an E2B sandbox keeps running
-after a run ends, until its idle timeout (`FUNKY_SANDBOX_TIMEOUT_MS`, 30 minutes by
-default). The console shows a session's token total beside its log.
+working on the session, not what the sandbox provider bills: an E2B sandbox runs from the
+run's first tool call until the worker pauses it at the run's end (or, should that pause
+never happen, until its timeout, `FUNKY_SANDBOX_TIMEOUT_MS`, 30 minutes by default). The
+console shows a session's token total beside its log.
 
 ### Model providers
 
