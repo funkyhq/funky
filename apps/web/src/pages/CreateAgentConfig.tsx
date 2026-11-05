@@ -4,7 +4,8 @@
 // The form is the request's REQUIRED shape: provider, model, system prompt,
 // network, packages, credentials, setup commands — no packages typed is {},
 // install nothing, and no credential or command added is [], none, each
-// said explicitly. The body's optional parts — maxTokens, temperature, metadata —
+// said explicitly. Resources, also required, have no field yet, so the body
+// says {}, the provider's default size. The body's optional parts — maxTokens, temperature, metadata —
 // are left out and therefore left absent, which is
 // what the api reads as "the provider's own default" and "no metadata". They
 // belong to a config being tuned, not to one being made; POST the body
@@ -142,6 +143,7 @@ function Form({
       packages: compact(packages),
       credentials,
       setupCommands,
+      resources: {},
     };
 
     setFailure(undefined);

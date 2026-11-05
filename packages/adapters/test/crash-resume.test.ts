@@ -338,6 +338,7 @@ beforeAll(async () => {
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
     });
     sessionRef = await store.createSession({
       namespace: DEFAULT_NAMESPACE,

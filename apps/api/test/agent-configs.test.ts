@@ -22,6 +22,7 @@ const RECIPE = {
   packages: {},
   credentials: [],
   setupCommands: [],
+  resources: {},
 };
 
 const MONID_KEY = "monid keys add --key monid_funky_injected --label funky";
@@ -106,6 +107,7 @@ describe("POST /v1/agent-configs", () => {
       packages: RECIPE.packages,
       credentials: RECIPE.credentials,
       setupCommands: RECIPE.setupCommands,
+      resources: RECIPE.resources,
     });
     expect(res.status).toBe(201);
     expect((await res.json()).namespace).toBe("default");
@@ -136,6 +138,7 @@ describe("POST /v1/agent-configs", () => {
       packages: { pip: ["pandas==2.2.0"] },
       credentials: [STRIPE, GITHUB],
       setupCommands: [MONID_KEY],
+      resources: { cpuCount: 4, memoryMB: 4096 },
     });
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({
@@ -143,16 +146,18 @@ describe("POST /v1/agent-configs", () => {
       packages: { pip: ["pandas==2.2.0"] },
       credentials: [STRIPE, GITHUB],
       setupCommands: [MONID_KEY],
+      resources: { cpuCount: 4, memoryMB: 4096 },
     });
   });
 
-  it("rejects a create without network, packages, credentials or setup commands, 400", async () => {
-    const { network, packages, credentials, setupCommands, ...bare } = RECIPE;
+  it("rejects a create without network, packages, credentials, setup commands or resources, 400", async () => {
+    const { network, packages, credentials, setupCommands, resources, ...bare } = RECIPE;
     for (const body of [
-      { ...bare, packages, credentials, setupCommands },
-      { ...bare, network, credentials, setupCommands },
-      { ...bare, network, packages, setupCommands },
-      { ...bare, network, packages, credentials },
+      { ...bare, packages, credentials, setupCommands, resources },
+      { ...bare, network, credentials, setupCommands, resources },
+      { ...bare, network, packages, setupCommands, resources },
+      { ...bare, network, packages, credentials, resources },
+      { ...bare, network, packages, credentials, setupCommands },
     ]) {
       const res = await post(app, "/v1/agent-configs", body);
       expect(res.status).toBe(400);
@@ -165,6 +170,8 @@ describe("POST /v1/agent-configs", () => {
       { network: { type: "vpn" } },
       { packages: ["numpy"] },
       { setupCommands: MONID_KEY },
+      { resources: { memoryMB: "4GB" } },
+      { resources: { memoryMb: 4096 } },
     ]) {
       const res = await post(app, "/v1/agent-configs", { ...RECIPE, ...extra });
       expect(res.status).toBe(400);
@@ -362,6 +369,25 @@ describe("POST /v1/agent-configs/:id", () => {
     expect(await carried.json()).toMatchObject({ setupCommands: ["echo ready"], version: 3 });
   });
 
+  it("replaces resources on update, and carries them forward when an update omits them", async () => {
+    const created = await (
+      await post(app, "/v1/agent-configs", { ...RECIPE, resources: { memoryMB: 2048 } })
+    ).json();
+    const replaced = await post(app, `/v1/agent-configs/${created.id}`, {
+      resources: { cpuCount: 4, memoryMB: 4096 },
+    });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({
+      resources: { cpuCount: 4, memoryMB: 4096 },
+      version: 2,
+    });
+    const carried = await post(app, `/v1/agent-configs/${created.id}`, { systemPrompt: "next" });
+    expect(await carried.json()).toMatchObject({
+      resources: { cpuCount: 4, memoryMB: 4096 },
+      version: 3,
+    });
+  });
+
   it("accepts an empty update as a no-op", async () => {
     const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
     const res = await post(app, `/v1/agent-configs/${created.id}`, {});
@@ -378,6 +404,7 @@ describe("POST /v1/agent-configs/:id", () => {
       { packages: ["numpy"] },
       { credentials: [{ ...GITHUB, type: "unsafe" }] },
       { setupCommands: [""] },
+      { resources: { cpuCount: 0 } },
     ]) {
       const res = await post(app, `/v1/agent-configs/${created.id}`, body);
       expect(res.status).toBe(400);

@@ -202,6 +202,7 @@ export function QuickStart() {
     // stays the short path. The agent's edit dialog adds them.
     credentials: [],
     setupCommands: [],
+    resources: {},
   };
 
   /** Whether the step on screen has what it needs to be left. The first

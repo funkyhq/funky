@@ -71,6 +71,7 @@ describe("pg store: work item finished_at", () => {
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
     });
     const session = await store.createSession({
       namespace: DEFAULT_NAMESPACE,

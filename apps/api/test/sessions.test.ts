@@ -42,6 +42,7 @@ async function seedConfigs(
       packages: {},
       credentials: [],
       setupCommands: [],
+      resources: {},
     })
   ).json();
   return { agentConfigId: agent.id };
