@@ -11,6 +11,7 @@
 // every other route takes ?namespace=, defaulting for single-tenant
 // self-deploys (see common.ts NamespaceQuery).
 import { Hono } from "hono";
+import { z } from "zod";
 import { type AgentConfig, CreateAgentConfigRequest, UpdateAgentConfigRequest } from "@funky/core";
 import { ArchivedError, type Store, VersionConflictError } from "@funky/agent";
 import { errorResponse } from "../http";
@@ -36,6 +37,12 @@ const CreateAgentConfigBody = CreateAgentConfigRequest.extend(NamespaceQuery.sha
  *  resource's `id`; everything else — namespace included — rides
  *  through to the trusted caller. */
 const wire = ({ agentConfigId, ...rest }: AgentConfig) => ({ id: agentConfigId, ...rest });
+
+// A read can name a version: the one a session or task pinned, which an
+// update may since have replaced as current. Absent, it is the current.
+const GetAgentConfigQuery = NamespaceQuery.extend({
+  version: z.coerce.number().int().min(1).optional(),
+});
 
 export function agentConfigRoutes(store: AgentConfigStore) {
   const r = new Hono<Env>();
@@ -64,12 +71,14 @@ export function agentConfigRoutes(store: AgentConfigStore) {
     }
   });
 
-  r.get("/:id", validate("query", NamespaceQuery), async (c) => {
+  r.get("/:id", validate("query", GetAgentConfigQuery), async (c) => {
     const id = c.req.param("id");
-    const { namespace } = c.req.valid("query");
-    const config = await store.getAgentConfig({ namespace, agentConfigId: id });
+    const { namespace, version } = c.req.valid("query");
+    const config = await store.getAgentConfig({ namespace, agentConfigId: id, version });
     if (!config) {
-      return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
+      const what =
+        version === undefined ? `agent config ${id}` : `version ${version} of agent config ${id}`;
+      return errorResponse(c, 404, "not_found_error", `no ${what}`);
     }
     return c.json(wire(config));
   });

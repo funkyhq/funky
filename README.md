@@ -75,6 +75,8 @@ replace; omitted fields are preserved. Responses include a monotonic `version`: 
 current value in an update for optimistic concurrency (a stale value returns 409), or omit it
 for an unconditional last-write-wins update. A task pins the version current when it was
 created — behavior and sandbox together — so an update reaches only tasks created after it.
+`GET /v1/agent-configs/$AID?version=N` reads a pinned version; without `version` it is the
+current one.
 `packages` are installed into the sandbox before the agent's first tool call; see
 [Packages](#packages). `credentials` let the agent use API keys it can't read; see
 [Credentials](#credentials).

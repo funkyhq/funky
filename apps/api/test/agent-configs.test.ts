@@ -477,6 +477,35 @@ describe("POST /v1/agent-configs/:id/archive", () => {
 });
 
 describe("GET /v1/agent-configs/:id", () => {
+  it("reads the version a session pinned after an update replaced it", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    await post(app, `/v1/agent-configs/${created.id}`, {
+      resources: { cpuCount: 4, memoryMB: 2048 },
+    });
+
+    const current = await (await get(app, `/v1/agent-configs/${created.id}`)).json();
+    expect(current).toMatchObject({ version: 2, resources: { cpuCount: 4, memoryMB: 2048 } });
+
+    const pinned = await get(app, `/v1/agent-configs/${created.id}?version=1`);
+    expect(pinned.status).toBe(200);
+    expect(await pinned.json()).toMatchObject({ id: created.id, version: 1, resources: {} });
+  });
+
+  it("404s a version the config never had", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const res = await get(app, `/v1/agent-configs/${created.id}?version=2`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.type).toBe("not_found_error");
+  });
+
+  it("400s a version that isn't a positive integer", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    for (const version of ["0", "1.5", "latest"]) {
+      const res = await get(app, `/v1/agent-configs/${created.id}?version=${version}`);
+      expect(res.status).toBe(400);
+    }
+  });
+
   it("404s an unknown id with the error envelope", async () => {
     const res = await get(app, "/v1/agent-configs/nope");
     expect(res.status).toBe(404);
