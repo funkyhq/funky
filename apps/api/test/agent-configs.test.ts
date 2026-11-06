@@ -477,6 +477,64 @@ describe("POST /v1/agent-configs/:id/archive", () => {
 });
 
 describe("GET /v1/agent-configs/:id", () => {
+  it("reads the version a task pinned after an update replaced it", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const taskRes = await post(app, "/v1/tasks", { agentConfigId: created.id, content: "go" });
+    expect(taskRes.status).toBe(201);
+    const task = await taskRes.json();
+    expect(task.agentConfigVersion).toBe(1);
+
+    await post(app, `/v1/agent-configs/${created.id}`, {
+      resources: { cpuCount: 4, memoryMB: 2048 },
+    });
+    const current = await (await get(app, `/v1/agent-configs/${created.id}`)).json();
+    expect(current).toMatchObject({ version: 2, resources: { cpuCount: 4, memoryMB: 2048 } });
+
+    // Read back through the pin the task and its session carry.
+    const session = await (await get(app, `/v1/sessions/${task.sessionId}`)).json();
+    expect(session.agentConfigVersion).toBe(task.agentConfigVersion);
+    const pinned = await get(
+      app,
+      `/v1/agent-configs/${task.agentConfigId}?version=${session.agentConfigVersion}`,
+    );
+    expect(pinned.status).toBe(200);
+    expect(await pinned.json()).toMatchObject({ id: created.id, version: 1, resources: {} });
+  });
+
+  it("404s a version the config never had", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const res = await get(app, `/v1/agent-configs/${created.id}?version=2`);
+    expect(res.status).toBe(404);
+    const { error } = await res.json();
+    expect(error.type).toBe("not_found_error");
+    expect(error.message).toBe(`no agent config ${created.id} at version 2`);
+  });
+
+  it("404s an unknown id without claiming it exists", async () => {
+    const res = await get(app, "/v1/agent-configs/nope?version=1");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.message).toBe("no agent config nope at version 1");
+  });
+
+  it("400s a version that isn't a positive integer in plain decimal", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    for (const version of ["0", "1.5", "latest", "", "0x2", "1e0", "%2B1", "%201", "01", "-1"]) {
+      const res = await get(app, `/v1/agent-configs/${created.id}?version=${version}`);
+      expect(res.status, version).toBe(400);
+    }
+  });
+
+  it("400s a version past what the store's integer column holds", async () => {
+    const created = await (await post(app, "/v1/agent-configs", RECIPE)).json();
+    const res = await get(app, `/v1/agent-configs/${created.id}?version=3000000000`);
+    expect(res.status).toBe(400);
+    const update = await post(app, `/v1/agent-configs/${created.id}`, {
+      systemPrompt: "x",
+      version: 3_000_000_000,
+    });
+    expect(update.status).toBe(400);
+  });
+
   it("404s an unknown id with the error envelope", async () => {
     const res = await get(app, "/v1/agent-configs/nope");
     expect(res.status).toBe(404);

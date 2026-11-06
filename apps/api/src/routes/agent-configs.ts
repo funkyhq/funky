@@ -5,13 +5,25 @@
 // concurrency. Archive follows ArchiveAgent semantics: the terminal
 // state, with no route back.
 //
+// `version` means two things here. In an update body it is that
+// precondition: "update only if this is still current". On a read
+// (?version=N) it selects a snapshot: version N as it was created, which
+// is how a caller sees what a session or task pinned after an update has
+// replaced it. Absent on a read, it is the current version.
+//
 // Namespace is part of the request (this api's caller holds the root
 // token; the managed layer above does tenant authorization): the create
 // body carries it — the core request schema IS the wire shape — and
 // every other route takes ?namespace=, defaulting for single-tenant
 // self-deploys (see common.ts NamespaceQuery).
 import { Hono } from "hono";
-import { type AgentConfig, CreateAgentConfigRequest, UpdateAgentConfigRequest } from "@funky/core";
+import { z } from "zod";
+import {
+  type AgentConfig,
+  AgentConfigVersionNumber,
+  CreateAgentConfigRequest,
+  UpdateAgentConfigRequest,
+} from "@funky/core";
 import { ArchivedError, type Store, VersionConflictError } from "@funky/agent";
 import { errorResponse } from "../http";
 import { ListQuery, NamespaceQuery, page, validate } from "./common";
@@ -36,6 +48,20 @@ const CreateAgentConfigBody = CreateAgentConfigRequest.extend(NamespaceQuery.sha
  *  resource's `id`; everything else — namespace included — rides
  *  through to the trusted caller. */
 const wire = ({ agentConfigId, ...rest }: AgentConfig) => ({ id: agentConfigId, ...rest });
+
+// A read can name a version: the one a session or task pinned, which an
+// update may since have replaced as current. Absent, it is the current.
+// Plain decimal digits only — z.coerce.number() would also take "0x2",
+// "1e0", "+1", and " 1" — then core's bounds, so the store never sees a
+// version its column can't hold.
+const GetAgentConfigQuery = NamespaceQuery.extend({
+  version: z
+    .string()
+    .regex(/^[1-9][0-9]*$/, "must be a positive integer")
+    .transform(Number)
+    .pipe(AgentConfigVersionNumber)
+    .optional(),
+});
 
 export function agentConfigRoutes(store: AgentConfigStore) {
   const r = new Hono<Env>();
@@ -64,12 +90,15 @@ export function agentConfigRoutes(store: AgentConfigStore) {
     }
   });
 
-  r.get("/:id", validate("query", NamespaceQuery), async (c) => {
+  r.get("/:id", validate("query", GetAgentConfigQuery), async (c) => {
     const id = c.req.param("id");
-    const { namespace } = c.req.valid("query");
-    const config = await store.getAgentConfig({ namespace, agentConfigId: id });
+    const { namespace, version } = c.req.valid("query");
+    const config = await store.getAgentConfig({ namespace, agentConfigId: id, version });
     if (!config) {
-      return errorResponse(c, 404, "not_found_error", `no agent config ${id}`);
+      // One query can't tell an unknown id from a version it never had,
+      // so the message claims neither.
+      const at = version === undefined ? "" : ` at version ${version}`;
+      return errorResponse(c, 404, "not_found_error", `no agent config ${id}${at}`);
     }
     return c.json(wire(config));
   });

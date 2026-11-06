@@ -81,9 +81,15 @@ export const AgentConfigRef = z.object({
 });
 export type AgentConfigRef = z.infer<typeof AgentConfigRef>;
 
+/** An agent config version number. Versions count up from 1, and the
+ *  ceiling is the store's: the column is a Postgres integer (int4), so a
+ *  larger value is refused here as a bad request instead of failing the
+ *  query as "out of range". */
+export const AgentConfigVersionNumber = z.number().int().min(1).max(2_147_483_647);
+
 /** A namespace-scoped reference to one immutable agent config version. */
 export const AgentConfigVersionRef = AgentConfigRef.extend({
-  version: z.number().int().min(1),
+  version: AgentConfigVersionNumber,
 });
 export type AgentConfigVersionRef = z.infer<typeof AgentConfigVersionRef>;
 
@@ -118,13 +124,13 @@ export const UpdateAgentConfigRequest = z.object({
   resources: Resources.optional(),
   metadata: JsonValue.optional(),
   // Optional optimistic-concurrency precondition: version 3 updates only if 3 is current.
-  version: z.number().int().min(1).optional(),
+  version: AgentConfigVersionNumber.optional(),
 });
 export type UpdateAgentConfigRequest = z.infer<typeof UpdateAgentConfigRequest>;
 
 export const AgentConfig = AgentConfigRef.extend({
   ...CreateAgentConfigRequest.omit({ namespace: true }).shape,
-  version: z.number().int().min(1),
+  version: AgentConfigVersionNumber,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   // When the config was archived; absent means active. Absence is the
@@ -159,7 +165,7 @@ export const CreateSessionRequest = z.object({
   namespace: z.string().min(1),
   agentConfigId: z.string(),
   // Omit to pin the latest version at creation time.
-  agentConfigVersion: z.number().int().min(1).optional(),
+  agentConfigVersion: AgentConfigVersionNumber.optional(),
   metadata: JsonValue.optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -171,7 +177,7 @@ export const Session = SessionRef.extend({
   ...CreateSessionRequest.omit({ namespace: true }).shape,
   // Materialized from the request or the agent config's latest version.
   // The pinned version carries the session's sandbox (network, packages).
-  agentConfigVersion: z.number().int().min(1),
+  agentConfigVersion: AgentConfigVersionNumber,
   // The session's one workspace, registered by the driver's first
   // execute_tools claim (Store.bindSandbox); absent until then.
   sandboxId: z.string().optional(),
@@ -214,7 +220,7 @@ export const CreateTaskRequest = z.object({
   namespace: z.string().min(1),
   agentConfigId: z.string(),
   // Omit to pin the latest version at creation time.
-  agentConfigVersion: z.number().int().min(1).optional(),
+  agentConfigVersion: AgentConfigVersionNumber.optional(),
   // The first message's content, stored on the task as well as logged:
   // a task that waits to start must still say what it is.
   content: UserMessage.shape.content,
@@ -226,7 +232,7 @@ export type CreateTaskRequest = z.infer<typeof CreateTaskRequest>;
 // made when it is created, not when its session starts.
 export const Task = TaskRef.extend({
   ...CreateTaskRequest.omit({ namespace: true }).shape,
-  agentConfigVersion: z.number().int().min(1),
+  agentConfigVersion: AgentConfigVersionNumber,
   // The session the task started.
   sessionId: z.string().min(1),
   createdAt: z.iso.datetime(),
