@@ -19,16 +19,23 @@
 // A failure is never final: the event is deferred, its wait doubling per
 // failed attempt from retryMs up to maxRetryMs, and retried until the
 // receiver takes it. The receiver dedupes on eventId, which is what makes
-// a repeat harmless (an expired lease, a lost reply). A batch stops at its
-// first failure — the receiver is most likely down for every event behind
-// it — and the events it never reached come back when their lease does.
+// a repeat harmless (an expired lease, a lost reply).
+//
+// The sweep claims one event at a time, so a lease only has to outlast
+// one send — the sink's timeout — however slow the receiver is. A batch
+// would share one lease across sends made one after another, and a slow
+// receiver that still accepted would outrun it, handing the batch's tail
+// to another worker's sweep to send again. One at a time, workers
+// draining a backlog together also split it event by event. A failure
+// pauses the sweep for pollMs: the receiver is most likely down for every
+// event behind it too.
 //
 // Store failures are logged, never thrown: usage delivery must not take
 // down the worker's claim loops, and every event stays in the outbox
 // until a delivery is recorded.
 
 import type { UsageEvent } from "@funky/core";
-import type { Store } from "../ports/store";
+import type { Store, UsageClaim } from "../ports/store";
 import type { UsageSink } from "../ports/usage-sink";
 
 export interface UsageDeliveryOptions {
@@ -37,12 +44,11 @@ export interface UsageDeliveryOptions {
   retryMs?: number;
   /** The longest wait between two attempts. Default 1 hour. */
   maxRetryMs?: number;
-  /** The sweep's wait when it found less than a full batch. Default 30s. */
+  /** The sweep's wait when nothing was due, or a send failed. Default 30s. */
   pollMs?: number;
-  /** Events the sweep claims at once. Default 50. */
-  batch?: number;
   /** How long a claimed event is the sweep's before anyone may claim it
-   *  again. Default 60s; it must outlast a batch of sends that succeed. */
+   *  again. Default 60s; it must outlast one send — the sink's own
+   *  timeout (the HTTP sink's is 10s). */
   leaseMs?: number;
   /** Injected clock for the retry times. Defaults to wall time. */
   now?: () => Date;
@@ -68,7 +74,6 @@ export function createUsageDelivery(
   const retryMs = opts.retryMs ?? 30_000;
   const maxRetryMs = opts.maxRetryMs ?? 60 * 60_000;
   const pollMs = opts.pollMs ?? 30_000;
-  const batch = opts.batch ?? 50;
   const leaseMs = opts.leaseMs ?? 60_000;
   const now = opts.now ?? (() => new Date());
   const onError = opts.onError ?? (() => {});
@@ -112,22 +117,16 @@ export function createUsageDelivery(
 
     async sweep(signal) {
       while (!signal.aborted) {
-        let claims: Awaited<ReturnType<Store["claimUsage"]>> = [];
+        let claim: UsageClaim | undefined;
         try {
-          claims = await store.claimUsage({ limit: batch, leaseMs });
+          [claim] = await store.claimUsage({ limit: 1, leaseMs });
         } catch (error) {
           onError("claiming usage events failed", error);
         }
-        let failed = false;
-        for (const { event, attempts } of claims) {
-          if (signal.aborted) return;
-          if (!(await sendOne(event, attempts, signal))) {
-            failed = true;
-            break;
-          }
-        }
-        // A full batch that went through may have more behind it.
-        if (failed || claims.length < batch) await sleep(pollMs, signal);
+        // A delivered event may have more due behind it: claim again at once.
+        const delivered =
+          claim !== undefined && (await sendOne(claim.event, claim.attempts, signal));
+        if (!delivered) await sleep(pollMs, signal);
       }
     },
   };

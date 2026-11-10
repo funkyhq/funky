@@ -1,8 +1,8 @@
 // createUsageDelivery over fakes: the post-commit path marks what the
 // receiver took and defers what it didn't, with a backoff that doubles
-// per failed attempt up to its cap; the sweep claims, delivers, stops a
-// batch at its first failure, and ends with the signal; store failures
-// are reported, never thrown.
+// per failed attempt up to its cap; the sweep claims one event per lease,
+// claims again at once after a delivery and waits after a failure, and
+// ends with the signal; store failures are reported, never thrown.
 
 import { describe, expect, test } from "vitest";
 import type { UsageEvent, UsageEventRef } from "@funky/core";
@@ -23,7 +23,8 @@ const event = (n: number): UsageEvent => ({
   createdAt: NOW.toISOString(),
 });
 
-function fakeStore(batches: UsageClaim[][] = []) {
+/** Hands out `due` in order, as many per claim as the limit asks. */
+function fakeStore(due: UsageClaim[] = []) {
   const delivered: string[] = [];
   const deferred: Array<{ eventId: string; retryAt: Date }> = [];
   const claims: Array<{ limit: number; leaseMs: number }> = [];
@@ -34,7 +35,7 @@ function fakeStore(batches: UsageClaim[][] = []) {
     store: {
       claimUsage: async (req: { limit: number; leaseMs: number }) => {
         claims.push(req);
-        return batches.shift() ?? [];
+        return due.splice(0, req.limit);
       },
       markUsageDelivered: async (ref: UsageEventRef) => {
         delivered.push(ref.eventId);
@@ -112,12 +113,10 @@ describe("deliver — right after the commit", () => {
 });
 
 describe("sweep — the retry path", () => {
-  test("claims due events, delivers them, and backs off per failed attempt up to the cap", async () => {
+  test("claims one event per lease, delivers it, and backs off per failed attempt up to the cap", async () => {
     const { store, delivered, deferred, claims } = fakeStore([
-      [
-        { event: event(1), attempts: 0 },
-        { event: event(2), attempts: 3 },
-      ],
+      { event: event(1), attempts: 0 },
+      { event: event(2), attempts: 3 },
     ]);
     const { sink } = fakeSink(["e2"]);
     const stop = new AbortController();
@@ -126,14 +125,14 @@ describe("sweep — the retry path", () => {
       retryMs: 1_000,
       maxRetryMs: 5_000,
       pollMs: 5,
-      batch: 10,
       leaseMs: 20_000,
     });
     const sweeping = delivery.sweep(stop.signal);
     await waitFor(() => claims.length >= 2);
     stop.abort();
     await sweeping;
-    expect(claims[0]).toEqual({ limit: 10, leaseMs: 20_000 });
+    // One at a time: the lease only has to outlast one send.
+    expect(claims[0]).toEqual({ limit: 1, leaseMs: 20_000 });
     expect(delivered).toEqual(["e1"]);
     // Three failures before this one: 1s doubled three times is 8s,
     // held to the 5s cap.
@@ -142,9 +141,9 @@ describe("sweep — the retry path", () => {
 
   test("doubles the wait with each failed attempt", async () => {
     const { store, deferred, claims } = fakeStore([
-      [{ event: event(1), attempts: 0 }],
-      [{ event: event(1), attempts: 1 }],
-      [{ event: event(1), attempts: 2 }],
+      { event: event(1), attempts: 0 },
+      { event: event(1), attempts: 1 },
+      { event: event(1), attempts: 2 },
     ]);
     const stop = new AbortController();
     const sweeping = createUsageDelivery(store, fakeSink(["e1"]).sink, {
@@ -158,36 +157,37 @@ describe("sweep — the retry path", () => {
     expect(deferred.map((d) => d.retryAt)).toEqual([after(1_000), after(2_000), after(4_000)]);
   });
 
-  test("stops a batch at its first failure: the events behind it come back by their lease", async () => {
-    const { store, delivered, claims } = fakeStore([
-      [
-        { event: event(1), attempts: 0 },
-        { event: event(2), attempts: 0 },
-        { event: event(3), attempts: 0 },
-      ],
+  test("waits pollMs after a failure before claiming the next event", async () => {
+    const { store, claims } = fakeStore([
+      { event: event(1), attempts: 0 },
+      { event: event(2), attempts: 0 },
     ]);
-    const { sink, sent } = fakeSink(["e2"]);
+    const { sink, sent } = fakeSink(["e1"]);
     const stop = new AbortController();
-    const sweeping = createUsageDelivery(store, sink, { pollMs: 1 }).sweep(stop.signal);
-    await waitFor(() => claims.length >= 2);
+    const sweeping = createUsageDelivery(store, sink, { pollMs: 60_000 }).sweep(stop.signal);
+    await waitFor(() => sent.length >= 1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The receiver is most likely down for e2 as well: it waits its turn.
+    expect(claims).toHaveLength(1);
+    expect(sent).toEqual(["e1"]);
     stop.abort();
     await sweeping;
-    expect(sent).toEqual(["e1", "e2"]);
-    expect(delivered).toEqual(["e1"]);
   });
 
-  test("claims again at once after a full batch, and waits pollMs after a short one", async () => {
-    const full = [{ event: event(1), attempts: 0 }];
-    const { store, claims } = fakeStore([full, full]);
+  test("claims again at once after a delivery, and waits pollMs when nothing is due", async () => {
+    const { store, claims, delivered } = fakeStore([
+      { event: event(1), attempts: 0 },
+      { event: event(2), attempts: 0 },
+    ]);
     const stop = new AbortController();
     const sweeping = createUsageDelivery(store, fakeSink().sink, {
-      batch: 1,
       pollMs: 60_000,
     }).sweep(stop.signal);
-    // Two full batches, then an empty claim that starts the long wait.
+    // Two deliveries back to back, then an empty claim that starts the wait.
     await waitFor(() => claims.length >= 3);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(claims).toHaveLength(3);
+    expect(delivered).toEqual(["e1", "e2"]);
     stop.abort();
     await sweeping;
   });
@@ -216,7 +216,7 @@ describe("sweep — the retry path", () => {
   });
 
   test("returns on the signal, and leaves a send it cut short undeferred", async () => {
-    const { store, deferred, claims } = fakeStore([[{ event: event(1), attempts: 0 }]]);
+    const { store, deferred, claims } = fakeStore([{ event: event(1), attempts: 0 }]);
     const stop = new AbortController();
     const sink: UsageSink = {
       send: (_event, signal) =>
