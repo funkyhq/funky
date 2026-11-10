@@ -172,7 +172,8 @@ const toUsageEvent = (row: typeof usageEvents.$inferSelect): UsageEvent => {
       kind: "runtime",
       itemId: row.itemId,
       createdAt: iso(row.createdAt),
-      finishedAt: row.finishedAt === null ? null : iso(row.finishedAt),
+      // usage_events_kind_fields keeps a runtime row's finished_at set.
+      finishedAt: iso(row.finishedAt!),
       durationMs: row.durationMs,
       resources: { cpuCount: row.cpuCount, memoryMB: row.memoryMB },
     });

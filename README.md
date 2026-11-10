@@ -165,14 +165,14 @@ calls), sent when the worker commits it:
 A runtime event's span runs from when the step was queued to when it was committed, and a
 run's steps meet end to end, so its runtime events add up to the run (the `runtimeSeconds`
 above). `resources` is the sandbox size the session's agent config version asks for, with
-the defaults filled in, whether or not that step used the sandbox. There are no prices. To check a request came from Funky, compute HMAC-SHA256 of
-`<t>.<raw body>` with the secret, compare it to `v1` in constant time, and reject a `t` far
-from your clock. Any 2xx counts as delivered. Anything else, a timeout (10s) or no answer at
-all is retried, starting at 30 seconds and doubling up to an hour, until the receiver
-accepts it. Events stay in Postgres until they're delivered, so a worker that restarts, or
-any other worker, sends what one that died left behind, about a minute after the commit.
-Delivery is at least once, and a retry can repeat an event the receiver already took, so
-dedupe on `eventId`.
+the defaults filled in, whether or not that step used the sandbox. There are no prices. To
+check a request came from Funky, compute HMAC-SHA256 of `<t>.<raw body>` with the secret,
+compare it to `v1` in constant time, and reject a `t` far from your clock. Any 2xx counts
+as delivered. Anything else, a timeout (10s) or no answer at all is retried, starting at
+30 seconds and doubling up to an hour, until the receiver accepts it. Events stay in
+Postgres until they're delivered, so a worker that restarts, or any other worker, sends
+what one that died left behind, about a minute after the commit. Delivery is at least
+once, and a retry can repeat an event the receiver already took, so dedupe on `eventId`.
 
 With the URL unset, nothing is sent. Funky still records each event in the `usage_events`
 table, and setting the URL later sends every event that hasn't been delivered, back to the
