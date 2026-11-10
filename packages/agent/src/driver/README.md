@@ -67,5 +67,16 @@ What lives here is what neither the engine nor a host may own:
   an outage costs the batch a wait rather than the worker its other
   claims. Idle claiming polls (`idlePollMs`) until a Notifier port
   exists.
+- **Usage delivery** (`deliver-usage.ts`). `commitStep` records a usage
+  event for each assistant message that carries usage, in the commit's
+  own transaction, and returns them; the loop hands them to the host's
+  `deliverUsage` without waiting, as it hands an idle session to
+  `pauseSandbox`. `createUsageDelivery` is that host side: it sends each
+  event through a `UsageSink` right away, and a sweep beside the loops
+  retries what the receiver refused (backoff doubling from 30s to an
+  hour) and what a dead worker never sent — the store holds a fresh
+  event for its committer for `USAGE_HANDOFF_MS`, then offers it to any
+  sweep. At least once, never at most: the receiver dedupes on
+  `eventId`.
 
 The engine decides, the store persists, the driver survives.

@@ -18,6 +18,7 @@ import {
   type SessionEntry,
   type SessionRef,
   type Usage,
+  type UsageEvent,
   type UserMessage,
 } from "@funky/core";
 import {
@@ -381,6 +382,34 @@ describe("driver steps over the pg store", () => {
     };
     await runStep(rejecting, await claim(sessionRef), 60_000);
     expect(calls).toBe(2);
+  });
+
+  it("hands each commit's usage events to deliverUsage, and never waits on it", async () => {
+    const sessionRef = await newSession();
+    const handed: UsageEvent[][] = [];
+    const never = new Promise<void>(() => {}); // a receiver that never answers
+    const provider = scriptedProvider([callEcho("hi"), sayText("done")]);
+    const deps: StepDeps = {
+      store,
+      providers: serving(provider),
+      toolSpecs: [toToolSpec(echo)],
+      deliverUsage: (events) => {
+        handed.push(events);
+        return never;
+      },
+    };
+
+    await store.intake(sessionRef, user("go"));
+    await runStep(deps, await claim(sessionRef), 60_000); // inference: usage
+    await runStep(deps, await claim(sessionRef), 60_000, echoOnly); // tools: none
+    await runStep(deps, await claim(sessionRef), 60_000); // inference: usage
+
+    const log = await store.readEntries(sessionRef);
+    const assistants = log.filter((e) => e.type === "message" && e.message.role === "assistant");
+    expect(handed).toEqual([
+      [expect.objectContaining({ entryId: assistants[0]!.id, usage })],
+      [expect.objectContaining({ entryId: assistants[1]!.id, usage })],
+    ]);
   });
 
   it("commits a provider failure and ends the run as error — no retry", async () => {
