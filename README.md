@@ -133,6 +133,37 @@ run's first tool call until the worker pauses it at the run's end (or, should th
 never happen, until its timeout, `FUNKY_SANDBOX_TIMEOUT_MS`, 30 minutes by default). The
 console shows a session's token total beside its log.
 
+### Usage webhook
+
+To meter usage outside Funky, set `FUNKY_USAGE_WEBHOOK_URL` and `FUNKY_USAGE_WEBHOOK_SECRET`
+on the worker. Each assistant message that carries usage is then POSTed to the URL right
+after the worker commits it, one request per message:
+
+```
+POST /your/usage/endpoint
+Content-Type: application/json
+Idempotency-Key: 6f1c…
+Funky-Signature: t=1794268805,v1=5d41…
+
+{"namespace":"default","sessionId":"…","eventId":"6f1c…","entryId":"…","provider":"anthropic",
+ "model":"claude-opus-5","usage":{"input":50320,"output":2262,"cacheRead":38000,"cacheWrite":4000},
+ "createdAt":"2026-11-10T00:00:05.123Z"}
+```
+
+`usage` is the counts the provider reported, as `GET /v1/sessions/$SID/usage` lists them;
+there are no prices. To check a request came from Funky, compute HMAC-SHA256 of
+`<t>.<raw body>` with the secret, compare it to `v1` in constant time, and reject a `t` far
+from your clock. Any 2xx counts as delivered. Anything else, a timeout (10s) or no answer at
+all is retried, starting at 30 seconds and doubling up to an hour, until the receiver
+accepts it. Events stay in Postgres until they're delivered, so a worker that restarts, or
+any other worker, sends what one that died left behind, about a minute after the commit.
+Delivery is at least once, and a retry can repeat an event the receiver already took, so
+dedupe on `eventId`.
+
+With the URL unset, nothing is sent. Funky still records each event in the `usage_events`
+table, and setting the URL later sends every event that hasn't been delivered, back to the
+release that added the table.
+
 ### Model providers
 
 A config's `inference.provider` picks the vendor that serves it. At boot the worker wires

@@ -44,6 +44,7 @@ describe("loadConfig — valid input", () => {
       concurrency: 1,
       dbPoolMax: 10,
       infisical: null,
+      usageWebhook: null,
     });
   });
 
@@ -158,6 +159,54 @@ describe("loadConfig — secret store", () => {
     expect(printed).not.toContain("INFISICAL_CLIENT_ID:");
     expect(printed).not.toContain(INFISICAL_CLIENT_SECRET);
   });
+});
+
+describe("loadConfig — usage webhook", () => {
+  const WEBHOOK = {
+    FUNKY_USAGE_WEBHOOK_URL: "https://billing.example.com/funky/usage",
+    FUNKY_USAGE_WEBHOOK_SECRET: " a secret, edges and all ",
+  };
+
+  it("is off when neither variable is set, or both are blank", () => {
+    expect(loadConfig(BASE).usageWebhook).toBeNull();
+    const blank = { FUNKY_USAGE_WEBHOOK_URL: "", FUNKY_USAGE_WEBHOOK_SECRET: "  " };
+    expect(loadConfig({ ...BASE, ...blank }).usageWebhook).toBeNull();
+  });
+
+  it("reads the URL and the secret, the secret verbatim", () => {
+    expect(loadConfig({ ...BASE, ...WEBHOOK }).usageWebhook).toEqual({
+      url: WEBHOOK.FUNKY_USAGE_WEBHOOK_URL,
+      secret: WEBHOOK.FUNKY_USAGE_WEBHOOK_SECRET,
+    });
+  });
+
+  it("exits on a URL without a secret — usage is never sent unsigned", () => {
+    const env = { ...BASE, FUNKY_USAGE_WEBHOOK_URL: WEBHOOK.FUNKY_USAGE_WEBHOOK_URL };
+    expect(() => loadConfig(env)).toThrow("process.exit(1)");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("FUNKY_USAGE_WEBHOOK_SECRET: required with FUNKY_USAGE_WEBHOOK_URL"),
+    );
+  });
+
+  it("exits on a secret without a URL, without printing the secret", () => {
+    const env = { ...BASE, FUNKY_USAGE_WEBHOOK_SECRET: WEBHOOK.FUNKY_USAGE_WEBHOOK_SECRET };
+    expect(() => loadConfig(env)).toThrow("process.exit(1)");
+    const printed = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(printed).toContain("FUNKY_USAGE_WEBHOOK_URL: required with FUNKY_USAGE_WEBHOOK_SECRET");
+    expect(printed).not.toContain(WEBHOOK.FUNKY_USAGE_WEBHOOK_SECRET);
+  });
+
+  it.each(["billing.example.com/usage", "ftp://billing.example.com/usage"])(
+    "exits on a URL that isn't http(s): %s",
+    (url) => {
+      expect(() => loadConfig({ ...BASE, ...WEBHOOK, FUNKY_USAGE_WEBHOOK_URL: url })).toThrow(
+        "process.exit(1)",
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("FUNKY_USAGE_WEBHOOK_URL: must be an http:// or https:// URL"),
+      );
+    },
+  );
 });
 
 describe("loadConfig — invalid input", () => {

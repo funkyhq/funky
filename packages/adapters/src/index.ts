@@ -8,3 +8,5 @@ export { createMemorySecretProvider } from "./secrets/memory";
 export type { MemorySecretProviderOptions } from "./secrets/memory";
 export { createPgStore } from "./store/pg";
 export type { PgStoreOptions, StoreDb } from "./store/pg";
+export { createHttpUsageSink, signUsageBody } from "./usage/http";
+export type { HttpUsageSinkOptions } from "./usage/http";

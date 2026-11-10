@@ -7,6 +7,8 @@
 // at least one. A keyless variant would claim items it cannot serve.
 // The secret store is the exception, optional and whole or absent: an
 // Infisical identity is all of its variables or none, as for the api.
+// The usage webhook is the other, the same way: a URL and its signing
+// secret, both or neither — and neither, the default, sends nothing.
 import { z } from "zod";
 import { VENDORS } from "./providers";
 
@@ -65,6 +67,12 @@ const INFISICAL_IDENTITY = {
   environment: "INFISICAL_ENVIRONMENT",
 } satisfies Record<keyof InfisicalConfig, string>;
 
+/** Where usage events are POSTed, and the key that signs them. */
+export type UsageWebhookConfig = {
+  url: string;
+  secret: string;
+};
+
 export type Config = {
   databaseUrl: string;
   /** Model-provider keys by vendor id (providers.ts), the set ones only;
@@ -83,6 +91,9 @@ export type Config = {
    *  null = no secret store: a config with credentials fails its runs,
    *  saying so. */
   infisical: InfisicalConfig | null;
+  /** Where each usage event is sent (README "Usage webhook"). null = off:
+   *  events are still recorded in the store, and nothing is sent. */
+  usageWebhook: UsageWebhookConfig | null;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -90,6 +101,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const providerKeys = readProviderKeys(env);
   const infisical = readInfisical(env);
   const unset = Object.entries(INFISICAL_IDENTITY).filter(([field]) => !(field in infisical));
+  const webhookUrl = env.FUNKY_USAGE_WEBHOOK_URL?.trim() || undefined;
+  // Blank reads as unset; a set secret is the key verbatim, never trimmed.
+  const webhookSecret = env.FUNKY_USAGE_WEBHOOK_SECRET?.trim()
+    ? env.FUNKY_USAGE_WEBHOOK_SECRET
+    : undefined;
 
   // Report everything wrong at once, so one restart fixes it all.
   const issues: string[] = [];
@@ -110,6 +126,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     for (const [, key] of unset) {
       issues.push(`${key}: required with the rest of the Infisical identity (${identity})`);
     }
+  }
+  // Usage records are billing data: never send one unsigned, and never
+  // hold a secret with nowhere to send — either half alone is a mistake.
+  if (webhookUrl !== undefined && !isHttpUrl(webhookUrl)) {
+    issues.push("FUNKY_USAGE_WEBHOOK_URL: must be an http:// or https:// URL");
+  }
+  if (webhookUrl !== undefined && webhookSecret === undefined) {
+    issues.push("FUNKY_USAGE_WEBHOOK_SECRET: required with FUNKY_USAGE_WEBHOOK_URL");
+  }
+  if (webhookSecret !== undefined && webhookUrl === undefined) {
+    issues.push("FUNKY_USAGE_WEBHOOK_URL: required with FUNKY_USAGE_WEBHOOK_SECRET");
   }
   // A non-empty list already implies `!parsed.success` when the schema
   // failed; the check is repeated so `parsed` narrows to its data below.
@@ -133,7 +160,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPoolMax: e.DB_POOL_MAX,
     // Every field is set when none is unset.
     infisical: unset.length === 0 ? (infisical as InfisicalConfig) : null,
+    // Both are set when either is, or the checks above refused to boot.
+    usageWebhook:
+      webhookUrl !== undefined && webhookSecret !== undefined
+        ? { url: webhookUrl, secret: webhookSecret }
+        : null,
   };
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 /** The Infisical identity's variables that are set, by field. Blank

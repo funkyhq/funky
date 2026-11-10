@@ -2,6 +2,8 @@ export { cancelRequested, runDriver, runStep } from "./driver/loop";
 export type { DriverDeps, DriverOptions, StepDeps } from "./driver/loop";
 export { ensureSandbox } from "./driver/ensure-sandbox";
 export { pauseSessionSandbox } from "./driver/pause-sandbox";
+export { createUsageDelivery } from "./driver/deliver-usage";
+export type { UsageDelivery, UsageDeliveryOptions } from "./driver/deliver-usage";
 export { resolveCredentials } from "./driver/resolve-credentials";
 export { buildContext } from "./engine/build-context";
 export { inference } from "./engine/inference";
@@ -48,3 +50,4 @@ export type {
   Store,
   UsageClaim,
 } from "./ports/store";
+export type { UsageSink } from "./ports/usage-sink";

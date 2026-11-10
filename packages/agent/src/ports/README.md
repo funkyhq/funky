@@ -5,12 +5,13 @@ in `../driver`) consume. Implementations live downstream in
 `packages/adapters`; this directory defines what they must be, never
 what they are.
 
-| port                | one line                                                           |
-| ------------------- | ------------------------------------------------------------------ |
-| `InferenceProvider` | one request in, one live stream of increments out                  |
-| `SandboxProvider`   | sandboxes by id: create, reattach, list; commands and files in one |
-| `SecretProvider`    | a namespace's keys: the api writes them, the worker reads them     |
-| `Store`             | the single source of truth: 27 methods, two write paths            |
+| port                | one line                                                             |
+| ------------------- | -------------------------------------------------------------------- |
+| `InferenceProvider` | one request in, one live stream of increments out                    |
+| `SandboxProvider`   | sandboxes by id: create, reattach, list; commands and files in one   |
+| `SecretProvider`    | a namespace's keys: the api writes them, the worker reads them       |
+| `Store`             | the single source of truth: 27 methods, two write paths              |
+| `UsageSink`         | one usage event out to a metering receiver; resolves once it took it |
 
 Why the ports live here and not elsewhere:
 

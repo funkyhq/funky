@@ -14,13 +14,18 @@
 // a planned removal (a scale-down, a deploy) cost one poll instead of a
 // lease — and the handler is installed once, so a second SIGTERM, like
 // anything else, is a crash. Restart policy still belongs to the
-// container. The e2e suite forks this exact file — what it proves is
+// container. With FUNKY_USAGE_WEBHOOK_URL set, the usage each commit
+// records is POSTed right after it, and a sweep beside the drivers
+// retries what wasn't taken — on boot too, so events a dead worker left
+// behind go out from the next one. The sweep stops with the drain. The
+// e2e suite forks this exact file — what it proves is
 // what a container runs.
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   createSandboxTools,
+  createUsageDelivery,
   type DriverDeps,
   ensureSandbox,
   pauseSessionSandbox,
@@ -30,6 +35,7 @@ import {
 } from "@funky/agent";
 import {
   createE2bProvider,
+  createHttpUsageSink,
   createInfisicalSecretProvider,
   createPgStore,
   type StoreDb,
@@ -52,6 +58,13 @@ const secrets = cfg.infisical ? createInfisicalSecretProvider(cfg.infisical) : n
 // The registry the driver routes each claim's `inference.provider` on:
 // its keys are the providers this worker serves, nothing more.
 const providers = wireProviders(cfg.providerKeys);
+// The usage webhook, when one is configured. Off, commits still record
+// their usage in the store, and nothing leaves the worker.
+const usage = cfg.usageWebhook
+  ? createUsageDelivery(store, createHttpUsageSink(cfg.usageWebhook), {
+      onError: (message, error) => console.error(`worker: ${message}:`, error),
+    })
+  : null;
 
 const deps: DriverDeps = {
   store,
@@ -88,6 +101,9 @@ const deps: DriverDeps = {
     pauseSessionSandbox(store, sandboxes, ref).catch((error) =>
       console.error(`worker: pausing the sandbox of session ${ref.sessionId} failed:`, error),
     ),
+  // Sent right after the commit and not awaited; what this misses, the
+  // sweep below retries.
+  ...(usage ? { deliverUsage: (events) => usage.deliver(events) } : {}),
   // A bind failure the driver rides out: logged to stderr, so an outage
   // of the sandbox provider or the secret store shows while it lasts.
   onBindRetry: (ref, error, retryInMs) =>
@@ -107,7 +123,7 @@ console.log(
   `worker: claiming (providers=${[...providers.keys()].join(",")} ` +
     `concurrency=${cfg.concurrency} lease=${cfg.leaseMs}ms ` +
     `idlePoll=${cfg.idlePollMs}ms drain=${cfg.drainMs}ms bindTimeout=${cfg.bindTimeoutMs}ms ` +
-    `secrets=${secrets ? "infisical" : "off"})`,
+    `secrets=${secrets ? "infisical" : "off"} usageWebhook=${usage ? "on" : "off"})`,
 );
 // N drivers over one store and one drain signal: each counts the drain
 // budget down on its own from the shared signal and awaits its own
@@ -115,8 +131,10 @@ console.log(
 // failure (a store error outside the fence, or a provider refusing this
 // worker's credentials: ProviderConfigError) rejects the whole, and the
 // process exits over its siblings — the crash path, as it was with one.
-await Promise.all(
-  Array.from({ length: cfg.concurrency }, () =>
+// The usage sweep never rejects and returns on the drain, so it neither
+// crashes the worker nor holds its exit.
+await Promise.all([
+  ...Array.from({ length: cfg.concurrency }, () =>
     runDriver(deps, {
       leaseMs: cfg.leaseMs,
       idlePollMs: cfg.idlePollMs,
@@ -125,7 +143,8 @@ await Promise.all(
       bindTimeoutMs: cfg.bindTimeoutMs,
     }),
   ),
-);
+  usage?.sweep(drain.signal),
+]);
 console.log("worker: drained — exiting");
 // Explicit: an abandoned step (a tool deaf to its abort signal) or the
 // pool's open sockets would otherwise keep the event loop alive.

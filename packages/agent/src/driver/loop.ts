@@ -50,6 +50,7 @@ import type {
   SessionRef,
   ToolCall,
   ToolSpec,
+  UsageEvent,
   WorkItemRef,
 } from "@funky/core";
 import { buildContext } from "../engine/build-context";
@@ -68,6 +69,7 @@ import { SandboxProvisionError } from "../ports/sandbox-provider";
 import {
   type Claim,
   type CommitStepRequest,
+  type CommitStepResult,
   FencedError,
   type LeaseToken,
   type Store,
@@ -95,6 +97,13 @@ export interface StepDeps {
    *  next claim never waits on it, and a failure is the host's to log —
    *  the driver drops it, the TTL being the backstop. */
   pauseSandbox?: (ref: SessionRef) => Promise<void>;
+  /** Told of the usage events a commit recorded — one per committed
+   *  assistant message that carries usage — so the host can send them
+   *  at once (see driver/deliver-usage.ts). Not awaited, like
+   *  pauseSandbox: the next claim never waits on a receiver, and an
+   *  event this call never delivers stays in the store's outbox for the
+   *  host's retry sweep. Absent = usage goes nowhere but the store. */
+  deliverUsage?: (events: UsageEvent[]) => Promise<void>;
 }
 
 export interface DriverDeps extends StepDeps {
@@ -448,7 +457,7 @@ export async function runStep(
         append: [],
         next: { kind: "end_run", status: "cancelled" },
       });
-      if (committed.idle) pauseIdle(deps, item);
+      afterCommit(deps, item, committed);
       return;
     }
 
@@ -545,7 +554,7 @@ export async function runStep(
       consumeInputs,
       next: toNext(action),
     });
-    if (committed.idle) pauseIdle(deps, item);
+    afterCommit(deps, item, committed);
   } catch (err) {
     if (err instanceof FencedError) return; // reclaimed elsewhere — drop, claim again
     throw err;
@@ -555,11 +564,19 @@ export async function runStep(
   }
 }
 
-/** Hand an idle session to the host's pauseSandbox, without waiting. */
-function pauseIdle(deps: StepDeps, ref: SessionRef): void {
-  if (!deps.pauseSandbox) return;
+/** Hand a landed commit's consequences to the host's taps, without
+ *  waiting: an idle session to pauseSandbox, recorded usage to
+ *  deliverUsage. */
+function afterCommit(deps: StepDeps, ref: SessionRef, committed: CommitStepResult): void {
+  if (committed.idle) tap(deps.pauseSandbox, ref);
+  if (committed.usage.length > 0) tap(deps.deliverUsage, committed.usage);
+}
+
+/** Call a host tap and drop its outcome. */
+function tap<T>(fn: ((arg: T) => Promise<void>) | undefined, arg: T): void {
+  if (!fn) return;
   try {
-    deps.pauseSandbox(ref).catch(() => {});
+    fn(arg).catch(() => {});
   } catch {
     // The host's tap: a synchronous throw must not fail a landed commit.
   }
