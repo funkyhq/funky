@@ -24,6 +24,7 @@ import {
   FencedError,
   SessionNotIdleError,
   type Store,
+  USAGE_HANDOFF_MS,
   VersionConflictError,
 } from "@funky/agent";
 
@@ -1795,7 +1796,7 @@ export function describeStoreConformance(
           append: [assistant("thinking…")],
           next: { kind: "execute_tools" },
         });
-        expect(committed).toEqual({ idle: false });
+        expect(committed).toEqual({ idle: false, usage: [] });
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => e.seq)).toEqual([0, 1]);
         const items = await store.listItems(sessionRef);
@@ -1813,7 +1814,7 @@ export function describeStoreConformance(
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(committed).toEqual({ idle: true });
+        expect(committed).toEqual({ idle: true, usage: [] });
         const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(1); // the run's end is the NON-creation of a next item
         expect(items[0]?.status).toBe("done");
@@ -1832,7 +1833,7 @@ export function describeStoreConformance(
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(committed).toEqual({ idle: false }); // the chained run is open
+        expect(committed).toEqual({ idle: false, usage: [] }); // the chained run is open
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => (e.type === "message" ? e.message : e.type))).toEqual([
           user("go"),
@@ -1856,7 +1857,7 @@ export function describeStoreConformance(
           append: [],
           next: { kind: "end_run", status: "cancelled" },
         });
-        expect(committed).toEqual({ idle: true }); // parked inputs open no item
+        expect(committed).toEqual({ idle: true, usage: [] }); // parked inputs open no item
         expect(await store.listItems(sessionRef)).toHaveLength(1); // no chain
         expect(await store.pendingInputs(sessionRef)).toHaveLength(1); // parked
       });
@@ -1904,7 +1905,7 @@ export function describeStoreConformance(
         };
         await store.commitStep(commit);
         // crash-after-commit recovery
-        expect(await store.commitStep(commit)).toEqual({ idle: true });
+        expect(await store.commitStep(commit)).toEqual({ idle: true, usage: [] });
         expect(await store.readEntries(sessionRef)).toHaveLength(2);
         expect(await store.listItems(sessionRef)).toHaveLength(1);
       });
@@ -1920,7 +1921,7 @@ export function describeStoreConformance(
         };
         await store.commitStep(commit);
         // The item it chained is still open…
-        expect(await store.commitStep(commit)).toEqual({ idle: false });
+        expect(await store.commitStep(commit)).toEqual({ idle: false, usage: [] });
         // …and once that one ends the run, the same re-commit reads idle.
         const next = await store.claimItem({ leaseMs: 60_000, session: sessionRef });
         await store.commitStep({
@@ -1929,7 +1930,7 @@ export function describeStoreConformance(
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(await store.commitStep(commit)).toEqual({ idle: true });
+        expect(await store.commitStep(commit)).toEqual({ idle: true, usage: [] });
       });
 
       it("rejects a commit for an unknown item", async () => {
@@ -1970,6 +1971,181 @@ export function describeStoreConformance(
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
+      });
+    });
+
+    describe("usage events", () => {
+      const usage = { input: 100, output: 20, cacheRead: 30, cacheWrite: 10, reasoning: 5 };
+      const later = { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 };
+
+      /** One run on a fresh session whose single commit carries `usage`. */
+      async function commitWithUsage(namespace = DEFAULT_NAMESPACE) {
+        const sessionRef = await newSession({ namespace });
+        const claim = await startAndClaim(sessionRef);
+        const committed = await store.commitStep({
+          ...claim,
+          append: [{ ...assistant("done"), usage }],
+          next: { kind: "end_run", status: "completed" },
+        });
+        return { sessionRef, claim, event: committed.usage[0]! };
+      }
+
+      it("records one per committed assistant message that carries usage, and returns them", async () => {
+        const sessionRef = await newSession();
+        const { itemRef, token } = await startAndClaim(sessionRef); // seq 0: user message
+        const committed = await store.commitStep({
+          itemRef,
+          token,
+          append: [
+            { ...assistant("calling"), stopReason: "tool_use", usage }, // seq 1
+            {
+              role: "toolResult",
+              toolCallId: "call_1",
+              toolName: "bash",
+              content: [{ type: "text", text: "output" }],
+              isError: false,
+            }, // seq 2
+            { ...assistant("failed"), stopReason: "error", errorMessage: "boom" }, // seq 3
+            { ...assistant("done"), model: "other-model", usage: later }, // seq 4
+          ],
+          next: { kind: "end_run", status: "completed" },
+        });
+
+        const entries = await store.readEntries(sessionRef);
+        // The provider is the session's pinned one (newSession's "fake");
+        // the model is the message's own.
+        expect(committed.usage).toEqual([
+          {
+            ...sessionRef,
+            eventId: expect.any(String),
+            entryId: entries[1]!.id,
+            provider: "fake",
+            model: "test-model",
+            usage,
+            createdAt: entries[1]!.timestamp,
+          },
+          {
+            ...sessionRef,
+            eventId: expect.any(String),
+            entryId: entries[4]!.id,
+            provider: "fake",
+            model: "other-model",
+            usage: later,
+            createdAt: entries[4]!.timestamp,
+          },
+        ]);
+        expect(committed.usage[0]!.eventId).not.toBe(committed.usage[1]!.eventId);
+      });
+
+      it("records nothing for a commit without usage, and nothing on a re-commit", async () => {
+        const quiet = await newSession();
+        const claim = await startAndClaim(quiet);
+        const committed = await store.commitStep({
+          ...claim,
+          append: [assistant("no usage reported")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(committed.usage).toEqual([]);
+
+        const { claim: metered } = await commitWithUsage();
+        const again = await store.commitStep({
+          ...metered,
+          append: [{ ...assistant("done"), usage }],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(again.usage).toEqual([]);
+        clock.advance(USAGE_HANDOFF_MS);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toHaveLength(1);
+      });
+
+      it("records nothing when the commit is fenced", async () => {
+        const sessionRef = await newSession();
+        const { itemRef } = await startAndClaim(sessionRef);
+        await expect(
+          store.commitStep({
+            itemRef,
+            token: "not-the-token",
+            append: [{ ...assistant("late"), usage }],
+            next: { kind: "end_run", status: "completed" },
+          }),
+        ).rejects.toThrow(FencedError);
+        clock.advance(USAGE_HANDOFF_MS);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+      });
+
+      it("offers an event to claimUsage only once the committer's handoff has passed", async () => {
+        const { event } = await commitWithUsage();
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+        clock.advance(USAGE_HANDOFF_MS);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
+          { event, attempts: 0 },
+        ]);
+      });
+
+      it("leases a claimed event: nobody else gets it until the lease runs out", async () => {
+        const { event } = await commitWithUsage();
+        clock.advance(USAGE_HANDOFF_MS);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toHaveLength(1);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toEqual([]);
+        clock.advance(30_000);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toEqual([
+          { event, attempts: 0 },
+        ]);
+      });
+
+      it("claims across namespaces, oldest due first, up to the limit", async () => {
+        const first = await commitWithUsage("tenant-a");
+        clock.advance(1_000);
+        const second = await commitWithUsage("tenant-b");
+        clock.advance(1_000);
+        await commitWithUsage("tenant-a");
+        clock.advance(USAGE_HANDOFF_MS);
+        const claimed = await store.claimUsage({ limit: 2, leaseMs: 60_000 });
+        expect(claimed.map((c) => c.event)).toEqual([first.event, second.event]);
+        expect(await store.claimUsage({ limit: 2, leaseMs: 60_000 })).toHaveLength(1);
+      });
+
+      it("never offers a delivered event again", async () => {
+        const { event } = await commitWithUsage();
+        await store.markUsageDelivered(event);
+        await store.markUsageDelivered(event); // a repeat is a no-op
+        clock.advance(USAGE_HANDOFF_MS);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+      });
+
+      it("defers a failed event to its retry time, counting the attempt", async () => {
+        const { event } = await commitWithUsage();
+        // Due again at once: the retry time is the caller's to choose.
+        await store.deferUsage(event, new Date(0));
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
+          { event, attempts: 1 },
+        ]);
+        await store.deferUsage(event, new Date(0));
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
+          { event, attempts: 2 },
+        ]);
+        // Far off: not due after the handoff, nor after the lease.
+        await store.deferUsage(event, new Date(Date.now() + 365 * 86_400_000));
+        clock.advance(USAGE_HANDOFF_MS + 60_000);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+      });
+
+      it("keeps a delivered event delivered when a late failure defers it", async () => {
+        const { event } = await commitWithUsage();
+        await store.markUsageDelivered(event);
+        await store.deferUsage(event, new Date(0));
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+      });
+
+      it("ignores a foreign ref when marking or deferring", async () => {
+        const { event } = await commitWithUsage();
+        await store.markUsageDelivered({ ...event, namespace: "elsewhere" });
+        await store.deferUsage({ ...event, namespace: "elsewhere" }, new Date(0));
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+        clock.advance(USAGE_HANDOFF_MS);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
+          { event, attempts: 0 },
+        ]);
       });
     });
 

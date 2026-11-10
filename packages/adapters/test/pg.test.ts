@@ -15,7 +15,7 @@ import { describeStoreConformance } from "./store-conformance";
 let client: PGlite;
 
 const TRUNCATE =
-  "TRUNCATE agent_configs, sessions, tasks, session_entries, work_items, pending_inputs RESTART IDENTITY CASCADE";
+  "TRUNCATE agent_configs, sessions, tasks, session_entries, work_items, pending_inputs, usage_events RESTART IDENTITY CASCADE";
 
 // Booting PGlite can outlast the 10s default when crash-resume's
 // subprocesses share the CPU.

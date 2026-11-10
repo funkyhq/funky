@@ -23,6 +23,8 @@ const SHIPPED: Record<string, string> = {
     "ede72e6082a55ff71a7a752d3b5f364cc885b047e2cca9628b946007db26fd81",
   "20261105195729_add_agent_config_resources":
     "78a3911f821c913f94507d7acdde4d2883cc4f733c369cf28d6b506f2168ac22",
+  "20261110182151_add_usage_events":
+    "65b2860356a19c6de83b6ec920f64ac9d673237d7504525c48800be5e78b3937",
 };
 
 const hashes = new Map(migrations.map((m) => [m.name, m.hash]));
