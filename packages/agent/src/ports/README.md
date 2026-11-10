@@ -10,7 +10,7 @@ what they are.
 | `InferenceProvider` | one request in, one live stream of increments out                  |
 | `SandboxProvider`   | sandboxes by id: create, reattach, list; commands and files in one |
 | `SecretProvider`    | a namespace's keys: the api writes them, the worker reads them     |
-| `Store`             | the single source of truth: 18 methods, two write paths            |
+| `Store`             | the single source of truth: 27 methods, two write paths            |
 
 Why the ports live here and not elsewhere:
 

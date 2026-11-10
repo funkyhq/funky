@@ -36,6 +36,7 @@ import type {
   SessionEntry,
   Resources,
   SetupCommands,
+  Usage,
   UserMessage,
 } from "@funky/core";
 
@@ -262,5 +263,39 @@ export const pendingInputs = pgTable(
       columns: [t.namespace, t.sessionId],
       foreignColumns: [sessions.namespace, sessions.id],
     }),
+  ],
+);
+
+// The usage webhook's outbox, and the ledger of what was reported: one
+// row per committed assistant message that carries usage, written by
+// commitStep beside the message (see the migration).
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    namespace: text("namespace").notNull(),
+    sessionId: text("session_id").notNull(),
+    id: text("id").notNull(),
+    entryId: text("entry_id").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    usage: jsonb("usage").$type<Usage>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    // Delivery bookkeeping — adapter internals, not port vocabulary.
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.namespace, t.sessionId, t.id] }),
+    foreignKey({
+      columns: [t.namespace, t.sessionId],
+      foreignColumns: [sessions.namespace, sessions.id],
+    }),
+    uniqueIndex("usage_events_one_per_entry").on(t.namespace, t.sessionId, t.entryId),
+    // Partial: only undelivered rows. The claim query repeats the
+    // predicate verbatim (see pg.ts claimUsage).
+    index("usage_events_delivery_scan")
+      .on(t.nextAttemptAt)
+      .where(sql`${t.deliveredAt} is null`),
   ],
 );

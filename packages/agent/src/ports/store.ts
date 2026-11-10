@@ -19,6 +19,8 @@ import type {
   Task,
   TaskRef,
   UpdateAgentConfigRequest,
+  UsageEvent,
+  UsageEventRef,
   UsageSummary,
   UserMessage,
   WorkItem,
@@ -248,8 +250,42 @@ export interface Store {
    * parked inputs into a new run, like any next item, is not idle. A
    * re-commit answers with the session as it is now. The driver pauses
    * an idle session's sandbox on it (driver/pause-sandbox.ts).
+   *
+   * Each appended assistant message that carries usage is recorded as a
+   * UsageEvent in the same transaction — one per message, never one
+   * without its message — and the result hands back the events this
+   * commit recorded, so the host can deliver them at once. A re-commit
+   * records nothing and returns none: the first commit's events are
+   * already stored, and claimUsage offers them.
    */
   commitStep(req: CommitStepRequest): Promise<CommitStepResult>;
+
+  // --- usage delivery — the outbox commitStep fills ---
+
+  /**
+   * Lease up to `limit` undelivered usage events that are due, oldest
+   * due first; empty = nothing to deliver. Cross-tenant, like
+   * claimItem, and SKIP LOCKED in spirit: concurrent claimers never
+   * get the same event while its lease runs. The lease is the event's
+   * next due time moved to now + leaseMs, so a claimer that dies
+   * holding one hands it back by expiry, with nothing to release.
+   *
+   * An event is first due USAGE_HANDOFF_MS after the commit that
+   * recorded it: until then it is the committer's to deliver (see
+   * CommitStepResult.usage), and nobody else is offered it.
+   *
+   * Delivery is at least once by design — a lease can expire under a
+   * slow delivery and the event go out twice. The receiver dedupes on
+   * eventId; there is no token, because a duplicate costs nothing.
+   */
+  claimUsage(req: { limit: number; leaseMs: number }): Promise<UsageClaim[]>;
+  /** The receiver accepted the event: it is never offered again. Repeating
+   *  it is a no-op; an unknown or foreign ref is ignored. */
+  markUsageDelivered(ref: UsageEventRef): Promise<void>;
+  /** A delivery failed: count the attempt, and make the event due again
+   *  at `retryAt`. A delivered event is left alone, so a failure that
+   *  loses the race to another claimer's success cannot revive it. */
+  deferUsage(ref: UsageEventRef, retryAt: Date): Promise<void>;
 
   // P4 adds reaper operations (lease expiry, interrupted-result synthesis).
 }
@@ -377,4 +413,22 @@ export interface CommitStepResult {
   /** No open item once the commit landed: the run ended and nothing
    *  chained, so the session waits on its next intake. */
   idle: boolean;
+  /** The usage events this commit recorded, in log order: one per
+   *  appended assistant message that carries usage. Empty for a
+   *  re-commit, which records nothing. */
+  usage: UsageEvent[];
+}
+
+/** How long a usage event stays the committing host's to deliver before
+ *  claimUsage offers it to any claimer — the committer's head start,
+ *  which makes the post-commit delivery and the retry sweep take turns
+ *  rather than race. A minute: a delivery takes a request, and an event
+ *  whose committer died is late by no more than this. */
+export const USAGE_HANDOFF_MS = 60_000;
+
+/** claimUsage's result: one leased event, and how many deliveries of it
+ *  have failed so far — the retry policy's backoff input. */
+export interface UsageClaim {
+  event: UsageEvent;
+  attempts: number;
 }

@@ -36,6 +36,7 @@ export {
   ArchivedError,
   FencedError,
   SessionNotIdleError,
+  USAGE_HANDOFF_MS,
   VersionConflictError,
 } from "./ports/store";
 export type {
@@ -45,4 +46,5 @@ export type {
   CommitStepResult,
   LeaseToken,
   Store,
+  UsageClaim,
 } from "./ports/store";

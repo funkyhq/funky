@@ -289,6 +289,36 @@ export const UsageSummary = z.object({
 });
 export type UsageSummary = z.infer<typeof UsageSummary>;
 
+// --- usage events ---
+
+// One assistant message's usage as a row of its own, recorded by the
+// commit that logs the message — the unit a metering system outside
+// Funky is told about (the worker's usage webhook). Quantities only:
+// what the provider reported, whole, never a price — pricing stays the
+// receiver's, as it stays display-time inside Funky (messages.ts Usage).
+// `eventId` is minted by the store and never reused, so a receiver that
+// keys on it counts each message once however often it is told.
+
+/** A reference to a usage event: the full path to the row. */
+export const UsageEventRef = SessionRef.extend({
+  eventId: z.string().min(1),
+});
+export type UsageEventRef = z.infer<typeof UsageEventRef>;
+
+export const UsageEvent = UsageEventRef.extend({
+  // The assistant message's entry in the session's log.
+  entryId: z.string().min(1),
+  // The session's pinned `inference.provider`, and the model the
+  // message names.
+  provider: z.string(),
+  model: z.string(),
+  usage: Usage,
+  // The message entry's timestamp: when the usage was committed, not
+  // when it was delivered.
+  createdAt: z.iso.datetime(),
+});
+export type UsageEvent = z.infer<typeof UsageEvent>;
+
 // --- pending inputs ---
 
 // A user message that arrived while a run was active (or parked by a

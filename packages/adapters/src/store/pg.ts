@@ -59,6 +59,8 @@ import {
   Task,
   TaskRef,
   UpdateAgentConfigRequest,
+  UsageEvent,
+  UsageEventRef,
   UsageSummary,
   UserMessage,
   WorkItem,
@@ -71,6 +73,7 @@ import {
   FencedError,
   SessionNotIdleError,
   type Store,
+  USAGE_HANDOFF_MS,
   VersionConflictError,
 } from "@funky/agent";
 import {
@@ -80,6 +83,7 @@ import {
   sessionEntries,
   sessions,
   tasks,
+  usageEvents,
   workItems,
   type WrappedJson,
 } from "./schema";
@@ -159,6 +163,28 @@ const toSession = (row: typeof sessions.$inferSelect): Session =>
     ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
+const toUsageEvent = (row: typeof usageEvents.$inferSelect): UsageEvent =>
+  UsageEvent.parse({
+    namespace: row.namespace,
+    sessionId: row.sessionId,
+    eventId: row.id,
+    entryId: row.entryId,
+    provider: row.provider,
+    model: row.model,
+    usage: row.usage,
+    createdAt: iso(row.createdAt),
+  });
+
+/** The full path to a usage event's row — its PK, so writes ride it. */
+const usageEventAt = (ref: UsageEventRef): SQL | undefined => {
+  const { namespace, sessionId, eventId } = UsageEventRef.parse(ref);
+  return and(
+    eq(usageEvents.namespace, namespace),
+    eq(usageEvents.sessionId, sessionId),
+    eq(usageEvents.id, eventId),
+  );
+};
+
 const toTask = (row: typeof tasks.$inferSelect): Task =>
   Task.parse({
     taskId: row.id,
@@ -213,18 +239,20 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     return sql`(${table.createdAt}, ${table.id}) < (${iso(cursor.createdAt)}::timestamptz, ${after})`;
   }
 
-  /** Mint envelopes and append; caller must hold the session lock. */
+  /** Mint envelopes and append; caller must hold the session lock.
+   *  Returns the entries as appended. */
   async function appendEntries(
     tx: Tx,
     ref: SessionRef,
     payloads: Array<Record<string, unknown>>,
-  ): Promise<void> {
+  ): Promise<SessionEntry[]> {
     const { namespace, sessionId } = ref;
     const [tail] = await tx
       .select({ max: sql<number>`coalesce(max(${sessionEntries.seq}), -1)` })
       .from(sessionEntries)
       .where(and(eq(sessionEntries.namespace, namespace), eq(sessionEntries.sessionId, sessionId)));
     let seq = Number(tail?.max ?? -1);
+    const appended: SessionEntry[] = [];
     for (const payload of payloads) {
       seq += 1;
       const entry = SessionEntry.parse({
@@ -234,7 +262,74 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         ...payload,
       });
       await tx.insert(sessionEntries).values({ namespace, sessionId, seq, entry });
+      appended.push(entry);
     }
+    return appended;
+  }
+
+  /**
+   * commitStep's usage half, inside its transaction: one usage event per
+   * appended assistant message that carries usage, first due for
+   * claimUsage USAGE_HANDOFF_MS after it was logged. The provider is the
+   * session's pinned one — the message names only its model — read once,
+   * and only when there is usage to record.
+   */
+  async function recordUsage(
+    tx: Tx,
+    ref: SessionRef,
+    appended: SessionEntry[],
+  ): Promise<UsageEvent[]> {
+    const metered = appended.flatMap((entry) =>
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.usage !== undefined
+        ? [{ entry, message: entry.message, usage: entry.message.usage }]
+        : [],
+    );
+    if (metered.length === 0) return [];
+    const { namespace, sessionId } = ref;
+    const [pinned] = await tx
+      .select({ inference: agentConfigVersions.inference })
+      .from(sessions)
+      .innerJoin(
+        agentConfigVersions,
+        and(
+          eq(agentConfigVersions.namespace, sessions.namespace),
+          eq(agentConfigVersions.agentConfigId, sessions.agentConfigId),
+          eq(agentConfigVersions.version, sessions.agentConfigVersion),
+        ),
+      )
+      .where(and(eq(sessions.namespace, namespace), eq(sessions.id, sessionId)));
+    if (!pinned) throw new Error(`commitStep: session ${sessionId} has no agent config`);
+    const events = metered.map(({ entry, message, usage }) =>
+      UsageEvent.parse({
+        namespace,
+        sessionId,
+        eventId: randomUUID(),
+        entryId: entry.id,
+        provider: pinned.inference.provider,
+        model: message.model,
+        usage,
+        createdAt: entry.timestamp,
+      }),
+    );
+    await tx.insert(usageEvents).values(
+      events.map((event) => {
+        const createdAt = new Date(event.createdAt);
+        return {
+          namespace,
+          sessionId,
+          id: event.eventId,
+          entryId: event.entryId,
+          provider: event.provider,
+          model: event.model,
+          usage: event.usage,
+          createdAt,
+          nextAttemptAt: new Date(createdAt.getTime() + USAGE_HANDOFF_MS),
+        };
+      }),
+    );
+    return events;
   }
 
   /**
@@ -1008,18 +1103,20 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               ),
             )
             .limit(1);
-          return { idle: open === undefined };
+          // The first commit recorded this step's usage; nothing new here.
+          return { idle: open === undefined, usage: [] };
         }
         if (item.status !== "leased" || item.leaseToken !== req.token)
           throw new FencedError(`commitStep: fenced — stale token for ${itemId}`);
         if (item.leaseExpiresAt === null || item.leaseExpiresAt.getTime() <= now().getTime())
           throw new FencedError(`commitStep: fenced — ${itemId}'s lease expired before commit`);
         await lockSession(tx, { namespace, sessionId });
-        await appendEntries(
+        const appended = await appendEntries(
           tx,
           { namespace, sessionId },
           messages.map((m) => ({ type: "message", message: m })),
         );
+        const usage = await recordUsage(tx, { namespace, sessionId }, appended);
         if (req.consumeInputs !== undefined && req.consumeInputs.length > 0) {
           const drained = await tx
             .delete(pendingInputs)
@@ -1056,12 +1153,12 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             status: "ready",
             createdAt: at,
           });
-          return { idle: false };
+          return { idle: false, usage };
         }
         // end_run: the run's end is the atomic NON-creation of a next item.
         // Pending inputs auto-chain a new run in this same transaction —
         // except after a cancel, which parks them for the next intake.
-        if (req.next.status === "cancelled") return { idle: true };
+        if (req.next.status === "cancelled") return { idle: true, usage };
         const parked = await tx
           .select()
           .from(pendingInputs)
@@ -1069,7 +1166,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
             and(eq(pendingInputs.namespace, namespace), eq(pendingInputs.sessionId, sessionId)),
           )
           .orderBy(asc(pendingInputs.ord));
-        if (parked.length === 0) return { idle: true };
+        if (parked.length === 0) return { idle: true, usage };
         await appendEntries(
           tx,
           { namespace, sessionId },
@@ -1093,8 +1190,50 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           status: "ready",
           createdAt: at,
         });
-        return { idle: false };
+        return { idle: false, usage };
       });
+    },
+
+    async claimUsage(req) {
+      return db.transaction(async (tx) => {
+        const t = now();
+        // The leading conjunct is the delivery-scan index's predicate
+        // verbatim, as claimItem repeats the claim scan's.
+        const due = await tx
+          .select()
+          .from(usageEvents)
+          .where(and(isNull(usageEvents.deliveredAt), lte(usageEvents.nextAttemptAt, t)))
+          .orderBy(asc(usageEvents.nextAttemptAt))
+          .limit(req.limit)
+          .for("update", { skipLocked: true });
+        if (due.length === 0) return [];
+        // The rows are locked: the lease lands before anyone else can
+        // see them due.
+        await tx
+          .update(usageEvents)
+          .set({ nextAttemptAt: new Date(t.getTime() + req.leaseMs) })
+          .where(
+            sql`(${usageEvents.namespace}, ${usageEvents.sessionId}, ${usageEvents.id}) in (${sql.join(
+              due.map((row) => sql`(${row.namespace}, ${row.sessionId}, ${row.id})`),
+              sql`, `,
+            )})`,
+          );
+        return due.map((row) => ({ event: toUsageEvent(row), attempts: row.attempts }));
+      });
+    },
+
+    async markUsageDelivered(ref) {
+      await db
+        .update(usageEvents)
+        .set({ deliveredAt: now() })
+        .where(and(usageEventAt(ref), isNull(usageEvents.deliveredAt)));
+    },
+
+    async deferUsage(ref, retryAt) {
+      await db
+        .update(usageEvents)
+        .set({ attempts: sql`${usageEvents.attempts} + 1`, nextAttemptAt: retryAt })
+        .where(and(usageEventAt(ref), isNull(usageEvents.deliveredAt)));
     },
   };
 }
