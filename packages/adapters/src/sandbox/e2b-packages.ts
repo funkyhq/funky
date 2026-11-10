@@ -44,7 +44,7 @@
 
 import { createHash } from "node:crypto";
 import { ApiClient, BuildError, ConnectionConfig, Template } from "e2b";
-import type { Packages, Resources, SetupCommands } from "@funky/core";
+import { DEFAULT_RESOURCES, type Packages, type Resources, type SetupCommands } from "@funky/core";
 import { SandboxProvisionError } from "@funky/agent";
 
 /** Bump when the recipe below changes how an image is built: every
@@ -56,14 +56,13 @@ const RECIPE_VERSION = 1;
  *  directly: its size (2 vCPUs, 512 MiB) is not DEFAULT_RESOURCES. */
 export const BASE_TEMPLATE = "base";
 
-/** The size of a sandbox whose config leaves a field out — the SDK's
- *  own build default, stated here so it is Funky's rule, not a default
- *  an SDK upgrade could move. Not part of a template's name: a template
- *  built before resources existed was built at exactly this. So a
- *  template's name doesn't move when this does, and every template
- *  already built keeps the old size — change it only together with a
- *  RECIPE_VERSION bump, which renames (and so rebuilds) them all. */
-export const DEFAULT_RESOURCES = { cpuCount: 2, memoryMB: 1024 } as const;
+// DEFAULT_RESOURCES (core) is the SDK's own build default, stated in
+// core so it is Funky's rule, not a default an SDK upgrade could move.
+// It is not part of a template's name: a template built before resources
+// existed was built at exactly this. So a template's name doesn't move
+// when it does, and every template already built keeps the old size —
+// change it only together with a RECIPE_VERSION bump, which renames (and
+// so rebuilds) them all.
 
 /** `npm root -g` in BASE_TEMPLATE (probed). Global installs land here,
  *  and require() only finds them through NODE_PATH, which the template

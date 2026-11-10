@@ -63,6 +63,7 @@ const event: UsageEvent = {
   namespace: "acme",
   sessionId: "s1",
   eventId: "evt_1",
+  kind: "tokens",
   entryId: "entry_1",
   provider: "anthropic",
   model: "claude-opus-5",
@@ -150,7 +151,8 @@ describe("usage delivery over the pg store", () => {
 
   const user = (text: string): UserMessage => ({ role: "user", content: [{ type: "text", text }] });
 
-  /** One committed run whose reply carries usage; the commit's events. */
+  /** One committed run whose reply carries usage; the commit's events:
+   *  the reply's tokens, then the closed item's runtime. */
   async function commitWithUsage(store: Store): Promise<UsageEvent[]> {
     const agent = await store.createAgentConfig({
       namespace: DEFAULT_NAMESPACE,
@@ -204,7 +206,9 @@ describe("usage delivery over the pg store", () => {
     });
 
     const events = await commitWithUsage(store);
-    await delivery.deliver(events); // refused: deferred 30s
+    // Tokens refused: deferred 30s. The delivery stops there — the
+    // receiver is likely down — so the runtime event waits for the sweep.
+    await delivery.deliver(events);
     expect(received).toHaveLength(1);
 
     const stop = new AbortController();
@@ -214,15 +218,17 @@ describe("usage delivery over the pg store", () => {
     offsetMs += 30_000;
     await until(() => received.length === 2);
     offsetMs += USAGE_HANDOFF_MS + 60 * 60_000;
+    await until(() => received.length === 3);
     await new Promise((resolve) => setTimeout(resolve, 30));
     stop.abort();
     await sweeping;
 
     // Delivered once accepted: never sent again, however long the sweep runs.
-    expect(received).toHaveLength(2);
+    expect(received).toHaveLength(3);
     expect(received.map((r) => r.headers["idempotency-key"])).toEqual([
       events[0]!.eventId,
       events[0]!.eventId,
+      events[1]!.eventId,
     ]);
     expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
   });
@@ -245,11 +251,14 @@ describe("usage delivery over the pg store", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(received).toHaveLength(0);
     offsetMs += USAGE_HANDOFF_MS;
-    await until(() => received.length === 1);
+    await until(() => received.length === 2);
     stop.abort();
     await sweeping;
 
-    expect(JSON.parse(received[0]!.body)).toEqual(events[0]);
+    // Both kinds ride the same outbox and the same signed POST.
+    const bodies = received.map((r) => JSON.parse(r.body) as UsageEvent);
+    expect(bodies.sort((a, b) => a.kind.localeCompare(b.kind))).toEqual([events[1], events[0]]);
+    expect(events.map((e) => e.kind)).toEqual(["tokens", "runtime"]);
     expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
   });
 });

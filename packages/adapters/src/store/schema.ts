@@ -16,7 +16,9 @@
 
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   bigserial,
+  check,
   foreignKey,
   index,
   integer,
@@ -267,19 +269,29 @@ export const pendingInputs = pgTable(
 );
 
 // The usage webhook's outbox, and the ledger of what was reported: one
-// row per committed assistant message that carries usage, written by
-// commitStep beside the message (see the migration).
+// row per committed assistant message that carries usage ("tokens") and
+// one per work item a commit closes ("runtime"), written by commitStep
+// in the commit's transaction (see the migrations).
 export const usageEvents = pgTable(
   "usage_events",
   {
     namespace: text("namespace").notNull(),
     sessionId: text("session_id").notNull(),
     id: text("id").notNull(),
-    entryId: text("entry_id").notNull(),
-    provider: text("provider").notNull(),
-    model: text("model").notNull(),
-    usage: jsonb("usage").$type<Usage>().notNull(),
+    kind: text("kind").$type<"tokens" | "runtime">().notNull(),
+    // "tokens" only.
+    entryId: text("entry_id"),
+    provider: text("provider"),
+    model: text("model"),
+    usage: jsonb("usage").$type<Usage>(),
+    // A tokens event's entry timestamp; a runtime event's item start.
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    // "runtime" only.
+    itemId: text("item_id"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: bigint("duration_ms", { mode: "number" }),
+    cpuCount: integer("cpu_count"),
+    memoryMB: integer("memory_mb"),
     // Delivery bookkeeping — adapter internals, not port vocabulary.
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     attempts: integer("attempts").notNull().default(0),
@@ -291,7 +303,17 @@ export const usageEvents = pgTable(
       columns: [t.namespace, t.sessionId],
       foreignColumns: [sessions.namespace, sessions.id],
     }),
+    foreignKey({
+      name: "usage_events_item_fk",
+      columns: [t.namespace, t.sessionId, t.itemId],
+      foreignColumns: [workItems.namespace, workItems.sessionId, workItems.id],
+    }),
+    check(
+      "usage_events_kind_fields",
+      sql`(${t.kind} = 'tokens' and ${t.entryId} is not null and ${t.provider} is not null and ${t.model} is not null and ${t.usage} is not null) or (${t.kind} = 'runtime' and ${t.itemId} is not null and ${t.finishedAt} is not null and ${t.durationMs} is not null and ${t.cpuCount} is not null and ${t.memoryMB} is not null)`,
+    ),
     uniqueIndex("usage_events_one_per_entry").on(t.namespace, t.sessionId, t.entryId),
+    uniqueIndex("usage_events_one_per_item").on(t.namespace, t.sessionId, t.itemId),
     // Partial: only undelivered rows. The claim query repeats the
     // predicate verbatim (see pg.ts claimUsage).
     index("usage_events_delivery_scan")

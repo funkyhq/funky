@@ -68,8 +68,9 @@ What lives here is what neither the engine nor a host may own:
   claims. Idle claiming polls (`idlePollMs`) until a Notifier port
   exists.
 - **Usage delivery** (`deliver-usage.ts`). `commitStep` records a usage
-  event for each assistant message that carries usage, in the commit's
-  own transaction, and returns them; the loop hands them to the host's
+  event for each assistant message that carries usage (`tokens`) and one
+  for the item it closes (`runtime`), in the commit's own transaction,
+  and returns them; the loop hands them to the host's
   `deliverUsage` without waiting, as it hands an idle session to
   `pauseSandbox`. `createUsageDelivery` is that host side: it sends each
   event through a `UsageSink` right away, and a sweep beside the loops

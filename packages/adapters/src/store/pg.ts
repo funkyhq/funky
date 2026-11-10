@@ -46,6 +46,7 @@ import {
   CreateAgentConfigRequest,
   CreateSessionRequest,
   CreateTaskRequest,
+  DEFAULT_RESOURCES,
   EntryUsage,
   IntakeResult,
   type JsonValue,
@@ -163,17 +164,57 @@ const toSession = (row: typeof sessions.$inferSelect): Session =>
     ...(row.archivedAt === null ? {} : { archivedAt: iso(row.archivedAt) }),
   });
 
-const toUsageEvent = (row: typeof usageEvents.$inferSelect): UsageEvent =>
-  UsageEvent.parse({
-    namespace: row.namespace,
-    sessionId: row.sessionId,
-    eventId: row.id,
+const toUsageEvent = (row: typeof usageEvents.$inferSelect): UsageEvent => {
+  const ref = { namespace: row.namespace, sessionId: row.sessionId, eventId: row.id };
+  if (row.kind === "runtime")
+    return UsageEvent.parse({
+      ...ref,
+      kind: "runtime",
+      itemId: row.itemId,
+      createdAt: iso(row.createdAt),
+      finishedAt: row.finishedAt === null ? null : iso(row.finishedAt),
+      durationMs: row.durationMs,
+      resources: { cpuCount: row.cpuCount, memoryMB: row.memoryMB },
+    });
+  return UsageEvent.parse({
+    ...ref,
+    kind: "tokens",
     entryId: row.entryId,
     provider: row.provider,
     model: row.model,
     usage: row.usage,
     createdAt: iso(row.createdAt),
   });
+};
+
+/** A usage event as its row, first due for claimUsage USAGE_HANDOFF_MS
+ *  after `committedAt`. */
+const usageEventRow = (event: UsageEvent, committedAt: Date): typeof usageEvents.$inferInsert => {
+  const common = {
+    namespace: event.namespace,
+    sessionId: event.sessionId,
+    id: event.eventId,
+    kind: event.kind,
+    createdAt: new Date(event.createdAt),
+    nextAttemptAt: new Date(committedAt.getTime() + USAGE_HANDOFF_MS),
+  };
+  if (event.kind === "runtime")
+    return {
+      ...common,
+      itemId: event.itemId,
+      finishedAt: new Date(event.finishedAt),
+      durationMs: event.durationMs,
+      cpuCount: event.resources.cpuCount,
+      memoryMB: event.resources.memoryMB,
+    };
+  return {
+    ...common,
+    entryId: event.entryId,
+    provider: event.provider,
+    model: event.model,
+    usage: event.usage,
+  };
+};
 
 /** The full path to a usage event's row — its PK, so writes ride it. */
 const usageEventAt = (ref: UsageEventRef): SQL | undefined => {
@@ -268,28 +309,26 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
   }
 
   /**
-   * commitStep's usage half, inside its transaction: one usage event per
-   * appended assistant message that carries usage, first due for
-   * claimUsage USAGE_HANDOFF_MS after it was logged. The provider is the
-   * session's pinned one — the message names only its model — read once,
-   * and only when there is usage to record.
+   * commitStep's usage half, inside its transaction: a tokens event per
+   * appended assistant message that carries usage, in log order, then a
+   * runtime event for the item the commit closed — its span, and the
+   * size the session's pinned config asks for, DEFAULT_RESOURCES filling
+   * in what it leaves out. Each is first due for claimUsage
+   * USAGE_HANDOFF_MS after the commit. The provider is the session's
+   * pinned one — the message names only its model.
    */
   async function recordUsage(
     tx: Tx,
     ref: SessionRef,
     appended: SessionEntry[],
+    closed: { itemId: string; createdAt: Date; finishedAt: Date },
   ): Promise<UsageEvent[]> {
-    const metered = appended.flatMap((entry) =>
-      entry.type === "message" &&
-      entry.message.role === "assistant" &&
-      entry.message.usage !== undefined
-        ? [{ entry, message: entry.message, usage: entry.message.usage }]
-        : [],
-    );
-    if (metered.length === 0) return [];
     const { namespace, sessionId } = ref;
     const [pinned] = await tx
-      .select({ inference: agentConfigVersions.inference })
+      .select({
+        inference: agentConfigVersions.inference,
+        resources: agentConfigVersions.resources,
+      })
       .from(sessions)
       .innerJoin(
         agentConfigVersions,
@@ -301,34 +340,40 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       )
       .where(and(eq(sessions.namespace, namespace), eq(sessions.id, sessionId)));
     if (!pinned) throw new Error(`commitStep: session ${sessionId} has no agent config`);
-    const events = metered.map(({ entry, message, usage }) =>
-      UsageEvent.parse({
-        namespace,
-        sessionId,
-        eventId: randomUUID(),
-        entryId: entry.id,
-        provider: pinned.inference.provider,
-        model: message.model,
-        usage,
-        createdAt: entry.timestamp,
-      }),
+    const tokens = appended.flatMap((entry) =>
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.usage !== undefined
+        ? [
+            UsageEvent.parse({
+              namespace,
+              sessionId,
+              eventId: randomUUID(),
+              kind: "tokens",
+              entryId: entry.id,
+              provider: pinned.inference.provider,
+              model: entry.message.model,
+              usage: entry.message.usage,
+              createdAt: entry.timestamp,
+            }),
+          ]
+        : [],
     );
-    await tx.insert(usageEvents).values(
-      events.map((event) => {
-        const createdAt = new Date(event.createdAt);
-        return {
-          namespace,
-          sessionId,
-          id: event.eventId,
-          entryId: event.entryId,
-          provider: event.provider,
-          model: event.model,
-          usage: event.usage,
-          createdAt,
-          nextAttemptAt: new Date(createdAt.getTime() + USAGE_HANDOFF_MS),
-        };
-      }),
-    );
+    const runtime = UsageEvent.parse({
+      namespace,
+      sessionId,
+      eventId: randomUUID(),
+      kind: "runtime",
+      itemId: closed.itemId,
+      createdAt: iso(closed.createdAt),
+      finishedAt: iso(closed.finishedAt),
+      durationMs: Math.max(0, closed.finishedAt.getTime() - closed.createdAt.getTime()),
+      resources: { ...DEFAULT_RESOURCES, ...pinned.resources },
+    });
+    const events = [...tokens, runtime];
+    await tx
+      .insert(usageEvents)
+      .values(events.map((event) => usageEventRow(event, closed.finishedAt)));
     return events;
   }
 
@@ -1116,7 +1161,6 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
           { namespace, sessionId },
           messages.map((m) => ({ type: "message", message: m })),
         );
-        const usage = await recordUsage(tx, { namespace, sessionId }, appended);
         if (req.consumeInputs !== undefined && req.consumeInputs.length > 0) {
           const drained = await tx
             .delete(pendingInputs)
@@ -1144,6 +1188,11 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
               eq(workItems.id, item.id),
             ),
           );
+        const usage = await recordUsage(tx, { namespace, sessionId }, appended, {
+          itemId: item.id,
+          createdAt: item.createdAt,
+          finishedAt: at,
+        });
         if (req.next.kind !== "end_run") {
           await tx.insert(workItems).values({
             id: randomUUID(),

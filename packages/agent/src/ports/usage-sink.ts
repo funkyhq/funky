@@ -12,8 +12,8 @@ import type { UsageEvent } from "@funky/core";
  * reply that was lost, a lease that expired under a slow send), so the
  * adapter hands the receiver `eventId` as the key to dedupe on.
  *
- * Quantities only — the event carries what the provider reported, never
- * a price.
+ * Quantities only — the event carries what the provider reported or
+ * the clock measured, never a price.
  */
 export interface UsageSink {
   /**

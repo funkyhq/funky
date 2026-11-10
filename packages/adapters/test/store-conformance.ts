@@ -14,7 +14,9 @@ import {
   type Credential,
   type CreateSessionRequest,
   DEFAULT_NAMESPACE,
+  type RuntimeUsageEvent,
   type SessionRef,
+  type UsageEvent,
   type UserMessage,
   type WorkItemRef,
 } from "@funky/core";
@@ -1796,7 +1798,7 @@ export function describeStoreConformance(
           append: [assistant("thinking…")],
           next: { kind: "execute_tools" },
         });
-        expect(committed).toEqual({ idle: false, usage: [] });
+        expect(committed.idle).toBe(false);
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => e.seq)).toEqual([0, 1]);
         const items = await store.listItems(sessionRef);
@@ -1814,7 +1816,7 @@ export function describeStoreConformance(
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(committed).toEqual({ idle: true, usage: [] });
+        expect(committed.idle).toBe(true);
         const items = await store.listItems(sessionRef);
         expect(items).toHaveLength(1); // the run's end is the NON-creation of a next item
         expect(items[0]?.status).toBe("done");
@@ -1833,7 +1835,7 @@ export function describeStoreConformance(
           append: [assistant("done")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(committed).toEqual({ idle: false, usage: [] }); // the chained run is open
+        expect(committed.idle).toBe(false); // the chained run is open
         const entries = await store.readEntries(sessionRef);
         expect(entries.map((e) => (e.type === "message" ? e.message : e.type))).toEqual([
           user("go"),
@@ -1857,7 +1859,7 @@ export function describeStoreConformance(
           append: [],
           next: { kind: "end_run", status: "cancelled" },
         });
-        expect(committed).toEqual({ idle: true, usage: [] }); // parked inputs open no item
+        expect(committed.idle).toBe(true); // parked inputs open no item
         expect(await store.listItems(sessionRef)).toHaveLength(1); // no chain
         expect(await store.pendingInputs(sessionRef)).toHaveLength(1); // parked
       });
@@ -1978,7 +1980,8 @@ export function describeStoreConformance(
       const usage = { input: 100, output: 20, cacheRead: 30, cacheWrite: 10, reasoning: 5 };
       const later = { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 };
 
-      /** One run on a fresh session whose single commit carries `usage`. */
+      /** One run on a fresh session whose single commit carries `usage`:
+       *  its tokens event, then the closed item's runtime event. */
       async function commitWithUsage(namespace = DEFAULT_NAMESPACE) {
         const sessionRef = await newSession({ namespace });
         const claim = await startAndClaim(sessionRef);
@@ -1987,8 +1990,23 @@ export function describeStoreConformance(
           append: [{ ...assistant("done"), usage }],
           next: { kind: "end_run", status: "completed" },
         });
-        return { sessionRef, claim, event: committed.usage[0]! };
+        expect(committed.usage.map((e) => e.kind)).toEqual(["tokens", "runtime"]);
+        return { sessionRef, claim, event: committed.usage[0]!, events: committed.usage };
       }
+
+      /** What claimUsage leases, in a fixed order: one commit's events
+       *  fall due at the same instant, so the store may hand them out in
+       *  either order. */
+      async function claimSorted(req = { limit: 10, leaseMs: 60_000 }) {
+        const claimed = await store.claimUsage(req);
+        return claimed.sort((a, b) =>
+          `${a.event.kind}${a.event.eventId}`.localeCompare(`${b.event.kind}${b.event.eventId}`),
+        );
+      }
+      const claimsOf = (events: UsageEvent[], attempts = 0) =>
+        [...events]
+          .sort((a, b) => `${a.kind}${a.eventId}`.localeCompare(`${b.kind}${b.eventId}`))
+          .map((event) => ({ event, attempts }));
 
       it("records one per committed assistant message that carries usage, and returns them", async () => {
         const sessionRef = await newSession();
@@ -2013,11 +2031,13 @@ export function describeStoreConformance(
 
         const entries = await store.readEntries(sessionRef);
         // The provider is the session's pinned one (newSession's "fake");
-        // the model is the message's own.
+        // the model is the message's own. The closed item's runtime event
+        // comes last.
         expect(committed.usage).toEqual([
           {
             ...sessionRef,
             eventId: expect.any(String),
+            kind: "tokens",
             entryId: entries[1]!.id,
             provider: "fake",
             model: "test-model",
@@ -2027,17 +2047,115 @@ export function describeStoreConformance(
           {
             ...sessionRef,
             eventId: expect.any(String),
+            kind: "tokens",
             entryId: entries[4]!.id,
             provider: "fake",
             model: "other-model",
             usage: later,
             createdAt: entries[4]!.timestamp,
           },
+          expect.objectContaining({ kind: "runtime", itemId: itemRef.itemId }),
         ]);
-        expect(committed.usage[0]!.eventId).not.toBe(committed.usage[1]!.eventId);
+        expect(new Set(committed.usage.map((e) => e.eventId)).size).toBe(3);
       });
 
-      it("records nothing for a commit without usage, and nothing on a re-commit", async () => {
+      it("records a runtime event for every item a commit closes, its span end to end with the next", async () => {
+        const sessionRef = await newSession();
+        await store.intake(sessionRef, user("go"));
+        const first = await store.claimItem({ leaseMs: 60_000, session: sessionRef });
+        clock.advance(1_500);
+        const tools = await store.commitStep({
+          itemRef: first!.item,
+          token: first!.token,
+          append: [assistant("calling")], // no usage: the runtime event alone
+          next: { kind: "execute_tools" },
+        });
+        const second = await store.claimItem({ leaseMs: 60_000, session: sessionRef });
+        clock.advance(2_500);
+        // A cancelled run's last commit closes its item like any other.
+        const ended = await store.commitStep({
+          itemRef: second!.item,
+          token: second!.token,
+          append: [],
+          next: { kind: "end_run", status: "cancelled" },
+        });
+
+        // A config that leaves resources out reports the defaults.
+        const resources = { cpuCount: 2, memoryMB: 1024 };
+        expect(tools.usage).toEqual([
+          {
+            ...sessionRef,
+            eventId: expect.any(String),
+            kind: "runtime",
+            itemId: first!.item.itemId,
+            createdAt: expect.any(String),
+            finishedAt: expect.any(String),
+            durationMs: expect.any(Number),
+            resources,
+          },
+        ]);
+        const opened = tools.usage[0] as RuntimeUsageEvent;
+        // The next item opens at the instant this one closed.
+        expect(ended.usage).toEqual([
+          {
+            ...sessionRef,
+            eventId: expect.any(String),
+            kind: "runtime",
+            itemId: second!.item.itemId,
+            createdAt: opened.finishedAt,
+            finishedAt: expect.any(String),
+            durationMs: expect.any(Number),
+            resources,
+          },
+        ]);
+        // The harness clock runs on from the wall clock, so a span is at
+        // least what the test advanced it by.
+        const closed = ended.usage[0] as RuntimeUsageEvent;
+        for (const [span, advanced] of [
+          [opened, 1_500],
+          [closed, 2_500],
+        ] as const) {
+          expect(span.durationMs).toBe(Date.parse(span.finishedAt) - Date.parse(span.createdAt));
+          expect(span.durationMs).toBeGreaterThanOrEqual(advanced);
+        }
+      });
+
+      it("reports the pinned config's resources, the defaults filling in a field it leaves out", async () => {
+        const agentRef = await newAgent({ resources: { memoryMB: 4096 } });
+        const sessionRef = await newSessionOn(agentRef);
+        // A later version moves the size; the session keeps the one it pinned.
+        await store.updateAgentConfig(agentRef, {
+          resources: { cpuCount: 8, memoryMB: 8192 },
+          version: 1,
+        });
+        const claim = await startAndClaim(sessionRef);
+        const committed = await store.commitStep({
+          ...claim,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(committed.usage).toEqual([
+          expect.objectContaining({
+            kind: "runtime",
+            resources: { cpuCount: 2, memoryMB: 4096 },
+          }),
+        ]);
+      });
+
+      it("never reports a negative duration when the item's ends come from skewed clocks", async () => {
+        const sessionRef = await newSession();
+        const claim = await startAndClaim(sessionRef);
+        // The committer's clock runs behind the one that queued the item.
+        clock.advance(-5_000);
+        const committed = await store.commitStep({
+          ...claim,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(committed.usage).toEqual([expect.objectContaining({ durationMs: 0 })]);
+      });
+
+      it("records only the runtime event for a commit without token usage, and nothing on a re-commit", async () => {
         const quiet = await newSession();
         const claim = await startAndClaim(quiet);
         const committed = await store.commitStep({
@@ -2045,7 +2163,7 @@ export function describeStoreConformance(
           append: [assistant("no usage reported")],
           next: { kind: "end_run", status: "completed" },
         });
-        expect(committed.usage).toEqual([]);
+        expect(committed.usage.map((e) => e.kind)).toEqual(["runtime"]);
 
         const { claim: metered } = await commitWithUsage();
         const again = await store.commitStep({
@@ -2055,7 +2173,7 @@ export function describeStoreConformance(
         });
         expect(again.usage).toEqual([]);
         clock.advance(USAGE_HANDOFF_MS);
-        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toHaveLength(1);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toHaveLength(3);
       });
 
       it("records nothing when the commit is fenced", async () => {
@@ -2074,23 +2192,19 @@ export function describeStoreConformance(
       });
 
       it("offers an event to claimUsage only once the committer's handoff has passed", async () => {
-        const { event } = await commitWithUsage();
+        const { events } = await commitWithUsage();
         expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
         clock.advance(USAGE_HANDOFF_MS);
-        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
-          { event, attempts: 0 },
-        ]);
+        expect(await claimSorted()).toEqual(claimsOf(events));
       });
 
       it("leases a claimed event: nobody else gets it until the lease runs out", async () => {
-        const { event } = await commitWithUsage();
+        const { events } = await commitWithUsage();
         clock.advance(USAGE_HANDOFF_MS);
-        expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toHaveLength(1);
+        expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toHaveLength(2);
         expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toEqual([]);
         clock.advance(30_000);
-        expect(await store.claimUsage({ limit: 10, leaseMs: 30_000 })).toEqual([
-          { event, attempts: 0 },
-        ]);
+        expect(await claimSorted({ limit: 10, leaseMs: 30_000 })).toEqual(claimsOf(events));
       });
 
       it("claims across namespaces, oldest due first, up to the limit", async () => {
@@ -2100,15 +2214,18 @@ export function describeStoreConformance(
         clock.advance(1_000);
         await commitWithUsage("tenant-a");
         clock.advance(USAGE_HANDOFF_MS);
-        const claimed = await store.claimUsage({ limit: 2, leaseMs: 60_000 });
-        expect(claimed.map((c) => c.event)).toEqual([first.event, second.event]);
-        expect(await store.claimUsage({ limit: 2, leaseMs: 60_000 })).toHaveLength(1);
+        expect(await claimSorted({ limit: 4, leaseMs: 60_000 })).toEqual(
+          claimsOf([...first.events, ...second.events]),
+        );
+        expect(await store.claimUsage({ limit: 4, leaseMs: 60_000 })).toHaveLength(2);
       });
 
       it("never offers a delivered event again", async () => {
-        const { event } = await commitWithUsage();
-        await store.markUsageDelivered(event);
-        await store.markUsageDelivered(event); // a repeat is a no-op
+        const { events } = await commitWithUsage();
+        for (const event of events) {
+          await store.markUsageDelivered(event);
+          await store.markUsageDelivered(event); // a repeat is a no-op
+        }
         clock.advance(USAGE_HANDOFF_MS);
         expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
       });
@@ -2116,6 +2233,7 @@ export function describeStoreConformance(
       it("defers a failed event to its retry time, counting the attempt", async () => {
         const { event } = await commitWithUsage();
         // Due again at once: the retry time is the caller's to choose.
+        // The commit's other event is still in its handoff.
         await store.deferUsage(event, new Date(0));
         expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
           { event, attempts: 1 },
@@ -2127,7 +2245,8 @@ export function describeStoreConformance(
         // Far off: not due after the handoff, nor after the lease.
         await store.deferUsage(event, new Date(Date.now() + 365 * 86_400_000));
         clock.advance(USAGE_HANDOFF_MS + 60_000);
-        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
+        const claimed = await store.claimUsage({ limit: 10, leaseMs: 60_000 });
+        expect(claimed.map((c) => c.event.kind)).toEqual(["runtime"]);
       });
 
       it("keeps a delivered event delivered when a late failure defers it", async () => {
@@ -2138,14 +2257,14 @@ export function describeStoreConformance(
       });
 
       it("ignores a foreign ref when marking or deferring", async () => {
-        const { event } = await commitWithUsage();
-        await store.markUsageDelivered({ ...event, namespace: "elsewhere" });
-        await store.deferUsage({ ...event, namespace: "elsewhere" }, new Date(0));
+        const { events } = await commitWithUsage();
+        for (const event of events) {
+          await store.markUsageDelivered({ ...event, namespace: "elsewhere" });
+          await store.deferUsage({ ...event, namespace: "elsewhere" }, new Date(0));
+        }
         expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([]);
         clock.advance(USAGE_HANDOFF_MS);
-        expect(await store.claimUsage({ limit: 10, leaseMs: 60_000 })).toEqual([
-          { event, attempts: 0 },
-        ]);
+        expect(await claimSorted()).toEqual(claimsOf(events));
       });
     });
 

@@ -1,8 +1,9 @@
 // Usage delivery — the policy between the store's outbox and a UsageSink.
 // commitStep records a usage event for each assistant message that
-// carries usage, in the same transaction as the message (ports/store.ts),
-// so an event exists exactly when its message does; this module gets it
-// to the receiver, at least once.
+// carries usage, and one for the work item it closes, in the same
+// transaction as the message and the item's close (ports/store.ts), so
+// an event exists exactly when what it measures does; this module gets
+// it to the receiver, at least once. Every kind takes the same path.
 //
 // Two paths, one per moment an event can be sent:
 // - Right after the commit. The driver hands the commit's events to

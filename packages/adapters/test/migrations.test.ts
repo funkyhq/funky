@@ -25,6 +25,8 @@ const SHIPPED: Record<string, string> = {
     "78a3911f821c913f94507d7acdde4d2883cc4f733c369cf28d6b506f2168ac22",
   "20261110182151_add_usage_events":
     "65b2860356a19c6de83b6ec920f64ac9d673237d7504525c48800be5e78b3937",
+  "20261110223950_add_usage_event_kind":
+    "99085ccc8ce8171c122916245df13483b808c3f09b8a142ed5f933c7fe279b35",
 };
 
 const hashes = new Map(migrations.map((m) => [m.name, m.hash]));
@@ -130,5 +132,63 @@ describe("20261105195729_add_agent_config_resources", () => {
           VALUES ('default', 'a1', 2, '{}', 's', '{}', '{}', '[]', '[]', now());
       `),
     ).rejects.toThrow(/resources/);
+  });
+});
+
+describe("20261110223950_add_usage_event_kind", () => {
+  // As above: one database, booted once, at the migration before this one
+  // and holding one usage event recorded there.
+  let db: PGlite;
+  beforeAll(async () => {
+    db = new PGlite();
+    const at = migrations.findIndex((m) => m.name === "20261110223950_add_usage_event_kind");
+    for (const migration of migrations.slice(0, at)) {
+      for (const chunk of migration.sql) await db.exec(chunk);
+    }
+    await db.exec(`
+      INSERT INTO agent_configs VALUES ('default', 'a1', 1, now(), NULL);
+      INSERT INTO agent_config_versions
+        (namespace, agent_config_id, version, inference, system_prompt, network, packages, credentials, setup_commands, resources, updated_at)
+        VALUES ('default', 'a1', 1, '{}', 's', '{}', '{}', '[]', '[]', '{}', now());
+      INSERT INTO sessions (namespace, id, agent_config_id, agent_config_version, created_at)
+        VALUES ('default', 's1', 'a1', 1, now());
+      INSERT INTO usage_events
+        (namespace, session_id, id, entry_id, provider, model, usage, created_at, next_attempt_at)
+        VALUES ('default', 's1', 'e1', 'entry1', 'anthropic', 'm', '{}', now(), now());
+    `);
+    for (const chunk of migrations[at]!.sql) await db.exec(chunk);
+  }, 60_000);
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  it("makes events recorded before it tokens events", async () => {
+    const { rows } = await db.query("SELECT id, kind FROM usage_events");
+    expect(rows).toEqual([{ id: "e1", kind: "tokens" }]);
+  });
+
+  it("leaves no default behind: a write without a kind is refused", async () => {
+    await expect(
+      db.exec(`
+        INSERT INTO usage_events
+          (namespace, session_id, id, entry_id, provider, model, usage, created_at, next_attempt_at)
+          VALUES ('default', 's1', 'e2', 'entry2', 'anthropic', 'm', '{}', now(), now());
+      `),
+    ).rejects.toThrow(/kind/);
+  });
+
+  it("refuses an event missing its kind's fields", async () => {
+    await expect(
+      db.exec(`
+        INSERT INTO usage_events (namespace, session_id, id, kind, created_at, next_attempt_at)
+          VALUES ('default', 's1', 'e3', 'runtime', now(), now());
+      `),
+    ).rejects.toThrow(/usage_events_kind_fields/);
+    await expect(
+      db.exec(`
+        INSERT INTO usage_events (namespace, session_id, id, kind, created_at, next_attempt_at)
+          VALUES ('default', 's1', 'e4', 'tokens', now(), now());
+      `),
+    ).rejects.toThrow(/usage_events_kind_fields/);
   });
 });

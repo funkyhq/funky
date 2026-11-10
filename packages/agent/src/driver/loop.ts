@@ -98,7 +98,8 @@ export interface StepDeps {
    *  the driver drops it, the TTL being the backstop. */
   pauseSandbox?: (ref: SessionRef) => Promise<void>;
   /** Told of the usage events a commit recorded — one per committed
-   *  assistant message that carries usage — so the host can send them
+   *  assistant message that carries usage, and one for the item it
+   *  closed — so the host can send them
    *  at once (see driver/deliver-usage.ts). Not awaited, like
    *  pauseSandbox: the next claim never waits on a receiver, and an
    *  event this call never delivers stays in the store's outbox for the
