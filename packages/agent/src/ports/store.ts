@@ -252,11 +252,14 @@ export interface Store {
    * an idle session's sandbox on it (driver/pause-sandbox.ts).
    *
    * Each appended assistant message that carries usage is recorded as a
-   * UsageEvent in the same transaction — one per message, never one
-   * without its message — and the result hands back the events this
-   * commit recorded, so the host can deliver them at once. A re-commit
-   * records nothing and returns none: the first commit's events are
-   * already stored, and claimUsage offers them.
+   * tokens UsageEvent in the same transaction — one per message, never
+   * one without its message — and the item the commit closes as a
+   * runtime UsageEvent: its id, its createdAt and finishedAt, the
+   * duration, and the session's pinned resources with DEFAULT_RESOURCES
+   * filling in what the config leaves out. The result hands back the
+   * events this commit recorded, so the host can deliver them at once. A
+   * re-commit records nothing and returns none: the first commit's
+   * events are already stored, and claimUsage offers them.
    */
   commitStep(req: CommitStepRequest): Promise<CommitStepResult>;
 
@@ -413,9 +416,10 @@ export interface CommitStepResult {
   /** No open item once the commit landed: the run ended and nothing
    *  chained, so the session waits on its next intake. */
   idle: boolean;
-  /** The usage events this commit recorded, in log order: one per
-   *  appended assistant message that carries usage. Empty for a
-   *  re-commit, which records nothing. */
+  /** The usage events this commit recorded: a tokens event per appended
+   *  assistant message that carries usage, in log order, then the
+   *  closed item's runtime event. Empty for a re-commit, which records
+   *  nothing. */
   usage: UsageEvent[];
 }
 

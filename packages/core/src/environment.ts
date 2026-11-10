@@ -48,17 +48,24 @@ export const SetupCommands = z.array(
 export type SetupCommands = z.infer<typeof SetupCommands>;
 
 // The compute a sandbox gets: how many vCPUs and how much memory, in
-// MiB. A field left out is the provider's default size, so {} asks for
-// nothing and a config can set memory alone. Sizes are whole numbers; a
-// provider's own limits (a ceiling, an even number) belong to its
-// adapter, which MUST reject create() for a size it cannot give — never
-// hand back a smaller sandbox than asked. Strict, so a misspelt field
+// MiB. A field left out is Funky's default (DEFAULT_RESOURCES), so {}
+// asks for nothing and a config can set memory alone. Sizes are whole
+// numbers; a provider's own limits (a ceiling, an even number) belong to
+// its adapter, which MUST reject create() for a size it cannot give —
+// never hand back a smaller sandbox than asked. Strict, so a misspelt field
 // is refused rather than quietly read as the default.
 export const Resources = z.strictObject({
   cpuCount: z.number().int().min(1).optional(),
   memoryMB: z.number().int().min(1).optional(),
 });
 export type Resources = z.infer<typeof Resources>;
+
+/** The size of a sandbox whose config leaves a field out: 2 vCPUs and
+ *  1024 MiB. The E2B adapter builds every template at it
+ *  (adapters/sandbox/e2b-packages.ts, whose note on changing it
+ *  applies), and a runtime usage event reports it for a field the
+ *  pinned config leaves out. */
+export const DEFAULT_RESOURCES = { cpuCount: 2, memoryMB: 1024 } as const;
 
 /** A key's name in the namespace's secret store (/v1/secrets). */
 export const SecretName = z

@@ -400,15 +400,27 @@ describe("driver steps over the pg store", () => {
     };
 
     await store.intake(sessionRef, user("go"));
-    await runStep(deps, await claim(sessionRef), 60_000); // inference: usage
-    await runStep(deps, await claim(sessionRef), 60_000, echoOnly); // tools: none
-    await runStep(deps, await claim(sessionRef), 60_000); // inference: usage
+    const first = await claim(sessionRef);
+    await runStep(deps, first, 60_000); // inference: tokens + runtime
+    const second = await claim(sessionRef);
+    await runStep(deps, second, 60_000, echoOnly); // tools: runtime only
+    const third = await claim(sessionRef);
+    await runStep(deps, third, 60_000); // inference: tokens + runtime
 
     const log = await store.readEntries(sessionRef);
     const assistants = log.filter((e) => e.type === "message" && e.message.role === "assistant");
+    const runtime = (claimed: Claim) =>
+      expect.objectContaining({ kind: "runtime", itemId: claimed.item.itemId });
     expect(handed).toEqual([
-      [expect.objectContaining({ entryId: assistants[0]!.id, usage })],
-      [expect.objectContaining({ entryId: assistants[1]!.id, usage })],
+      [
+        expect.objectContaining({ kind: "tokens", entryId: assistants[0]!.id, usage }),
+        runtime(first),
+      ],
+      [runtime(second)],
+      [
+        expect.objectContaining({ kind: "tokens", entryId: assistants[1]!.id, usage }),
+        runtime(third),
+      ],
     ]);
   });
 

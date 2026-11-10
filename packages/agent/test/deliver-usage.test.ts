@@ -16,6 +16,7 @@ const event = (n: number): UsageEvent => ({
   namespace: "default",
   sessionId: "s1",
   eventId: `e${n}`,
+  kind: "tokens",
   entryId: `entry${n}`,
   provider: "anthropic",
   model: "claude-opus-5",

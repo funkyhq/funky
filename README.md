@@ -136,8 +136,9 @@ console shows a session's token total beside its log.
 ### Usage webhook
 
 To meter usage outside Funky, set `FUNKY_USAGE_WEBHOOK_URL` and `FUNKY_USAGE_WEBHOOK_SECRET`
-on the worker. Each assistant message that carries usage is then POSTed to the URL right
-after the worker commits it, one request per message:
+on the worker. Each usage event is then POSTed to the URL right after the worker commits it,
+one request per event. There are two kinds. A `tokens` event is one assistant message that
+carries usage:
 
 ```
 POST /your/usage/endpoint
@@ -145,20 +146,33 @@ Content-Type: application/json
 Idempotency-Key: 6f1c…
 Funky-Signature: t=1794268805,v1=5d41…
 
-{"namespace":"default","sessionId":"…","eventId":"6f1c…","entryId":"…","provider":"anthropic",
- "model":"claude-opus-5","usage":{"input":50320,"output":2262,"cacheRead":38000,"cacheWrite":4000},
+{"namespace":"default","sessionId":"…","eventId":"6f1c…","kind":"tokens","entryId":"…",
+ "provider":"anthropic","model":"claude-opus-5",
+ "usage":{"input":50320,"output":2262,"cacheRead":38000,"cacheWrite":4000},
  "createdAt":"2026-11-10T00:00:05.123Z"}
 ```
 
-`usage` is the counts the provider reported, as `GET /v1/sessions/$SID/usage` lists them;
-there are no prices. To check a request came from Funky, compute HMAC-SHA256 of
-`<t>.<raw body>` with the secret, compare it to `v1` in constant time, and reject a `t` far
-from your clock. Any 2xx counts as delivered. Anything else, a timeout (10s) or no answer at
-all is retried, starting at 30 seconds and doubling up to an hour, until the receiver
-accepts it. Events stay in Postgres until they're delivered, so a worker that restarts, or
-any other worker, sends what one that died left behind, about a minute after the commit.
-Delivery is at least once, and a retry can repeat an event the receiver already took, so
-dedupe on `eventId`.
+A `runtime` event is one step of a run (a work item: an inference call, or a round of tool
+calls), sent when the worker commits it:
+
+```
+{"namespace":"default","sessionId":"…","eventId":"9b2e…","kind":"runtime","itemId":"…",
+ "createdAt":"2026-11-10T00:00:01.000Z","finishedAt":"2026-11-10T00:00:05.123Z",
+ "durationMs":4123,"resources":{"cpuCount":2,"memoryMB":1024}}
+```
+
+`usage` is the counts the provider reported, as `GET /v1/sessions/$SID/usage` lists them.
+A runtime event's span runs from when the step was queued to when it was committed, and a
+run's steps meet end to end, so its runtime events add up to the run (the `runtimeSeconds`
+above). `resources` is the sandbox size the session's agent config version asks for, with
+the defaults filled in, whether or not that step used the sandbox. There are no prices. To
+check a request came from Funky, compute HMAC-SHA256 of `<t>.<raw body>` with the secret,
+compare it to `v1` in constant time, and reject a `t` far from your clock. Any 2xx counts
+as delivered. Anything else, a timeout (10s) or no answer at all is retried, starting at
+30 seconds and doubling up to an hour, until the receiver accepts it. Events stay in
+Postgres until they're delivered, so a worker that restarts, or any other worker, sends
+what one that died left behind, about a minute after the commit. Delivery is at least
+once, and a retry can repeat an event the receiver already took, so dedupe on `eventId`.
 
 With the URL unset, nothing is sent. Funky still records each event in the `usage_events`
 table, and setting the URL later sends every event that hasn't been delivered, back to the

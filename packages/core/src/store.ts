@@ -291,13 +291,18 @@ export type UsageSummary = z.infer<typeof UsageSummary>;
 
 // --- usage events ---
 
-// One assistant message's usage as a row of its own, recorded by the
-// commit that logs the message — the unit a metering system outside
-// Funky is told about (the worker's usage webhook). Quantities only:
-// what the provider reported, whole, never a price — pricing stays the
-// receiver's, as it stays display-time inside Funky (messages.ts Usage).
-// `eventId` is minted by the store and never reused, so a receiver that
-// keys on it counts each message once however often it is told.
+// A quantity Funky used, as a row of its own, recorded by the commit
+// that used it — the unit a metering system outside Funky is told about
+// (the worker's usage webhook). Two kinds:
+// - "tokens": one assistant message's usage, recorded by the commit that
+//   logs the message.
+// - "runtime": one work item's span, recorded by the commit that closes
+//   it, with the sandbox size the session's pinned config asks for.
+// Quantities only: what the provider reported or the clock measured,
+// never a price — pricing stays the receiver's, as it stays display-time
+// inside Funky (messages.ts Usage). `eventId` is minted by the store and
+// never reused, so a receiver that keys on it counts each message or
+// item once however often it is told.
 
 /** A reference to a usage event: the full path to the row. */
 export const UsageEventRef = SessionRef.extend({
@@ -305,7 +310,8 @@ export const UsageEventRef = SessionRef.extend({
 });
 export type UsageEventRef = z.infer<typeof UsageEventRef>;
 
-export const UsageEvent = UsageEventRef.extend({
+export const TokenUsageEvent = UsageEventRef.extend({
+  kind: z.literal("tokens"),
   // The assistant message's entry in the session's log.
   entryId: z.string().min(1),
   // The session's pinned `inference.provider`, and the model the
@@ -317,6 +323,30 @@ export const UsageEvent = UsageEventRef.extend({
   // when it was delivered.
   createdAt: z.iso.datetime(),
 });
+export type TokenUsageEvent = z.infer<typeof TokenUsageEvent>;
+
+export const RuntimeUsageEvent = UsageEventRef.extend({
+  kind: z.literal("runtime"),
+  // The work item the commit closed.
+  itemId: z.string().min(1),
+  // The item's span: created (queued) to finished (committed). A run's
+  // items meet end to end, so its events' spans tile the run.
+  createdAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime(),
+  // finishedAt − createdAt, never negative: the two instants can come
+  // from different hosts' clocks (the api's intake, a worker's commit).
+  durationMs: z.number().int().nonnegative(),
+  // The session's pinned config's resources, DEFAULT_RESOURCES filling
+  // in a field it leaves out: the size asked for, whether or not the
+  // item ever touched a sandbox.
+  resources: z.object({
+    cpuCount: z.number().int().min(1),
+    memoryMB: z.number().int().min(1),
+  }),
+});
+export type RuntimeUsageEvent = z.infer<typeof RuntimeUsageEvent>;
+
+export const UsageEvent = z.discriminatedUnion("kind", [TokenUsageEvent, RuntimeUsageEvent]);
 export type UsageEvent = z.infer<typeof UsageEvent>;
 
 // --- pending inputs ---
