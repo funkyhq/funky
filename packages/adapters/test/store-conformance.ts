@@ -1216,11 +1216,11 @@ export function describeStoreConformance(
         expect(await store.getSession(ref)).toEqual(archived);
       });
 
-      it("stores active as absence and preserves the first archive time", async () => {
+      it("stores not archived as absence and preserves the first archive time", async () => {
         const ref = await newSession();
-        const active = await store.getSession(ref);
-        expect(active).toBeDefined();
-        expect("archivedAt" in active!).toBe(false);
+        const before = await store.getSession(ref);
+        expect(before).toBeDefined();
+        expect("archivedAt" in before!).toBe(false);
 
         const first = await store.archiveSession(ref);
         clock.advance(1_000);
@@ -1313,12 +1313,12 @@ export function describeStoreConformance(
       it("hides archived rows from the default list and includes them on request", async () => {
         const archivedRef = await newSession();
         clock.advance(1_000);
-        const activeRef = await newSession();
+        const keptRef = await newSession();
         await store.archiveSession(archivedRef);
 
-        const active = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
-        expect(active.map((session) => session.sessionId)).toContain(activeRef.sessionId);
-        expect(active.map((session) => session.sessionId)).not.toContain(archivedRef.sessionId);
+        const listed = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(listed.map((session) => session.sessionId)).toContain(keptRef.sessionId);
+        expect(listed.map((session) => session.sessionId)).not.toContain(archivedRef.sessionId);
 
         const all = await store.listSessions({
           namespace: DEFAULT_NAMESPACE,
@@ -1326,7 +1326,7 @@ export function describeStoreConformance(
           includeArchived: true,
         });
         expect(all.map((session) => session.sessionId)).toEqual([
-          activeRef.sessionId,
+          keptRef.sessionId,
           archivedRef.sessionId,
         ]);
         expect(all.find((session) => session.sessionId === archivedRef.sessionId)).toEqual(
@@ -1425,6 +1425,85 @@ export function describeStoreConformance(
         await expect(
           store.listSessions({ namespace: "tenant-a", limit: 10, after: foreign }),
         ).rejects.toThrow("unknown cursor");
+      });
+    });
+
+    describe("counting active sessions", () => {
+      const count = (namespace: string = DEFAULT_NAMESPACE, exclude?: string) =>
+        store.countActiveSessions({ namespace, exclude });
+
+      it("counts the sessions with an open item — ready or leased, not idle", async () => {
+        expect(await count()).toBe(0);
+        await newSession(); // never ran
+        const ready = await newSession();
+        const leased = await newSession();
+        const finished = await newSession();
+        await store.intake(ready, user("go"));
+        await startAndClaim(leased);
+        const { itemRef, token } = await startAndClaim(finished);
+        expect(await count()).toBe(3);
+
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [assistant("done")],
+          next: { kind: "end_run", status: "completed" },
+        });
+        expect(await count()).toBe(2);
+      });
+
+      it("counts a session once however many items its run has gone through", async () => {
+        const ref = await newSession();
+        const { itemRef, token } = await startAndClaim(ref);
+        await store.intake(ref, user("queued behind the run"));
+        await store.commitStep({
+          itemRef,
+          token,
+          append: [assistant("calling a tool")],
+          next: { kind: "execute_tools" },
+        });
+        // One done item, one open one, and a parked input: still one run.
+        expect(await store.listItems(ref)).toHaveLength(2);
+        expect(await count()).toBe(1);
+      });
+
+      it("still counts a session whose lease ran out — the item is open until committed", async () => {
+        await startAndClaim(await newSession());
+        clock.advance(60_001);
+        expect(await count()).toBe(1);
+      });
+
+      it("leaves the excluded session out, and nothing else", async () => {
+        const active = await newSession();
+        const other = await newSession();
+        const idle = await newSession();
+        const foreign = await newSession({ namespace: "tenant-b" });
+        for (const ref of [active, other, foreign]) await store.intake(ref, user("go"));
+
+        expect(await count(DEFAULT_NAMESPACE, active.sessionId)).toBe(1);
+        // Excluding a session that isn't in the count changes nothing:
+        // an idle one, another namespace's, one that doesn't exist.
+        expect(await count(DEFAULT_NAMESPACE, idle.sessionId)).toBe(2);
+        expect(await count(DEFAULT_NAMESPACE, foreign.sessionId)).toBe(2);
+        expect(await count(DEFAULT_NAMESPACE, "nope")).toBe(2);
+      });
+
+      it("scopes the count to one namespace", async () => {
+        const a = await newSession({ namespace: "tenant-a" });
+        const b1 = await newSession({ namespace: "tenant-b" });
+        const b2 = await newSession({ namespace: "tenant-b" });
+        for (const ref of [a, b1, b2]) await store.intake(ref, user("go"));
+
+        expect(await count("tenant-a")).toBe(1);
+        expect(await count("tenant-b")).toBe(2);
+        expect(await count("tenant-c")).toBe(0);
+      });
+
+      it("rejects an invalid request at the boundary", async () => {
+        await expect(store.countActiveSessions({ namespace: "" })).rejects.toThrow();
+        await expect(
+          store.countActiveSessions({ namespace: DEFAULT_NAMESPACE, exclude: "" }),
+        ).rejects.toThrow();
       });
     });
 

@@ -136,7 +136,7 @@ export const sessions = pgTable(
     index("sessions_list_scan").on(t.namespace, t.createdAt, t.id),
     // The default list omits archived rows; this partial twin keeps that
     // scan bounded once archived history dominates the table.
-    index("sessions_active_list_scan")
+    index("sessions_unarchived_list_scan")
       .on(t.namespace, t.createdAt, t.id)
       .where(sql`${t.archivedAt} is null`),
   ],

@@ -43,6 +43,7 @@ import {
   AgentConfigRef,
   AgentConfigVersionRef,
   AgentMessage,
+  CountActiveSessionsRequest,
   CreateAgentConfigRequest,
   CreateSessionRequest,
   CreateTaskRequest,
@@ -252,7 +253,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     return row;
   }
 
-  async function lockActiveSession(tx: Tx, ref: SessionRef): Promise<void> {
+  async function lockUnarchivedSession(tx: Tx, ref: SessionRef): Promise<void> {
     const row = await lockSession(tx, ref);
     if (row.archivedAt !== null) {
       throw ArchivedError.forSession(ref);
@@ -779,6 +780,26 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       return rows.map(toSession);
     },
 
+    async countActiveSessions(req) {
+      const { namespace, exclude } = CountActiveSessionsRequest.parse(req);
+      // One open item per session at most (work_items_one_open_per_session),
+      // so the open items ARE the active sessions and counting them needs
+      // no DISTINCT and no join. That index is the whole read: partial on
+      // this predicate and led by namespace, it holds one entry per
+      // active session and none of the done majority.
+      const [row] = await db
+        .select({ count: sql<number>`count(*)`.mapWith(Number) })
+        .from(workItems)
+        .where(
+          and(
+            eq(workItems.namespace, namespace),
+            ne(workItems.status, "done"),
+            exclude === undefined ? undefined : ne(workItems.sessionId, exclude),
+          ),
+        );
+      return row!.count;
+    },
+
     async createTask(req) {
       const parsed = CreateTaskRequest.parse(req);
       const { namespace } = parsed;
@@ -1079,7 +1100,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async requestCancel(ref) {
       const parsed = SessionRef.parse(ref);
       await db.transaction(async (tx) => {
-        await lockActiveSession(tx, parsed);
+        await lockUnarchivedSession(tx, parsed);
         await appendEntries(tx, parsed, [{ type: "control", control: "cancel" }]);
       });
     },
@@ -1088,7 +1109,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const { namespace, sessionId } = SessionRef.parse(ref);
       const msg = UserMessage.parse(message);
       return db.transaction(async (tx) => {
-        await lockActiveSession(tx, { namespace, sessionId }); // the race referee
+        await lockUnarchivedSession(tx, { namespace, sessionId }); // the race referee
         const open = await tx
           .select({ id: workItems.id })
           .from(workItems)

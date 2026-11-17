@@ -3,6 +3,7 @@ import type {
   AgentConfigRef,
   AgentConfigVersionRef,
   AgentMessage,
+  CountActiveSessionsRequest,
   CreateAgentConfigRequest,
   CreateSessionRequest,
   CreateTaskRequest,
@@ -137,9 +138,23 @@ export interface Store {
    *  driver/ensure-sandbox.ts). Rejects an unknown, foreign, or archived
    *  session. */
   bindSandbox(ref: SessionRef, sandboxId: string, previous?: string): Promise<string>;
-  /** One namespace's active sessions, newest first. includeArchived opts
-   *  terminal rows back in — see ListSessionsRequest. */
+  /** One namespace's sessions that are not archived, newest first.
+   *  includeArchived opts terminal rows back in — see ListSessionsRequest. */
   listSessions(req: ListSessionsRequest): Promise<Session[]>;
+  /** How many of the namespace's sessions are active. The two words for
+   *  a session's work: it is ACTIVE while it has an open item, ready or
+   *  leased, and IDLE when it has none. Neither says anything about
+   *  archiving. A session is archived or it is not, and one that is not
+   *  has no name of its own — "active" never means "not archived". (Only
+   *  an idle session can be archived, so an archived one is never
+   *  counted.)
+   *
+   *  `exclude` leaves one session out, active or idle; an unknown or
+   *  foreign id excludes nothing. A plain read, taking no lock: a run can
+   *  start or end right after the count is taken. The store limits
+   *  nothing with it — a caller that caps concurrent runs compares the
+   *  count to its own limit before it sends work. */
+  countActiveSessions(req: CountActiveSessionsRequest): Promise<number>;
 
   // --- tasks ---
 

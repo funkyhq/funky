@@ -31,6 +31,7 @@ export type SessionStore = Pick<
   | "getSession"
   | "archiveSession"
   | "listSessions"
+  | "countActiveSessions"
   | "intake"
   | "requestCancel"
   | "readEntries"
@@ -69,6 +70,10 @@ const WireMessage = z.object({ content: WireContent });
 
 const EntriesQuery = NamespaceQuery.extend({
   after: z.coerce.number().int().nonnegative().optional(),
+});
+
+const ActiveCountQuery = NamespaceQuery.extend({
+  exclude: z.string().min(1).optional(),
 });
 
 export function sessionRoutes(store: SessionStore) {
@@ -117,6 +122,20 @@ export function sessionRoutes(store: SessionStore) {
       }
       throw err;
     }
+  });
+
+  // How many of the namespace's sessions are active. Active means the
+  // session has an open work item, ready or leased; idle means it has
+  // none. It does not mean "not archived". ?exclude= leaves one session
+  // out: the managed gateway caps a namespace's concurrent runs, and a
+  // message to a session that is already active queues behind its run
+  // rather than starting one. The api only reports the number; nothing
+  // here refuses work.
+  //
+  // Registered before /:id on purpose: hono runs the first handler that
+  // matches, and /:id would take "active-count" for a session id.
+  r.get("/active-count", validate("query", ActiveCountQuery), async (c) => {
+    return c.json({ count: await store.countActiveSessions(c.req.valid("query")) });
   });
 
   r.get("/:id", validate("query", NamespaceQuery), async (c) => {

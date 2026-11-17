@@ -240,6 +240,67 @@ describe("GET /v1/sessions", () => {
   });
 });
 
+describe("GET /v1/sessions/active-count", () => {
+  const count = async (query: string) => {
+    const res = await get(app, `/v1/sessions/active-count?${query}`);
+    expect(res.status).toBe(200);
+    return res.json();
+  };
+
+  it("counts the namespace's active sessions, and leaves an excluded one out", async () => {
+    const active = await seedSession(app, "count-a");
+    const other = await seedSession(app, "count-a");
+    const idle = await seedSession(app, "count-a");
+    const foreign = await seedSession(app, "count-b");
+    for (const [id, ns] of [
+      [active, "count-a"],
+      [other, "count-a"],
+      [foreign, "count-b"],
+    ]) {
+      const res = await post(app, `/v1/sessions/${id}/messages?namespace=${ns}`, { content: "go" });
+      expect(res.status).toBe(202);
+    }
+
+    expect(await count("namespace=count-a")).toEqual({ count: 2 });
+    expect(await count(`namespace=count-a&exclude=${active}`)).toEqual({ count: 1 });
+    expect(await count(`namespace=count-a&exclude=${idle}`)).toEqual({ count: 2 });
+    expect(await count(`namespace=count-a&exclude=${foreign}`)).toEqual({ count: 2 });
+    expect(await count("namespace=count-b")).toEqual({ count: 1 });
+    expect(await count("namespace=count-none")).toEqual({ count: 0 });
+  });
+
+  it("drops a session from the count when its run ends", async () => {
+    const id = await seedSession(app, "count-ends");
+    await post(app, `/v1/sessions/${id}/messages?namespace=count-ends`, { content: "go" });
+    expect(await count("namespace=count-ends")).toEqual({ count: 1 });
+
+    // The worker's half, done by hand: claim the run's item and end it.
+    const claim = await store.claimItem({
+      leaseMs: 60_000,
+      session: { namespace: "count-ends", sessionId: id },
+    });
+    await store.commitStep({
+      itemRef: claim!.item,
+      token: claim!.token,
+      append: [{ role: "assistant", content: [], model: "m", stopReason: "end_turn" }],
+      next: { kind: "end_run", status: "completed" },
+    });
+    expect(await count("namespace=count-ends")).toEqual({ count: 0 });
+  });
+
+  it("is its own route, not a session called active-count", async () => {
+    // /:id would answer this path with 404 "no such session".
+    const res = await get(app, "/v1/sessions/active-count");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: expect.any(Number) });
+  });
+
+  it("400s an empty exclude and a malformed namespace", async () => {
+    expect((await get(app, "/v1/sessions/active-count?exclude=")).status).toBe(400);
+    expect((await get(app, "/v1/sessions/active-count?namespace=a%20b")).status).toBe(400);
+  });
+});
+
 describe("GET /v1/sessions/:id", () => {
   it("404s unknown and foreign sessions alike", async () => {
     expect((await get(app, "/v1/sessions/nope")).status).toBe(404);

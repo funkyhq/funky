@@ -27,6 +27,8 @@ const SHIPPED: Record<string, string> = {
     "65b2860356a19c6de83b6ec920f64ac9d673237d7504525c48800be5e78b3937",
   "20261110223950_add_usage_event_kind":
     "99085ccc8ce8171c122916245df13483b808c3f09b8a142ed5f933c7fe279b35",
+  "20261117180604_rename_sessions_unarchived_list_scan":
+    "f00e903f1c74e18688eeb25281912641c093f51db55abe170935afd883328ea8",
 };
 
 const hashes = new Map(migrations.map((m) => [m.name, m.hash]));
