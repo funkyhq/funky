@@ -247,13 +247,13 @@ describe("GET /v1/sessions/active-count", () => {
     return res.json();
   };
 
-  it("counts the namespace's running sessions, and leaves an excluded one out", async () => {
-    const running = await seedSession(app, "count-a");
+  it("counts the namespace's active sessions, and leaves an excluded one out", async () => {
+    const active = await seedSession(app, "count-a");
     const other = await seedSession(app, "count-a");
     const idle = await seedSession(app, "count-a");
     const foreign = await seedSession(app, "count-b");
     for (const [id, ns] of [
-      [running, "count-a"],
+      [active, "count-a"],
       [other, "count-a"],
       [foreign, "count-b"],
     ]) {
@@ -262,7 +262,7 @@ describe("GET /v1/sessions/active-count", () => {
     }
 
     expect(await count("namespace=count-a")).toEqual({ count: 2 });
-    expect(await count(`namespace=count-a&exclude=${running}`)).toEqual({ count: 1 });
+    expect(await count(`namespace=count-a&exclude=${active}`)).toEqual({ count: 1 });
     expect(await count(`namespace=count-a&exclude=${idle}`)).toEqual({ count: 2 });
     expect(await count(`namespace=count-a&exclude=${foreign}`)).toEqual({ count: 2 });
     expect(await count("namespace=count-b")).toEqual({ count: 1 });

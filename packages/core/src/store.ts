@@ -154,18 +154,19 @@ export const ListSessionsRequest = z.object({
   namespace: z.string().min(1),
   limit: z.number().int().min(1),
   after: z.string().min(1).optional(),
-  // The default list is active rows only: archived history grows without
-  // bound, and a caller asking for its sessions means the live ones. The
+  // The default list leaves archived rows out: archived history grows
+  // without bound, and a caller asking for its sessions means the rest. The
   // terminal rows are an explicit opt-in; retrieval by id is unaffected.
   includeArchived: z.boolean().optional(),
 });
 export type ListSessionsRequest = z.infer<typeof ListSessionsRequest>;
 
-/** Counts one namespace's running sessions — Store.countActiveSessions. */
+/** Counts one namespace's active sessions: the ones with an open work
+ *  item. See Store.countActiveSessions for what active and idle mean. */
 export const CountActiveSessionsRequest = z.object({
   namespace: z.string().min(1),
   // A session to leave out of the count: the one the caller is about to
-  // send a message to. If it is already running the message only queues
+  // send a message to. If it is already active the message only queues
   // behind its run, so it must not count against a limit on new runs.
   exclude: z.string().min(1).optional(),
 });
@@ -193,7 +194,7 @@ export const Session = SessionRef.extend({
   sandboxId: z.string().optional(),
   createdAt: z.iso.datetime(),
   // Archive is terminal: the session remains readable but accepts no new
-  // client writes. Absence, rather than null, is the active state.
+  // client writes. Absence, rather than null, means not archived.
   archivedAt: z.iso.datetime().optional(),
 });
 export type Session = z.infer<typeof Session>;

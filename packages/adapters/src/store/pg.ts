@@ -783,10 +783,10 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async countActiveSessions(req) {
       const { namespace, exclude } = CountActiveSessionsRequest.parse(req);
       // One open item per session at most (work_items_one_open_per_session),
-      // so the open items ARE the running sessions and counting them needs
+      // so the open items ARE the active sessions and counting them needs
       // no DISTINCT and no join. That index is the whole read: partial on
       // this predicate and led by namespace, it holds one entry per
-      // running session and none of the done majority.
+      // active session and none of the done majority.
       const [row] = await db
         .select({ count: sql<number>`count(*)`.mapWith(Number) })
         .from(workItems)

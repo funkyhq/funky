@@ -1474,13 +1474,13 @@ export function describeStoreConformance(
       });
 
       it("leaves the excluded session out, and nothing else", async () => {
-        const running = await newSession();
+        const active = await newSession();
         const other = await newSession();
         const idle = await newSession();
         const foreign = await newSession({ namespace: "tenant-b" });
-        for (const ref of [running, other, foreign]) await store.intake(ref, user("go"));
+        for (const ref of [active, other, foreign]) await store.intake(ref, user("go"));
 
-        expect(await count(DEFAULT_NAMESPACE, running.sessionId)).toBe(1);
+        expect(await count(DEFAULT_NAMESPACE, active.sessionId)).toBe(1);
         // Excluding a session that isn't in the count changes nothing:
         // an idle one, another namespace's, one that doesn't exist.
         expect(await count(DEFAULT_NAMESPACE, idle.sessionId)).toBe(2);

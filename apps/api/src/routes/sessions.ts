@@ -124,11 +124,13 @@ export function sessionRoutes(store: SessionStore) {
     }
   });
 
-  // How many of the namespace's sessions are running — have an open work
-  // item, ready or leased. ?exclude= leaves one session out: the managed
-  // gateway caps a namespace's concurrent runs, and a message to a session
-  // that is already running queues behind its run rather than starting
-  // one. The api only reports the number; nothing here refuses work.
+  // How many of the namespace's sessions are active. Active means the
+  // session has an open work item, ready or leased; idle means it has
+  // none. It does not mean "not archived". ?exclude= leaves one session
+  // out: the managed gateway caps a namespace's concurrent runs, and a
+  // message to a session that is already active queues behind its run
+  // rather than starting one. The api only reports the number; nothing
+  // here refuses work.
   //
   // Registered before /:id on purpose: hono runs the first handler that
   // matches, and /:id would take "active-count" for a session id.
