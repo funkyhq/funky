@@ -38,8 +38,8 @@ import { RELATIVE_TICK_MS, absoluteTime, relativeTime } from "../lib/format";
 import { useEntries } from "../lib/useEntries";
 import { useNow } from "../lib/useNow";
 import { ArrowLeftIcon, ChevronDownIcon, RefreshIcon, SendIcon } from "../components/Icons";
-import { Status } from "../components/Status";
-import { SESSION_STATUS } from "../lib/status";
+import { Archived } from "../components/Status";
+import { SESSION_ARCHIVED } from "../lib/status";
 import { Transcript } from "./Transcript";
 import "./SessionDetail.css";
 
@@ -432,16 +432,17 @@ export function SessionDetail({ id, taskId }: { id: string; taskId: string }) {
           <ArrowLeftIcon />
           Tasks
         </a>
-        {session === undefined ? null : archived ? (
-          // Only the ARCHIVED half of the lifecycle is marked here. The
-          // list needs both, because a row there has nothing else to say
-          // which it is — but this page IS the active state: it has a
-          // composer taking messages and an Archive button to end it with.
-          // A pill repeating that said nothing, and said it in the same
-          // green dot as the mark below, which is about something else
+        {session?.archivedAt !== undefined ? (
+          // Only the ARCHIVED half of the lifecycle is marked here. A
+          // session that is not archived has no name to put in a pill:
+          // "active" means it has an open work item, not this. And the
+          // page already shows it is not archived — it has a composer
+          // taking messages and an Archive button to end it with. A pill
+          // repeating that said nothing, and said it in the same green
+          // dot as the mark below, which is about something else
           // entirely.
-          <Status archivedAt={session.archivedAt} meaning={SESSION_STATUS} />
-        ) : (
+          <Archived archivedAt={session.archivedAt} meaning={SESSION_ARCHIVED} />
+        ) : session === undefined ? null : (
           <>
             {/* Not the session's state — THIS CLIENT'S. The log follows a
                 poll, and this is shown only where that has come off: while

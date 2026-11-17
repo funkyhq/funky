@@ -1216,11 +1216,11 @@ export function describeStoreConformance(
         expect(await store.getSession(ref)).toEqual(archived);
       });
 
-      it("stores active as absence and preserves the first archive time", async () => {
+      it("stores not archived as absence and preserves the first archive time", async () => {
         const ref = await newSession();
-        const active = await store.getSession(ref);
-        expect(active).toBeDefined();
-        expect("archivedAt" in active!).toBe(false);
+        const before = await store.getSession(ref);
+        expect(before).toBeDefined();
+        expect("archivedAt" in before!).toBe(false);
 
         const first = await store.archiveSession(ref);
         clock.advance(1_000);
@@ -1313,12 +1313,12 @@ export function describeStoreConformance(
       it("hides archived rows from the default list and includes them on request", async () => {
         const archivedRef = await newSession();
         clock.advance(1_000);
-        const activeRef = await newSession();
+        const keptRef = await newSession();
         await store.archiveSession(archivedRef);
 
-        const active = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
-        expect(active.map((session) => session.sessionId)).toContain(activeRef.sessionId);
-        expect(active.map((session) => session.sessionId)).not.toContain(archivedRef.sessionId);
+        const listed = await store.listSessions({ namespace: DEFAULT_NAMESPACE, limit: 10 });
+        expect(listed.map((session) => session.sessionId)).toContain(keptRef.sessionId);
+        expect(listed.map((session) => session.sessionId)).not.toContain(archivedRef.sessionId);
 
         const all = await store.listSessions({
           namespace: DEFAULT_NAMESPACE,
@@ -1326,7 +1326,7 @@ export function describeStoreConformance(
           includeArchived: true,
         });
         expect(all.map((session) => session.sessionId)).toEqual([
-          activeRef.sessionId,
+          keptRef.sessionId,
           archivedRef.sessionId,
         ]);
         expect(all.find((session) => session.sessionId === archivedRef.sessionId)).toEqual(

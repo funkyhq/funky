@@ -303,7 +303,7 @@ describe("sessions", () => {
     expect(roundTrip(Session, session)).toEqual(session);
   });
 
-  it("rejects null or boolean session archivedAt — active is spelled by absence", () => {
+  it("rejects null or boolean session archivedAt — not archived is spelled by absence", () => {
     const session = {
       namespace: "default",
       sessionId: "s1",
