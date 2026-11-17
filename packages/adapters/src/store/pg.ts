@@ -253,7 +253,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     return row;
   }
 
-  async function lockActiveSession(tx: Tx, ref: SessionRef): Promise<void> {
+  async function lockUnarchivedSession(tx: Tx, ref: SessionRef): Promise<void> {
     const row = await lockSession(tx, ref);
     if (row.archivedAt !== null) {
       throw ArchivedError.forSession(ref);
@@ -1100,7 +1100,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
     async requestCancel(ref) {
       const parsed = SessionRef.parse(ref);
       await db.transaction(async (tx) => {
-        await lockActiveSession(tx, parsed);
+        await lockUnarchivedSession(tx, parsed);
         await appendEntries(tx, parsed, [{ type: "control", control: "cancel" }]);
       });
     },
@@ -1109,7 +1109,7 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
       const { namespace, sessionId } = SessionRef.parse(ref);
       const msg = UserMessage.parse(message);
       return db.transaction(async (tx) => {
-        await lockActiveSession(tx, { namespace, sessionId }); // the race referee
+        await lockUnarchivedSession(tx, { namespace, sessionId }); // the race referee
         const open = await tx
           .select({ id: workItems.id })
           .from(workItems)
