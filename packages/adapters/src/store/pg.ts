@@ -43,6 +43,7 @@ import {
   AgentConfigRef,
   AgentConfigVersionRef,
   AgentMessage,
+  CountActiveSessionsRequest,
   CreateAgentConfigRequest,
   CreateSessionRequest,
   CreateTaskRequest,
@@ -777,6 +778,26 @@ export function createPgStore(db: StoreDb, opts: PgStoreOptions = {}): Store {
         .orderBy(desc(sessions.createdAt), desc(sessions.id))
         .limit(parsed.limit);
       return rows.map(toSession);
+    },
+
+    async countActiveSessions(req) {
+      const { namespace, exclude } = CountActiveSessionsRequest.parse(req);
+      // One open item per session at most (work_items_one_open_per_session),
+      // so the open items ARE the running sessions and counting them needs
+      // no DISTINCT and no join. That index is the whole read: partial on
+      // this predicate and led by namespace, it holds one entry per
+      // running session and none of the done majority.
+      const [row] = await db
+        .select({ count: sql<number>`count(*)`.mapWith(Number) })
+        .from(workItems)
+        .where(
+          and(
+            eq(workItems.namespace, namespace),
+            ne(workItems.status, "done"),
+            exclude === undefined ? undefined : ne(workItems.sessionId, exclude),
+          ),
+        );
+      return row!.count;
     },
 
     async createTask(req) {

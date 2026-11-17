@@ -3,6 +3,7 @@ import type {
   AgentConfigRef,
   AgentConfigVersionRef,
   AgentMessage,
+  CountActiveSessionsRequest,
   CreateAgentConfigRequest,
   CreateSessionRequest,
   CreateTaskRequest,
@@ -140,6 +141,13 @@ export interface Store {
   /** One namespace's active sessions, newest first. includeArchived opts
    *  terminal rows back in — see ListSessionsRequest. */
   listSessions(req: ListSessionsRequest): Promise<Session[]>;
+  /** How many of the namespace's sessions are running: have an open
+   *  item, ready or leased. `exclude` leaves one session out, running or
+   *  not; an unknown or foreign id excludes nothing. A plain read, taking
+   *  no lock: a run can start or end right after the count is taken. The
+   *  store limits nothing with it — a caller that caps concurrent runs
+   *  compares the count to its own limit before it sends work. */
+  countActiveSessions(req: CountActiveSessionsRequest): Promise<number>;
 
   // --- tasks ---
 

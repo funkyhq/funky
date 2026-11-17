@@ -161,6 +161,16 @@ export const ListSessionsRequest = z.object({
 });
 export type ListSessionsRequest = z.infer<typeof ListSessionsRequest>;
 
+/** Counts one namespace's running sessions — Store.countActiveSessions. */
+export const CountActiveSessionsRequest = z.object({
+  namespace: z.string().min(1),
+  // A session to leave out of the count: the one the caller is about to
+  // send a message to. If it is already running the message only queues
+  // behind its run, so it must not count against a limit on new runs.
+  exclude: z.string().min(1).optional(),
+});
+export type CountActiveSessionsRequest = z.infer<typeof CountActiveSessionsRequest>;
+
 export const CreateSessionRequest = z.object({
   namespace: z.string().min(1),
   agentConfigId: z.string(),
